@@ -5,7 +5,8 @@ import { CONFIG } from '../core/config'
 import type { FrameResult } from '../core/types'
 import { DetectionLoadError } from '../detection/engine'
 import type { EngineInfo } from '../detection/protocol'
-import { MESSAGES } from './messages'
+import type { OrientationStatus } from '../sensors/orientation'
+import { MESSAGES, runningMessage } from './messages'
 import { Session } from './session'
 import type { SchedulerHandlers } from './session'
 
@@ -19,11 +20,26 @@ const engineInfo: EngineInfo = {
 }
 const cameraInfo: CameraInfo = { label: 'Back Camera', frameSize: { width: 1280, height: 720 } }
 
-function setup(options: { camera?: () => Promise<CameraInfo>; engine?: () => Promise<EngineInfo>; wakeLock?: boolean } = {}) {
+function setup(
+  options: {
+    camera?: () => Promise<CameraInfo>
+    engine?: () => Promise<EngineInfo>
+    wakeLock?: boolean
+    /** Status the tilt sensor reports right after it starts. */
+    orientationOnStart?: OrientationStatus
+  } = {},
+) {
   const log: string[] = []
   let handlers: SchedulerHandlers | null = null
   let endedListener: (() => void) | null = null
   let sizeListener: ((size: FrameSize) => void) | null = null
+  let orientationStatus: OrientationStatus = 'idle'
+  const statusListeners = new Set<(status: OrientationStatus) => void>()
+  const setOrientation = (status: OrientationStatus) => {
+    if (status === orientationStatus) return
+    orientationStatus = status
+    for (const listener of statusListeners) listener(status)
+  }
   const session = new Session({
     camera: {
       start: () => {
@@ -49,6 +65,27 @@ function setup(options: { camera?: () => Promise<CameraInfo>; engine?: () => Pro
         log.push('wake.release')
       },
     },
+    orientation: {
+      requestPermission: async () => {
+        log.push('orientation.permission')
+        return options.orientationOnStart !== 'denied'
+      },
+      start: () => {
+        log.push('orientation.start')
+        setOrientation(options.orientationOnStart ?? 'waiting')
+      },
+      stop: () => {
+        log.push('orientation.stop')
+        setOrientation('idle')
+      },
+      getStatus: () => orientationStatus,
+      onStatus: (listener) => {
+        statusListeners.add(listener)
+        return () => statusListeners.delete(listener)
+      },
+      latest: () => ({ pitchDeg: -5, rollDeg: 1, timeMs: 1 }),
+      at: (timeMs) => ({ pitchDeg: -5, rollDeg: 1, timeMs }),
+    },
     createEngine: () => ({
       init: (url, provider) => {
         log.push(`engine.init ${url} ${provider}`)
@@ -69,6 +106,7 @@ function setup(options: { camera?: () => Promise<CameraInfo>; engine?: () => Pro
     handlers: () => handlers!,
     ended: () => endedListener!(),
     resized: (size: FrameSize) => sizeListener!(size),
+    setOrientation,
   }
 }
 
@@ -87,10 +125,11 @@ describe('start', () => {
     expect(t.session.getStartedAtMs()).toBe(1234)
   })
 
-  test('asks for the wake lock and the camera before waiting on the detector', async () => {
+  test('asks for motion permission, the wake lock, and the camera before waiting on the detector', async () => {
     const t = setup()
     const started = t.session.start()
-    expect(t.log.slice(0, 3)).toEqual([
+    expect(t.log.slice(0, 4)).toEqual([
+      'orientation.permission',
       'wake.acquire',
       'camera.start',
       expect.stringContaining('engine.init'),
@@ -102,7 +141,46 @@ describe('start', () => {
     const t = setup({ wakeLock: false })
     await t.session.start()
     expect(t.session.getSnapshot().state).toBe('running')
-    expect(t.session.getSnapshot().message).toBe(MESSAGES.runningNoWakeLock)
+    expect(t.session.getSnapshot().message).toBe(runningMessage({ wakeLockHeld: false, tiltAvailable: true }))
+    expect(t.session.getSnapshot().message).toMatch(/screen may lock/)
+  })
+
+  test('starts the tilt sensor when running and exposes its readings', async () => {
+    const t = setup()
+    await t.session.start()
+    expect(t.log).toContain('orientation.start')
+    expect(t.session.getOrientationAt(500)).toEqual({ pitchDeg: -5, rollDeg: 1, timeMs: 500 })
+    expect(t.session.getOrientationLatest(10)?.pitchDeg).toBe(-5)
+  })
+
+  test('refused motion permission still runs, and the status line says distances are less accurate', async () => {
+    const t = setup({ orientationOnStart: 'denied' })
+    await t.session.start()
+    const snap = t.session.getSnapshot()
+    expect(snap.state).toBe('running')
+    expect(snap.orientation).toBe('denied')
+    expect(snap.message).toMatch(/tilt sensor is unavailable/)
+    expect(snap.message).toMatch(/less accurate/)
+  })
+
+  test('the tilt sensor becoming unavailable while running updates the message, and recovery restores it', async () => {
+    const t = setup()
+    await t.session.start()
+    expect(t.session.getSnapshot().message).toBe(MESSAGES.running)
+    t.setOrientation('unavailable')
+    expect(t.session.getSnapshot().message).toMatch(/tilt sensor is unavailable/)
+    t.setOrientation('ready')
+    expect(t.session.getSnapshot().message).toBe(MESSAGES.running)
+    expect(t.session.getSnapshot().orientation).toBe('ready')
+  })
+
+  test('both problems are named in one sentence', async () => {
+    const t = setup({ wakeLock: false, orientationOnStart: 'denied' })
+    await t.session.start()
+    const message = t.session.getSnapshot().message
+    expect(message).toMatch(/screen may lock/)
+    expect(message).toMatch(/tilt sensor/)
+    expect(message.endsWith('Keep using your white cane.')).toBe(true)
   })
 
   test('a camera failure returns to idle with the spoken sentence and cleans up', async () => {
@@ -163,7 +241,7 @@ describe('pause and resume', () => {
     t.session.pause()
     expect(t.session.getSnapshot().state).toBe('paused')
     expect(t.session.getSnapshot().message).toBe(MESSAGES.paused)
-    expect(t.log).toEqual(['scheduler.stop', 'camera.stop', 'wake.release'])
+    expect(t.log).toEqual(['scheduler.stop', 'camera.stop', 'orientation.stop', 'wake.release'])
   })
 
   test('resume restarts the camera and the loop without reloading the detector', async () => {
@@ -173,7 +251,7 @@ describe('pause and resume', () => {
     t.log.length = 0
     await t.session.resume()
     expect(t.session.getSnapshot().state).toBe('running')
-    expect(t.log).toEqual(['wake.acquire', 'camera.start', 'scheduler.start'])
+    expect(t.log).toEqual(['wake.acquire', 'camera.start', 'scheduler.start', 'orientation.start'])
   })
 
   test('a failed resume stays paused with the reason, and can be tried again', async () => {
@@ -263,7 +341,7 @@ describe('shutdown', () => {
     t.log.length = 0
     t.session.shutdown()
     expect(t.session.getSnapshot().state).toBe('idle')
-    expect(t.log).toEqual(['scheduler.stop', 'camera.stop', 'wake.release', 'engine.terminate'])
+    expect(t.log).toEqual(['scheduler.stop', 'camera.stop', 'orientation.stop', 'wake.release', 'engine.terminate'])
   })
 
   test('shutting down while starting leaves no camera running', async () => {

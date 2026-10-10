@@ -30,12 +30,12 @@ web/                        Vite + React + TypeScript app
   src/core/                 types.ts (shared contracts), config.ts (every tunable number)
   src/camera/               camera stream, frame scheduler, wake lock
   src/detection/            worker, engine, protocol, preprocess, postprocess, classes.ts (generated)
-  src/sensors/              device orientation
-  src/geometry/             clock, distance, elevation, walking path
+  src/sensors/              device orientation (orientation.ts adapter, attitude.ts math)
+  src/geometry/             geometry.ts: clock, distance, elevation, walking path (pure)
   src/tracking/             tracker, smoothing, time-to-contact
   src/alerts/               policy, phrases, event bus
   src/audio/                unlock, tones, speech, heartbeat, engine
-  src/health/               health monitor, camera pitch (until A3's sensor)
+  src/health/               health monitor
   src/voice/                recognizer, commands
   src/telemetry/            test-mode logger, export
   src/app/                  session (live run), audio link, pipeline orchestrator, screens, settings, calibration

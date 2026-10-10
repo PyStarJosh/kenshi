@@ -1,5 +1,6 @@
-// Connects the live session to the health monitor and the audio engine: frames and pitch go into the
-// monitor, its state and warnings go to the engine, and the heartbeat ticks on the same check timer.
+// Connects the live session to the health monitor and the audio engine: frames and the session's tilt
+// readings go into the monitor, its state and warnings go to the engine, and the heartbeat ticks on the
+// same check timer. Audio settings come from the settings store.
 // AlertEvents arrive through handleAlert once the alert policy (A5) and the event bus exist.
 import { AudioEngine } from '../audio/engine'
 import type { AlertTiming } from '../audio/engine'
@@ -10,8 +11,8 @@ import { CONFIG } from '../core/config'
 import type { AlertEvent, AlertOutcome, AlertPriority, HealthState } from '../core/types'
 import { HealthMonitor } from '../health/monitor'
 import type { HealthAnnouncement, RunState } from '../health/monitor'
-import { watchPitch } from '../health/pitch'
 import type { Session, SessionState } from './session'
+import { settingsStore } from './settings'
 
 export interface AudioLinkView {
   unlocked: boolean
@@ -36,7 +37,7 @@ export class AudioLink {
   private speech = createBrowserSpeaker()
   private ctx: AudioContext | null = null
   private engine: AudioEngine | null = null
-  private stopPitch: (() => void) | null = null
+  private session: Session | null = null
   private testTracks = new Map<number, { distanceM: number }>()
   private testCount = 0
   private simulateHealthy = false
@@ -60,7 +61,8 @@ export class AudioLink {
 
   /**
    * Call synchronously inside a tap (Start, Pause, the test panel). The first call creates the
-   * AudioContext, the tone player, and the engine, and starts motion updates; later calls resume audio.
+   * AudioContext, the tone player, and the engine; later calls resume audio. Motion permission is
+   * requested by session.start() in the same tap.
    */
   unlock(greet: boolean): void {
     const ctx = unlockAudioContext(this.ctx, (message) => this.reportError(message))
@@ -81,21 +83,20 @@ export class AudioLink {
         onOutcome: (alert, outcome, latencyMs) => this.recordOutcome(alert, outcome, latencyMs),
         onError: (message) => this.reportError(message),
       })
+      this.engine.applySettings(settingsStore.getSnapshot())
     }
-    this.stopPitch ??= watchPitch(
-      (sample) => this.monitor.recordOrientation(sample),
-      (message) => this.reportError(message),
-    )
     if (greet) this.speech.speaker.speak({ text: GREETING, urgent: false })
     this.syncContextState()
   }
 
   /** Feed the monitor from the session and run the check timer. Returns a cleanup function. */
   attach(session: Session): () => void {
+    this.session = session
     const syncRun = () => this.monitor.setRunState(RUN_STATE[session.getSnapshot().state], performance.now())
     syncRun()
     const offState = session.subscribe(syncRun)
     const offResult = session.onResult((result) => this.monitor.recordFrame(result))
+    const offSettings = settingsStore.subscribe(() => this.engine?.applySettings(settingsStore.getSnapshot()))
     const restore = () => {
       if (this.ctx && this.ctx.state !== 'running') this.unlock(false)
     }
@@ -104,10 +105,10 @@ export class AudioLink {
     return () => {
       clearInterval(timer)
       window.removeEventListener('pointerdown', restore)
+      offSettings()
       offResult()
       offState()
-      this.stopPitch?.()
-      this.stopPitch = null
+      this.session = null
     }
   }
 
@@ -148,6 +149,8 @@ export class AudioLink {
 
   private check(): void {
     const now = performance.now()
+    const tilt = this.session?.getOrientationLatest(now)
+    if (tilt) this.monitor.recordOrientation(tilt)
     const { state, announcements } = this.monitor.update(now)
     const health =
       this.simulateHealthy && state.status === 'stopped' && !state.paused

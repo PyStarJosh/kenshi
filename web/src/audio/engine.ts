@@ -50,10 +50,10 @@ const SPEECH_TO_ALERT_OUTCOME: Record<Exclude<SpeechOutcome, 'dropped' | 'failed
 export class AudioEngine {
   private deps: AudioEngineDeps
   private settings: AudioSettings = {
-    speechRate: CONFIG.audio.defaultSpeechRate,
+    speechRate: CONFIG.settings.speechRate,
     spokenFeedback: true,
-    toneVolume: CONFIG.audio.defaultToneVolume,
-    heartbeatVolume: CONFIG.audio.defaultHeartbeatVolume,
+    toneVolume: CONFIG.settings.toneVolume,
+    heartbeatVolume: CONFIG.settings.heartbeatVolume,
   }
   private health: HealthState | null = null
   private lastTickMs = -Infinity

@@ -43,10 +43,10 @@ Verification methods: **Unit test** (Vitest on pure logic), **Replay** (recorded
 |---|---|---|
 | FR-1 | The app opens the rear camera in landscape and delivers frames to the detector at a capped rate, always processing the newest frame and never queueing old ones. It keeps the screen awake while running. | Field test |
 | FR-2 | The app detects objects on the phone with the YOLO26n ONNX model in a Web Worker, using WebGPU when available and multi-threaded WebAssembly otherwise, with per-class confidence thresholds. | Unit test, Field test |
-| FR-3 | The app reads the phone's pitch and roll from device orientation and maps them to the landscape camera axis. If the sensor is unavailable, it continues with the box-size distance fallback and says so. | Unit test, Field test |
+| FR-3 | The app reads the phone's pitch and roll from device orientation and maps them to the landscape camera axis. If the sensor is unavailable or permission is refused, it assumes the camera is level, prefers the box-size distance, and says that distances are less accurate. | Unit test, Field test |
 | FR-4 | The app tracks detections across frames by IoU matching, confirms a track after it matches in 2 of 3 frames, and smooths box position and distance. | Unit test, Replay |
 | FR-5 | The app measures each confirmed track's closing speed and time-to-contact, and flags tracks that are approaching. | Unit test, Replay |
-| FR-6 | The app gives each track a clock direction (11, 12, or 1 o'clock; "far left" or "far right" beyond that) from its horizontal angle and the calibrated horizontal field of view. | Unit test, Replay |
+| FR-6 | The app gives each track a clock direction (12 o'clock within 15 degrees of straight ahead, 11 or 1 o'clock beyond that, and "far left" or "far right" when its box touches the left or right edge of the picture) from its horizontal angle, corrected for the phone's roll, and the calibrated horizontal field of view. | Unit test, Replay |
 | FR-7 | The app estimates each track's distance in meters: from the ground plane using eye height and device pitch when possible, otherwise from box size and a per-class typical height. | Unit test, Replay, Field test |
 | FR-8 | The app labels a track "on the floor" or "at head height" when its estimated vertical extent warrants it, and adds no label otherwise. | Unit test, Replay |
 | FR-9 | The app treats a track as an alert candidate only if it is in the walking path or approaching it. | Unit test, Replay |

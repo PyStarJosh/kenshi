@@ -10,6 +10,15 @@
   border: 0.15rem solid #ffeb3b;
 }
 
+/* A box in the walking corridor is drawn in a different color. */
+.debug-box-path {
+  border-color: #ff5252;
+}
+
+.debug-box-path span {
+  color: #ff8a80;
+}
+
 .debug-box span {
   position: absolute;
   left: -0.15rem;

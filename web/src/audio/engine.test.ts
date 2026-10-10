@@ -142,7 +142,7 @@ describe('AudioEngine', () => {
     s.engine.setHealth(healthy)
     s.engine.tickHeartbeat()
     expect(s.tones).toHaveLength(1)
-    expect(s.tones[0].volume).toBe(CONFIG.audio.defaultHeartbeatVolume)
+    expect(s.tones[0].volume).toBe(CONFIG.settings.heartbeatVolume)
 
     s.setNow(1200 + CONFIG.audio.heartbeatIntervalMs)
     s.engine.handleAlert(alert({ frameTimeMs: 1200 + CONFIG.audio.heartbeatIntervalMs }))

@@ -68,7 +68,7 @@ export class Speaker {
   private deps: SpeakerDeps
   private current: Current | null = null
   private pending: SpeechRequest | null = null
-  private rate = CONFIG.audio.defaultSpeechRate
+  private rate = CONFIG.settings.speechRate
   private voice: VoiceLike | null = null
   private enabled = true
 

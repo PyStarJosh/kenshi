@@ -1,4 +1,6 @@
-"""Export YOLO26n to ONNX at each input size and copy the files into the web app.
+"""Export YOLO26n to ONNX at each input size and move the files into the web app.
+
+Weights that the export downloads are deleted afterwards.
 
 Run from the repo root: uv run --group ml python ml/export_onnx.py [--sizes 320 416]
 """
@@ -37,8 +39,14 @@ def main() -> None:
     parser.add_argument("--weights", default="yolo26n.pt")
     parser.add_argument("--sizes", type=int, nargs="+", default=[320, 416])
     args = parser.parse_args()
-    for size in args.sizes:
-        describe(export(args.weights, size))
+    weights = Path(args.weights)
+    downloaded = not weights.exists()
+    try:
+        for size in args.sizes:
+            describe(export(args.weights, size))
+    finally:
+        if downloaded:
+            weights.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

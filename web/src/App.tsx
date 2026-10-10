@@ -1,18 +1,23 @@
 import type { CSSProperties } from 'react'
-import { lazy, Suspense, useSyncExternalStore } from 'react'
+import { lazy, Suspense, useState, useSyncExternalStore } from 'react'
 import { useAudioLink } from './app/useAudioLink'
 import { useSession } from './app/useSession'
 
 const DebugOverlay = lazy(() => import('./app/screens/DebugOverlay.tsx'))
 const AudioTestPanel = lazy(() => import('./app/screens/AudioTestPanel.tsx'))
+const SettingsScreen = lazy(() => import('./app/screens/Settings.tsx'))
+const CalibrateScreen = lazy(() => import('./app/screens/Calibrate.tsx'))
 
 const debugEnabled = new URLSearchParams(window.location.search).has('debug')
 const DEFAULT_ASPECT = 16 / 9
+
+type View = 'main' | 'settings' | 'calibrate'
 
 export default function App() {
   const { session, snapshot, setVideo } = useSession()
   const audio = useAudioLink(session)
   const audioError = useSyncExternalStore(audio.subscribe, () => audio.getView().error)
+  const [view, setView] = useState<View>('main')
   const { state, message, frameSize } = snapshot
   const live = state === 'running' || state === 'paused'
   const aspect = frameSize ? frameSize.width / frameSize.height : DEFAULT_ASPECT
@@ -46,6 +51,14 @@ export default function App() {
           >
             Start
           </button>
+          <button
+            type="button"
+            className="settings-button"
+            disabled={state === 'starting'}
+            onClick={() => setView('settings')}
+          >
+            Settings
+          </button>
           {import.meta.env.DEV && (
             <p className="dev-line">crossOriginIsolated: {String(window.crossOriginIsolated)}</p>
           )}
@@ -75,6 +88,16 @@ export default function App() {
       <p role="status" aria-live="polite" className="status">
         {audioError ? `${message} ${audioError}` : message}
       </p>
+
+      {view !== 'main' && (
+        <Suspense fallback={null}>
+          {view === 'settings' ? (
+            <SettingsScreen onBack={() => setView('main')} onCalibrate={() => setView('calibrate')} />
+          ) : (
+            <CalibrateScreen onDone={() => setView('settings')} />
+          )}
+        </Suspense>
+      )}
     </main>
   )
 }

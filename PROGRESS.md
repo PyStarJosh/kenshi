@@ -8,9 +8,9 @@ Edit only your own track's section. Keep this file under 80 lines.
 **Next:** tracks start A1, U1, M1 in parallel against types.ts and config.ts. Then S3 integration (Gate B).
 
 ## App
-**Works:** A1 detection worker + engine + ?bench (desktop numbers in SDS 4.1). A2 live loop: Start opens the back camera and loads the model, the newest frame goes to the worker whenever it is free, ?debug shows boxes, fps, provider, inference p50/p95, frame size, and a session clock. Pause/Resume, page hide, and camera loss stop and restart the camera and wake lock. Checked in desktop Edge 155 with a fake camera: about 12 fps, boxes on the bus and three people, pause/resume/hide all work.
-**Broken:** nothing known. Not yet tried on the iPhone (camera, rotation, lock/unlock, app switching), so the phone checklist in the A2 PR is open. No iPhone benchmark numbers yet.
-**Next:** run the A2 phone checklist, add iPhone numbers to SDS 4.1, then A3 orientation and geometry. Test mode (U3) will also turn on the overlay; for now it is ?debug only.
+**Works:** A1 detection worker + engine + ?bench (desktop numbers in SDS 4.1). A2 live loop (camera, frame loop, ?debug overlay, pause/resume/page hide); the owner ran it on an iOS 27 iPhone with WebGPU and boxes appeared. A3 geometry: tilt sensor (permission in the Start tap, pitch/roll for either landscape direction and upright), geometry.ts (clock, ground-plane and box-size distance, floor/head height, path), Settings (eye height) and Calibrate field of view, and per-box direction, distance, method, height, plus pitch/roll, in ?debug. Checked in desktop Edge 155 with simulated tilt: pitch/roll readouts match hand-computed values; settings and calibration save and reach the overlay.
+**Broken:** nothing known. Not yet checked on the iPhone: the signs of pitch and roll (tilt down must read negative pitch), real distances against a tape measure, the calibration on the demo phone. No iPhone benchmark numbers in the docs yet.
+**Next:** run the A3 phone checklist, calibrate the demo phone and record its field of view, add iPhone numbers to SDS 4.1, then A4 tracking. Test mode (U3) will also turn on the overlay; for now it is ?debug only.
 
 ## Audio/UX
 **Works:** U1 audio engine and health monitor. Start unlocks the AudioContext and speech in the tap and says the greeting. Panned lead-in tones (urgent pulses faster when closer), one phrase at a time with urgent preemption, stale and track-gone drops before any sound, heartbeat tick while healthy and quiet. Health monitor warns at once on stall, low fps, low light, phone lowered or raised, and blocked audio, repeats every 10 s, and says "Detection back." once. ?debug shows an audio test panel (sample alerts, health warnings, heartbeat without camera, alert-to-tone and frame-to-speech delays). Unit tests cover pan, pulse rate, speech queue, voice choice, heartbeat, and health transitions.
@@ -18,9 +18,9 @@ Edit only your own track's section. Keep this file under 80 lines.
 **Next:** run the U1 phone checklist, record iOS tone and speech-start latency in SDS 4. Then U2 voice commands. Open for later steps: the paused reminder (SR-9) and speaking session status messages (U3); real track lookup and AlertEvents arrive with A4/A5 and the event bus.
 
 ## Model
-**Works:** ml/ package exists with the ml and analysis dependency groups installed.
-**Broken:** nothing yet.
-**Next:** M1 export model and class map.
+**Works:** M1 done. YOLO26n exported at 320 and 416 (web/public/models/yolo26n-<size>.onnx, 9.8 MB each, input [1,3,S,S], output [1,84,N], details in SDS 4.1). Class map: ml/class_map.json -> web/src/detection/classes.ts via ml/gen_classes.py. export_onnx.py deletes weights it downloaded. ml/check_onnx.py runs the 416 model in onnxruntime: bus.jpg gives bus 0.89 and 3 persons (0.85, 0.80, 0.75); zidane.jpg gives 2 persons (0.88).
+**Broken:** nothing known. Disk was full on the dev laptop, so the export was not re-run in this step; the committed ONNX files come from A1.
+**Next:** M2 hazard dataset and training (stairs, curb, pole, door as ids 80 to 83).
 
 ## Decisions
 - Python 3.13 is pinned (.python-version); requires-python stays >=3.11 so older interpreters still work. The project is tooling only (tool.uv package = false), so there is no installable package.
@@ -32,10 +32,13 @@ Edit only your own track's section. Keep this file under 80 lines.
 - A track needs 2 of 3 matched frames before it can alert; we did not add a faster path for urgent hazards, to protect the false-alert target (NFR-6). Revisit after field tests.
 - Frame loop: capture only when the worker is idle and 90% of the minimum gap (maxFps 15) has passed, and capture again the moment a detection finishes, because waiting for the next video frame cost a 30 fps camera a third of its rate (measured 10 fps before, 12.5 after).
 - Camera: asks for facingMode environment at 1280x720, then switches to the plain "Back Camera" lens when listed (virtual multi-lens devices can change field of view). Start is the only trigger; wake lock, camera, and model load all begin in the same tap.
+- A3 follows the owner's step prompt where it differs from the first SDS draft: 12 o'clock within 15 degrees (was 10), far left/right when the box touches a side edge (was an angle), floor below 0.5 m and head height from 1.2 m (absolute meters), and in-path uses the box center only. Added by me: head height stops at a bottom edge of 2.0 m (above that it passes over the head), and cut-off boxes (touching the bottom) take the nearer of the box-size distance and the nearest visible floor.
+- Distances: geometry returns the unrounded distance (the tracker smooths it) and the rounded 0.5 m value (what is spoken). Without a tilt reading geometry assumes level, prefers box size, and the status line says distances are less accurate.
+- Tilt: only the vertical parts of the device axes are used, so pitch/roll are smoothed after conversion (no jump when beta and gamma flip at level). A reading counts for 2 s (orientation holds until it changes); frames use the tilt at their capture time.
 - While paused, a reminder repeats every 15 s (SR-9), so a paused app is never mistaken for a quiet path.
 - types.ts frame log entries carry detections and orientation, so scripts/replay.ts can re-run the pipeline offline.
 - The Vite dev server accepts ngrok hosts (.ngrok-free.app, .ngrok-free.dev) so a phone can reach it.
 - Audio (U1): the stall phrase is "Detection stalled." (as in the SDS), not "Detection paused.", so a stall never sounds like the user's own pause (SR-9).
-- Audio (U1): health/pitch.ts reads camera pitch from device orientation so the lowered-phone warning works now; A3's orientation sensor replaces it and the monitor keeps taking OrientationSample.
+- Audio (U1): the health monitor takes tilt from the session's orientation sensor (A3) and audio settings from the settings store, so motion permission is asked once, in session.start().
 - Audio (U1): a health warning holds until recoverAfterMs (2 s) of good readings, and low fps is judged only once a full fps window has passed without a stall, so the end of a stall does not trigger "Detection is slow."
 - Audio (U1): a speech watchdog (base 3 s plus 120 ms per character) ends a phrase if iOS never fires its end event, so the heartbeat and later alerts can never stay blocked (SR-1).
