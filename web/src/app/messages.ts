@@ -8,7 +8,6 @@ export const MESSAGES = {
   starting: 'Starting the camera and loading the detector.',
   resuming: 'Restarting the camera.',
   running: 'Detection is running. Keep using your white cane.',
-  runningNoWakeLock: 'Detection is running, but the screen may lock and stop the camera. Keep using your white cane.',
   paused: 'Paused. Press Resume to continue.',
   pausedHidden: 'Paused because the page was hidden.',
   cameraStopped: 'The camera stopped. Press Resume to try again.',
@@ -20,6 +19,18 @@ const LOAD_ERRORS: Record<LoadErrorKind, string> = {
   'webgpu-unavailable': 'This browser cannot use WebGPU, so press Start to try again.',
   'wasm-failed': 'The detector could not start on this device.',
   'class-mismatch': 'The detector model does not match its class list.',
+}
+
+const WAKE_LOCK_PROBLEM = 'the screen may lock and stop the camera'
+const TILT_PROBLEM = 'the tilt sensor is unavailable, so distances will be less accurate'
+
+/** The status sentence while running, naming anything that is not working. */
+export function runningMessage(options: { wakeLockHeld: boolean; tiltAvailable: boolean }): string {
+  const problems: string[] = []
+  if (!options.wakeLockHeld) problems.push(WAKE_LOCK_PROBLEM)
+  if (!options.tiltAvailable) problems.push(TILT_PROBLEM)
+  if (problems.length === 0) return MESSAGES.running
+  return `Detection is running, but ${problems.join(', and ')}. Keep using your white cane.`
 }
 
 /** The sentence to show when starting failed; the camera problem comes first if both failed. */

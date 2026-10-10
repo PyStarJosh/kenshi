@@ -83,21 +83,22 @@ export interface CameraInfo {
 }
 
 export class Camera {
-  private getVideo: () => HTMLVideoElement
+  private getVideo: () => HTMLVideoElement | null
   private stream: MediaStream | null = null
   private endedListeners = new Set<() => void>()
   private sizeListeners = new Set<(size: FrameSize) => void>()
   private removeVideoListener: (() => void) | null = null
   private removeTrackListener: (() => void) | null = null
 
-  constructor(getVideo: () => HTMLVideoElement) {
+  /** getVideo may return null once the element is gone (a screen was closed); stop() then has nothing to detach. */
+  constructor(getVideo: () => HTMLVideoElement | null) {
     this.getVideo = getVideo
   }
 
   /** Current frame size, or null before the first frame. */
   get frameSize(): FrameSize | null {
     const video = this.getVideo()
-    return video.videoWidth > 0 ? { width: video.videoWidth, height: video.videoHeight } : null
+    return video && video.videoWidth > 0 ? { width: video.videoWidth, height: video.videoHeight } : null
   }
 
   /** Called when the frame size changes, for example after the phone is rotated. */
@@ -123,6 +124,7 @@ export class Camera {
       stream = await this.preferPlainBackCamera(stream)
       this.stream = stream
       const video = this.getVideo()
+      if (!video) throw new Error('The video element is not mounted')
       video.muted = true
       video.playsInline = true
       video.autoplay = true
@@ -163,7 +165,7 @@ export class Camera {
     this.stream?.getTracks().forEach((track) => track.stop())
     this.stream = null
     const video = this.getVideo()
-    video.srcObject = null
+    if (video) video.srcObject = null
   }
 
   /** Labels only appear after permission, so the lens is chosen after the first stream opens. */

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { CameraError, chooseBackCamera, mapCameraError } from './camera'
+import { Camera, CameraError, chooseBackCamera, mapCameraError } from './camera'
 
 const device = (deviceId: string, label: string, kind: MediaDeviceKind = 'videoinput') => ({
   deviceId,
@@ -38,6 +38,23 @@ describe('chooseBackCamera', () => {
 
   test('returns null for an empty list', () => {
     expect(chooseBackCamera([])).toBeNull()
+  })
+})
+
+describe('Camera without a video element', () => {
+  // React detaches the element before a closing screen's cleanup runs, so stop() must cope.
+  test('stop does not throw when the element is gone', () => {
+    expect(() => new Camera(() => null).stop()).not.toThrow()
+  })
+
+  test('frameSize is null when the element is gone', () => {
+    expect(new Camera(() => null).frameSize).toBeNull()
+  })
+
+  test('stop can be called repeatedly', () => {
+    const camera = new Camera(() => null)
+    camera.stop()
+    expect(() => camera.stop()).not.toThrow()
   })
 })
 

@@ -5,11 +5,13 @@ import type { CameraInfo, FrameSize } from '../camera/camera'
 import { createBitmapGrabber, createFrameRequester, FrameScheduler } from '../camera/scheduler'
 import { WakeLock } from '../camera/wakeLock'
 import { CONFIG } from '../core/config'
-import type { FrameResult } from '../core/types'
+import type { FrameResult, OrientationSample } from '../core/types'
 import { DetectionEngine } from '../detection/engine'
 import { modelUrl } from '../detection/models'
 import type { EngineInfo, ProviderChoice } from '../detection/protocol'
-import { describeDetectionStopped, describeStartFailure, MESSAGES } from './messages'
+import { createOrientationSensor } from '../sensors/orientation'
+import type { OrientationStatus } from '../sensors/orientation'
+import { describeDetectionStopped, describeStartFailure, MESSAGES, runningMessage } from './messages'
 
 export type SessionState = 'idle' | 'starting' | 'running' | 'paused'
 
@@ -20,6 +22,18 @@ export interface SessionSnapshot {
   frameSize: FrameSize | null
   engine: EngineInfo | null
   cameraLabel: string | null
+  /** State of the tilt sensor; "denied" or "unavailable" means geometry is degraded. */
+  orientation: OrientationStatus
+}
+
+export interface OrientationLike {
+  requestPermission(): Promise<boolean>
+  start(): void
+  stop(): void
+  getStatus(): OrientationStatus
+  onStatus(listener: (status: OrientationStatus) => void): () => void
+  latest(nowMs: number): OrientationSample | null
+  at(timeMs: number): OrientationSample | null
 }
 
 export interface CameraLike {
@@ -53,6 +67,7 @@ export interface SchedulerHandlers {
 export interface SessionDeps {
   camera: CameraLike
   wakeLock: WakeLockLike
+  orientation: OrientationLike
   createEngine: () => EngineLike
   createScheduler: (engine: EngineLike, handlers: SchedulerHandlers) => SchedulerLike
   now: () => number
@@ -64,6 +79,7 @@ const IDLE: SessionSnapshot = {
   frameSize: null,
   engine: null,
   cameraLabel: null,
+  orientation: 'idle',
 }
 
 export class Session {
@@ -76,12 +92,24 @@ export class Session {
   private startedAtMs: number | null = null
   private hidden = false
   private resumeWhenVisible = false
+  private wakeLockHeld = true
 
   constructor(deps: SessionDeps) {
     this.deps = deps
-    // The camera belongs to this session, so these listeners live as long as it does.
+    // The camera and sensor belong to this session, so these listeners live as long as it does.
     deps.camera.onFrameSize((frameSize) => this.update({ frameSize }))
     deps.camera.onEnded(() => this.handleCameraEnded())
+    deps.orientation.onStatus((orientation) => this.handleOrientationStatus(orientation))
+  }
+
+  /** The tilt reading closest to a moment (a frame's capture time), or null if there is none. */
+  getOrientationAt(timeMs: number): OrientationSample | null {
+    return this.deps.orientation.at(timeMs)
+  }
+
+  /** The newest tilt reading, or null if there is none or it is stale. */
+  getOrientationLatest(nowMs: number): OrientationSample | null {
+    return this.deps.orientation.latest(nowMs)
   }
 
   /** For useSyncExternalStore. */
@@ -105,6 +133,8 @@ export class Session {
   /** Call from the Start tap. Everything that needs the user gesture is requested first. */
   async start(): Promise<void> {
     if (this.snapshot.state !== 'idle') return
+    // iOS only shows the motion-sensor prompt for a user gesture, so ask before anything else.
+    const motion = this.deps.orientation.requestPermission()
     this.update({ state: 'starting', message: MESSAGES.starting })
     this.startedAtMs = this.deps.now()
     const engine = this.deps.createEngine()
@@ -115,6 +145,7 @@ export class Session {
       engine.init(modelUrl(CONFIG.detection.inputSize), CONFIG.detection.provider),
     ])
     const wakeLockHeld = await lock
+    await motion // a refusal shows up as the sensor status "denied", which run() reports
     if (this.engine !== engine) {
       // Shut down while starting: undo whatever the start managed to open.
       this.deps.camera.stop()
@@ -197,10 +228,26 @@ export class Session {
       },
     })
     this.scheduler.start()
-    this.update({
-      state: 'running',
-      message: wakeLockHeld ? MESSAGES.running : MESSAGES.runningNoWakeLock,
+    this.wakeLockHeld = wakeLockHeld
+    this.deps.orientation.start()
+    const orientation = this.deps.orientation.getStatus()
+    this.update({ state: 'running', orientation, message: this.runningText(orientation) })
+  }
+
+  private runningText(orientation: OrientationStatus): string {
+    return runningMessage({
+      wakeLockHeld: this.wakeLockHeld,
+      tiltAvailable: orientation !== 'denied' && orientation !== 'unavailable',
     })
+  }
+
+  /** The tilt sensor changed state: keep the snapshot current and, while running, say what is wrong. */
+  private handleOrientationStatus(orientation: OrientationStatus): void {
+    if (this.snapshot.state === 'running') {
+      this.update({ orientation, message: this.runningText(orientation) })
+    } else {
+      this.update({ orientation })
+    }
   }
 
   private handleCameraEnded(): void {
@@ -209,11 +256,12 @@ export class Session {
     this.update({ state: 'paused', message: MESSAGES.cameraStopped })
   }
 
-  /** Stop the frame loop, the camera, and the wake lock; keep the loaded detector. */
+  /** Stop the frame loop, the camera, the tilt sensor, and the wake lock; keep the loaded detector. */
   private stopLoop(): void {
     this.scheduler?.stop()
     this.scheduler = null
     this.deps.camera.stop()
+    this.deps.orientation.stop()
     void this.deps.wakeLock.release()
   }
 
@@ -230,13 +278,15 @@ export class Session {
 }
 
 /** Build a session wired to the real camera, detector, and wake lock. */
-export function createSession(getVideo: () => HTMLVideoElement): Session {
+export function createSession(getVideo: () => HTMLVideoElement | null): Session {
   return new Session({
     camera: new Camera(getVideo),
     wakeLock: new WakeLock(),
+    orientation: createOrientationSensor(),
     createEngine: () => new DetectionEngine(),
     createScheduler: (engine, handlers) => {
       const video = getVideo()
+      if (!video) throw new Error('The video element is not mounted')
       return new FrameScheduler({
         maxFps: CONFIG.detection.maxFps,
         frameGapTolerance: CONFIG.detection.frameGapTolerance,
