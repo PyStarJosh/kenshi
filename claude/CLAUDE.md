@@ -20,10 +20,12 @@ Navigator: a real-time obstacle guide for blind and low-vision pedestrians that 
 ## Structure
 ```
 pyproject.toml, uv.lock     Python tooling (uv); dependency groups: ml, analysis
-ml/                         model export, class map, dataset prep, Colab notebook, model comparison, walk evaluation
+ml/                         model export, class map (class_map.json), dataset prep, Colab notebook, model comparison, walk evaluation
 web/                        Vite + React + TypeScript app
   public/models/            ONNX models (each under 15 MB)
   public/ort/               onnxruntime-web WebAssembly files, copied at build
+  public/sw.js              offline cache (service worker)
+  api/                      stretch step S6 only: the describe function
   src/core/                 types.ts (shared contracts), config.ts (every tunable number)
   src/camera/               camera stream, frame scheduler
   src/detection/            worker, engine, postprocess, classes.ts (generated)
@@ -35,7 +37,7 @@ web/                        Vite + React + TypeScript app
   src/health/               health monitor
   src/voice/                recognizer, commands
   src/telemetry/            test-mode logger, export
-  src/app/                  pipeline orchestrator, screens
+  src/app/                  pipeline orchestrator, screens, settings, calibration
   scripts/replay.ts         offline replay of test logs
   vercel.json               cross-origin isolation headers
 docs/                       SRS.md, SDS.md, TESTING.md, DEMO.md
