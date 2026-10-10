@@ -1,0 +1,70 @@
+.bench {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.bench h1 {
+  font-size: 1.5rem;
+}
+
+.bench-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-end;
+}
+
+.bench-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.bench-controls select,
+.bench-controls button {
+  min-height: 2.75rem;
+  padding: 0 1rem;
+  font: inherit;
+}
+
+.bench-info {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+}
+
+.bench-info dt {
+  font-weight: 600;
+}
+
+.bench-info dd {
+  margin: 0;
+}
+
+.bench-stats {
+  border-collapse: collapse;
+  margin: 1rem 0;
+}
+
+.bench-stats th,
+.bench-stats td {
+  padding: 0.25rem 0.75rem;
+  border: 1px solid currentColor;
+  text-align: right;
+}
+
+.bench-stats th[scope='row'] {
+  text-align: left;
+}
+
+.bench-stats caption {
+  margin-bottom: 0.5rem;
+  text-align: left;
+}
+
+.bench-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}

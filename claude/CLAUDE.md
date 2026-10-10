@@ -23,12 +23,13 @@ pyproject.toml, uv.lock     Python tooling (uv); dependency groups: ml, analysis
 ml/                         model export, class map (class_map.json), dataset prep, Colab notebook, model comparison, walk evaluation
 web/                        Vite + React + TypeScript app
   public/models/            ONNX models (each under 15 MB)
-  public/ort/               onnxruntime-web WebAssembly files, copied at build
+  public/ort/               onnxruntime-web WebAssembly files, copied by scripts/copy-ort.mjs (gitignored)
+  public/samples/           bus.jpg for the benchmark screen (?bench)
   public/sw.js              offline cache (service worker)
   api/                      stretch step S6 only: the describe function
   src/core/                 types.ts (shared contracts), config.ts (every tunable number)
   src/camera/               camera stream, frame scheduler
-  src/detection/            worker, engine, postprocess, classes.ts (generated)
+  src/detection/            worker, engine, protocol, preprocess, postprocess, classes.ts (generated)
   src/sensors/              device orientation
   src/geometry/             clock, distance, elevation, walking path
   src/tracking/             tracker, smoothing, time-to-contact
@@ -38,6 +39,7 @@ web/                        Vite + React + TypeScript app
   src/voice/                recognizer, commands
   src/telemetry/            test-mode logger, export
   src/app/                  pipeline orchestrator, screens, settings, calibration
+  scripts/copy-ort.mjs      copies onnxruntime-web WebAssembly files into public/ort (runs before dev and build)
   scripts/replay.ts         offline replay of test logs
   vercel.json               cross-origin isolation headers
 docs/                       SRS.md, SDS.md, TESTING.md, DEMO.md
@@ -107,7 +109,7 @@ Keep this section current when the structure changes.
 Python (repo root):
 - Sync: uv sync --all-groups
 - Export model: uv run --group ml python ml/export_onnx.py
-- Generate class map: uv run --group ml python ml/gen_classes.py
+- Generate class map: uv run --group ml python ml/gen_classes.py (reads ml/class_map.json, writes web/src/detection/classes.ts)
 - Evaluate walks: uv run --group analysis python ml/eval_walks.py <round folder>
 
 Web (in web/):
