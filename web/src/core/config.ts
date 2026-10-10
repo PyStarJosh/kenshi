@@ -23,6 +23,16 @@ export const CONFIG = {
       pole: 0.4,
       door: 0.45,
     } as Record<string, number>,
+    // Same-class boxes overlapping more than this are merged by non-max suppression. NFR-6
+    nmsIou: 0.45,
+    // Cap on WebAssembly threads when cross-origin isolated. NFR-1, NFR-2
+    maxWasmThreads: 4,
+  },
+
+  benchmark: {
+    // Benchmark screen (?bench): untimed warm-up inferences, then timed ones. NFR-1, NFR-2
+    warmupRuns: 10,
+    timedRuns: 50,
   },
 
   tracking: {

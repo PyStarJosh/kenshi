@@ -51,8 +51,8 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Satisfies:** FR-1, NFR-1, NFR-12.
 
 ### 2.4 Detection worker and engine
-- **Path:** `detection/worker.ts` (worker side), `detection/engine.ts` (main-thread client), `detection/preprocess.ts`, `detection/postprocess.ts`, `detection/classes.ts` (generated, exports `ClassInfo[]`)
-- **Responsibility:** load the ONNX model with onnxruntime-web (WebGPU, then WebAssembly), letterbox the frame to `inputSize`, run inference, decode, apply per-class thresholds, map boxes back to normalized source-frame coordinates. Also computes `meanLuma`. Restarts the worker once on a crash.
+- **Path:** `detection/worker.ts` (worker side), `detection/engine.ts` (main-thread client), `detection/protocol.ts` (message types), `detection/preprocess.ts`, `detection/postprocess.ts`, `detection/classes.ts` (generated, exports `ClassInfo[]`). The onnxruntime-web WebAssembly files are copied to `public/ort/` by `web/scripts/copy-ort.mjs` before dev and build and served from our own origin.
+- **Responsibility:** load the ONNX model with onnxruntime-web (WebGPU, then WebAssembly), letterbox the frame to `inputSize`, run inference, decode, apply per-class thresholds and class-aware NMS, map boxes back to normalized source-frame coordinates. Also computes `meanLuma`. Keeps only the newest waiting frame. The engine rejects loading with a typed `DetectionLoadError`; restarting the worker after a crash is the orchestrator's job (A2).
 - **In → out:** `{frameId, captureTimeMs, bitmap}` → `FrameResult`.
 - **Satisfies:** FR-2, NFR-1, NFR-2, NFR-5, NFR-6, NFR-12, NFR-13.
 
@@ -155,12 +155,27 @@ Budget for the **urgent path**, from the capture of the confirming frame, using 
 | Transfer to worker | 5 | 35 | transferable, no copy |
 | Preprocess | 15 | 50 | letterbox and tensor build |
 | Inference | 120 | 170 | NFR-2 |
-| Postprocess | 10 | 180 | NMS-free model output: threshold and scale |
+| Postprocess | 10 | 180 | decode, per-class threshold, NMS, scale to the frame |
 | Tracking and geometry | 10 | 190 | main thread, pure functions |
 | Alert policy | 5 | 195 | |
 | Audio start (urgent tone) | 25 | **220** | NFR-3 target 300; margin 80 |
 | Tone duration | 120 | 340 | `toneDurationMs` |
 | Gap and speech start | 150 | **490** | 80 ms `toneToSpeechGapMs` plus 70 ms for speech to begin; NFR-4 target 600, margin 110 |
+
+### 4.1 Measured on desktop (step A1)
+
+Benchmark screen (`?bench`), production build, 10 warm-up and 50 timed inferences on `bus.jpg`, three runs per configuration; each cell is the range of the three runs, p50 / p95 in ms. Microsoft Edge 155 (Chromium) headless on a Windows 11 laptop (Intel Core Ultra 7 155H, integrated GPU), cross-origin isolated, 4 WebAssembly threads. **These are not iPhone numbers**; Gate A measures those.
+
+| Configuration | Preprocess | Inference | Postprocess | Total (worker) |
+|---|---|---|---|---|
+| 320, WebGPU | 3.0 to 3.4 / 4.0 to 4.5 | 22.8 to 26.4 / 29.3 to 37.2 | 0.8 to 1.0 / 1.4 to 1.6 | 26.5 to 31.1 / 33.4 to 41.6 |
+| 416, WebGPU | 4.7 to 5.0 / 6.0 to 6.5 | 27.0 to 29.5 / 33.8 to 55.1 | 1.5 to 1.6 / 1.9 to 2.9 | 33.5 to 36.0 / 40.0 to 62.6 |
+| 320, WebAssembly | 2.3 to 2.8 / 3.1 to 3.9 | 32.0 to 56.6 / 35.4 to 68.4 | 0.5 to 0.9 / 1.0 to 1.3 | 34.9 to 60.6 / 38.4 to 72.4 |
+| 416, WebAssembly | 3.7 to 4.2 / 5.1 to 6.0 | 47.9 to 53.1 / 62.0 to 79.1 | 1.0 to 1.3 / 2.6 to 2.9 | 52.8 to 59.1 / 68.1 to 83.7 |
+
+- Model load takes about 1.2 to 1.7 s (WebAssembly) or 1.7 to 2.0 s (WebGPU). The thread hop adds only 0.3 to 0.5 ms (round trip minus worker total).
+- On this machine every configuration is within NFR-2 (inference p95 at most 120 ms) and within the preprocess, inference, and postprocess budgets in the table above. Run-to-run spread is large (for example 320 WebAssembly p50 inference 32 to 57 ms), so decide Gate A on repeated iPhone runs, not one.
+- The capture, transfer, tracking, and audio rows are not measured yet (A2 and U1).
 
 Notes:
 - A track becomes confirmed on its second matched frame, so confirmation adds up to one frame interval (about 125 ms at 8 fps) before this clock starts. NFR-3 and NFR-4 count from the frame that confirms.
@@ -254,7 +269,7 @@ The cutoffs are `clockCenterDeg` and `clockEdgeDeg`. At a 65° field the visible
 - **Main thread:** UI, camera, scheduler, orchestrator, tracker, geometry, policy, audio scheduling, speech, voice.
 - **Detection worker:** onnxruntime-web session, preprocessing (OffscreenCanvas), inference, postprocessing. Nothing else.
 - **Latest frame wins:** the scheduler holds at most one frame in flight. A busy worker means the frame is skipped, never queued. If a result is overdue by `stalledAfterMs`, the engine restarts the worker once and the health monitor reports it.
-- **Backends:** try WebGPU; if creation or the first run fails, use WebAssembly. WebAssembly uses multiple threads only when `crossOriginIsolated` is true (COOP/COEP headers from Vite and Vercel); otherwise one thread, which the benchmark and health monitor will show as a low frame rate.
+- **Backends:** try WebGPU; if creation or the first run fails, use WebAssembly. WebAssembly uses multiple threads (up to `maxWasmThreads`) only when `crossOriginIsolated` is true (COOP/COEP headers from Vite and Vercel); otherwise one thread, which the benchmark and health monitor will show as a low frame rate. Forcing WebGPU on a device without it fails with a typed `webgpu-unavailable` error; "auto" falls back to WebAssembly and reports why.
 - **Audio path:** tones are scheduled on the `AudioContext` clock, not by timers on the main thread. No inference runs there.
 
 ## 9. Failure modes and user response
@@ -281,7 +296,7 @@ Every failure is spoken (unless spoken feedback is off), written to the aria-liv
 
 ## 10. Model plan
 
-- **Base model:** YOLO26n (COCO, 80 classes). The default export is end-to-end (NMS-free), so postprocess is mostly threshold and scale; if the export turns out to need NMS, postprocess adds it. `ml/export_onnx.py` exports at the chosen size, simplifies with onnxslim, and writes `web/public/models/yolo26n-<size>.onnx` (under 15 MB).
+- **Base model:** YOLO26n (COCO, 80 classes). `ml/export_onnx.py` exports it at 320 and 416 (opset 18, simplified by onnxslim) to `web/public/models/yolo26n-<size>.onnx` (9.8 MB each, under the 15 MB limit). The export used here is **raw**: one output of shape `[1, 4 + 80, N]` (N is 2100 at 320 and 3549 at 416) holding center x, center y, width, and height in input pixels, then one score per class (already between 0 and 1). The graph contains no NMS, so postprocess decodes it, applies per-class thresholds, and runs class-aware NMS (`nmsIou`). An end-to-end NMS-free export also exists and could trim postprocess later, but postprocess already measures under 3 ms (section 4.1).
 - **Input size:** 320 or 416, decided at **Gate A** on the demo iPhone: choose 416 only if p95 inference stays at or below 120 ms and the frame rate stays at or above 8 fps; otherwise 320. Until then `CONFIG.detection.inputSize` is 320.
 - **Class map:** `ml/class_map.json` is the hand-maintained source of truth (per class id: spoken name, typical height, ground contact, alertable). `ml/gen_classes.py` generates `detection/classes.ts` as `ClassInfo[]`. Initial alertable COCO classes: person, bicycle, car, motorcycle, bus, truck, bench, chair, couch, dining table, potted plant, backpack, suitcase, handbag, fire hydrant, parking meter, dog.
 - **Retrained hazard model (M2, M3):** the base classes plus stairs, curb, pole, and door. COCO ids 0 to 79 keep their numbers and the new classes take 80 to 83, so the class map stays compatible. It replaces the base model only if it wins on our own field-test labels: better recall on the four new classes, no loss of more than 2 points of in-path recall on the COCO obstacle classes, no more false alerts per minute, and inference still within NFR-2 on the iPhone.
@@ -339,7 +354,7 @@ Verification methods are the same as in the SRS.
 ## 12. Uncertain design points
 - The default horizontal field of view (65°) is an estimate; calibration on the demo phone replaces it.
 - The WebGPU path on the demo iPhone's iOS version is unverified; the WebAssembly fallback is the planned floor.
-- The exact YOLO26n ONNX output layout is verified in M1 and A1; postprocess is written against the real file.
+- The retrained model (M3) must keep the raw `[1, 4 + nc, N]` layout; the worker refuses a model whose class count differs from `classes.ts`.
 - Speech recognition with AirPods in transparency mode may change the audio route; the tap fallback covers a failure.
 - Speech-start latency on iOS (70 ms in the budget) is optimistic and must be measured.
 - Letting a high-confidence in-path object skip the 2-of-3 confirmation was considered for speed and rejected for now, because it risks the false-alert target (NFR-6).

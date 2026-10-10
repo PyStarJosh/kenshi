@@ -17,6 +17,7 @@ wheels/
 # Node
 node_modules/
 web/dist/
+web/public/ort/
 
 # Models and data (ONNX files under web/public/models/ stay tracked)
 *.pt

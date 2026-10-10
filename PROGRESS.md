@@ -8,9 +8,9 @@ Edit only your own track's section. Keep this file under 80 lines.
 **Next:** tracks start A1, U1, M1 in parallel against types.ts and config.ts. Then S3 integration (Gate B).
 
 ## App
-**Works:** placeholder screen with a Start button and an aria-live status line.
-**Broken:** nothing yet.
-**Next:** A1 detection engine and benchmark.
+**Works:** placeholder screen. A1 done (branch a1-detection): detection worker + engine (WebGPU, then WebAssembly, 4 threads when cross-origin isolated), postprocess/preprocess with tests, benchmark at ?bench. Desktop Edge 155: inference p95 30-55 ms on WebGPU, 35-79 ms on WebAssembly (see SDS 4.1).
+**Broken:** nothing known. No iPhone numbers yet.
+**Next:** Gate A: run ?bench on the demo iPhone (via ngrok), pick input size 320 or 416. Then A2 live camera loop.
 
 ## Audio/UX
 **Works:** nothing yet.
@@ -25,7 +25,9 @@ Edit only your own track's section. Keep this file under 80 lines.
 ## Decisions
 - Python 3.13 is pinned (.python-version); requires-python stays >=3.11 so older interpreters still work. The project is tooling only (tool.uv package = false), so there is no installable package.
 - Cross-origin isolation (COOP same-origin, COEP require-corp) is sent by the Vite dev and preview servers and by Vercel, because multi-threaded WebAssembly in onnxruntime-web needs it.
-- Model name in docs is YOLO26n (owner decision), not YOLO11n. YOLO26n exports NMS-free by default; postprocess adds NMS only if the real export needs it.
+- Model is YOLO26n (owner decision), not YOLO11n. Our export is raw [1, 84, N] (no NMS in the graph), so postprocess decodes, thresholds per class, and runs class-aware NMS (nmsIou 0.45).
+- A1 included a minimal M1 (ml/export_onnx.py, ml/class_map.json, ml/gen_classes.py, classes.ts, two ONNX files) because nothing from M1 was on main. The Model track owns these from here and may replace them.
+- onnxruntime-web WebAssembly files (asyncify build, 26 MB) are copied to web/public/ort/ by scripts/copy-ort.mjs before dev and build; the folder is gitignored. Vite resolves ort with the onnxruntime-web-use-extern-wasm condition so the file is not bundled twice.
 - A track needs 2 of 3 matched frames before it can alert; we did not add a faster path for urgent hazards, to protect the false-alert target (NFR-6). Revisit after field tests.
 - While paused, a reminder repeats every 15 s (SR-9), so a paused app is never mistaken for a quiet path.
 - types.ts frame log entries carry detections and orientation, so scripts/replay.ts can re-run the pipeline offline.
