@@ -134,8 +134,36 @@ export const CONFIG = {
     // Frequencies of the normal and urgent tones. FR-12
     normalToneHz: 660,
     urgentToneHz: 990,
+    // Info tone: lower and softer than the normal tone. FR-12
+    infoToneHz: 440,
+    infoToneGain: 0.5,
+    // Urgent tone: this many short pulses; the gap between them shrinks from max (at urgentDistanceM)
+    // to min (at urgentPulseNearM or closer), so closer hazards pulse faster. FR-12, SR-4
+    urgentPulseCount: 3,
+    urgentPulseMs: 60,
+    urgentPulseGapMinMs: 30,
+    urgentPulseGapMaxMs: 120,
+    urgentPulseNearM: 0.5,
+    // Health warning: two falling tones, centered. FR-14, SR-5
+    warningToneHz: [880, 587],
+    warningToneMs: 150,
+    // Tones are scheduled this far ahead on the audio clock so they start cleanly. NFR-3
+    toneLookaheadMs: 10,
     // Heartbeat tick interval while healthy. FR-13, SR-1
     heartbeatIntervalMs: 2000,
+    // Heartbeat tick: a short soft click, centered. FR-13
+    heartbeatToneHz: 1200,
+    heartbeatToneMs: 25,
+    // How often the heartbeat and health checks run on the main thread. FR-13, FR-14
+    checkIntervalMs: 250,
+    // Defaults until the settings screen (U3) exists. FR-17
+    defaultSpeechRate: 1,
+    defaultToneVolume: 0.8,
+    defaultHeartbeatVolume: 0.25,
+    // If speech never reports its end (an iOS bug), it is treated as finished after
+    // base + per-character time, so the heartbeat and later alerts never stay blocked. SR-1
+    speechWatchdogBaseMs: 3000,
+    speechWatchdogPerCharMs: 120,
     // Reminder interval while paused, so silence never reads as clear. SR-9
     pausedReminderIntervalMs: 15000,
     // Speech rate bounds and the step used by "slower" and "faster". FR-15, FR-17

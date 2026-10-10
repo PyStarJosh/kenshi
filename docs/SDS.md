@@ -87,7 +87,9 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Satisfies:** SR-8 (errors travel on it), integration of all tracks.
 
 ### 2.10 Audio engine
-- **Path:** `audio/unlock.ts`, `audio/tones.ts`, `audio/speech.ts`, `audio/heartbeat.ts`
+- **Path:** `audio/unlock.ts`, `audio/tones.ts`, `audio/speech.ts`, `audio/heartbeat.ts`, `audio/engine.ts` (ties them together); `app/audioLink.ts` connects the session, health monitor, and engine; `app/screens/AudioTestPanel.tsx` fires sample alerts under `?debug`
+- **Tones:** urgent is `urgentPulseCount` high pulses whose gap shrinks with distance (unknown distance pulses fastest); normal is one mid tone; info one softer low tone; the health warning is two falling tones, centered; the heartbeat is a short soft click. Pan comes from `AlertEvent.pan` (`panFromAngle` maps a horizontal angle to -1..1).
+- **Speech:** at most one phrase waiting (the newest wins); urgent cancels and speaks at once; an enhanced local English voice is preferred once `voiceschanged` lists voices; a watchdog ends a phrase whose end event never comes, so the heartbeat cannot stay blocked.
 - **Responsibility:** unlock the `AudioContext` and speech on Start; play the panned lead-in tone; speak phrases with `speechSynthesis` at the user's rate; one utterance at a time with urgent preemption; run the heartbeat only while `HealthState.status` is `healthy` and fresh; run the paused reminder. Before speaking, drops any alert past `staleLimitMs` or whose track is gone.
 - **In → out:** `AlertEvent`, `HealthState`, `Settings` → sound; emits `alertOutcome` with `AlertOutcome`.
 - **Satisfies:** FR-12, FR-13, FR-17, FR-18, SR-1, SR-3, SR-4, SR-9, NFR-3, NFR-4.
@@ -99,7 +101,7 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Satisfies:** FR-15, FR-16, FR-18.
 
 ### 2.12 Health monitor
-- **Path:** `health/monitor.ts`
+- **Path:** `health/monitor.ts`; `health/pitch.ts` reads camera pitch from device orientation until the orientation sensor (A3) replaces it
 - **Responsibility:** pure state machine over frame arrivals, fps window, `meanLuma`, pitch, camera, worker, and audio status; produces `HealthState` and the transitions that trigger warnings (immediately on entry, repeated every `warningRepeatMs`, cleared after `recoverAfterMs`).
 - **In → out:** `FrameResult`, `OrientationSample`, error signals, clock ticks → `HealthState`.
 - **Satisfies:** FR-14, SR-1, SR-5, SR-6, SR-8, NFR-1.
@@ -284,11 +286,12 @@ Every failure is spoken (unless spoken feedback is off), written to the aria-liv
 | WebGPU unavailable | engine | Silent switch to WebAssembly; warning only if frame rate drops | Automatic |
 | Worker crash or stall | engine, health | "Detection stalled." | One automatic restart, then retry button |
 | Low frame rate | health | "Detection is slow." | Repeats until it recovers |
-| Low light | health | "It is too dark for reliable detection." | Repeats until light improves |
-| Phone lowered or raised | health | "Raise the phone to eye level." | Clears when pitch is back in range |
+| Low light | health | "Too dark to detect reliably." | Repeats until light improves |
+| Phone lowered or raised | health | "Raise the phone to eye level." (or "Lower …" when pointed up) | Clears when pitch is back in range |
+| Health warning clears (after `recoverAfterMs` of good readings) | health | "Detection back." once | Heartbeat resumes |
 | Orientation sensor denied or missing | sensor | "Distance will be less accurate." (once) | Box-size distance used; re-request on Start |
 | Speech output unavailable | audio | Tones keep playing; text shown large on screen | Retry on next tap |
-| Audio blocked or route lost (AirPods disconnect, interruption) | audio, health | On-screen warning "Sound is off. Tap to restore." | Tap resumes the `AudioContext` |
+| Audio blocked or route lost (AirPods disconnect, interruption) | audio, health | On-screen warning "Sound is off. Tap the screen to restore it." | Tap resumes the `AudioContext` |
 | Speech recognition unavailable, denied, or silent | recognizer | Tap runs "what's around me" | Automatic fallback |
 | Frame or alert too old | audio | Alert dropped; logged | Automatic |
 | Describe request fails (stretch) | describe | "Could not describe the scene." | Try again |

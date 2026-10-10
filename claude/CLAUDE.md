@@ -34,11 +34,11 @@ web/                        Vite + React + TypeScript app
   src/geometry/             clock, distance, elevation, walking path
   src/tracking/             tracker, smoothing, time-to-contact
   src/alerts/               policy, phrases, event bus
-  src/audio/                unlock, tones, speech, heartbeat
-  src/health/               health monitor
+  src/audio/                unlock, tones, speech, heartbeat, engine
+  src/health/               health monitor, camera pitch (until A3's sensor)
   src/voice/                recognizer, commands
   src/telemetry/            test-mode logger, export
-  src/app/                  session (live run), pipeline orchestrator, screens, settings, calibration
+  src/app/                  session (live run), audio link, pipeline orchestrator, screens, settings, calibration
   scripts/copy-ort.mjs      copies onnxruntime-web WebAssembly files into public/ort (runs before dev and build)
   scripts/replay.ts         offline replay of test logs
   vercel.json               cross-origin isolation headers

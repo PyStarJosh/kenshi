@@ -1,0 +1,29 @@
+.audio-test {
+  position: absolute;
+  /* Above the status line, and clear of the debug clock on the right. */
+  left: max(0.5rem, env(safe-area-inset-left));
+  bottom: calc(3.5rem + env(safe-area-inset-bottom));
+  max-width: min(36rem, 60vw);
+  z-index: 2;
+  padding: 0.35rem 0.5rem;
+  background: #000c;
+  color: #fff;
+  font: 0.75rem/1.35 ui-monospace, monospace;
+}
+
+.audio-test-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.audio-test button {
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+}
+
+.audio-test-info {
+  margin: 0;
+}

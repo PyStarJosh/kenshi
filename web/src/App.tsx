@@ -1,14 +1,18 @@
 import type { CSSProperties } from 'react'
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useSyncExternalStore } from 'react'
+import { useAudioLink } from './app/useAudioLink'
 import { useSession } from './app/useSession'
 
 const DebugOverlay = lazy(() => import('./app/screens/DebugOverlay.tsx'))
+const AudioTestPanel = lazy(() => import('./app/screens/AudioTestPanel.tsx'))
 
 const debugEnabled = new URLSearchParams(window.location.search).has('debug')
 const DEFAULT_ASPECT = 16 / 9
 
 export default function App() {
   const { session, snapshot, setVideo } = useSession()
+  const audio = useAudioLink(session)
+  const audioError = useSyncExternalStore(audio.subscribe, () => audio.getView().error)
   const { state, message, frameSize } = snapshot
   const live = state === 'running' || state === 'paused'
   const aspect = frameSize ? frameSize.width / frameSize.height : DEFAULT_ASPECT
@@ -34,7 +38,11 @@ export default function App() {
             type="button"
             className="start"
             disabled={state === 'starting'}
-            onClick={() => void session.start()}
+            onClick={() => {
+              // Audio and speech must be unlocked inside this tap, before anything is awaited.
+              audio.unlock(true)
+              void session.start()
+            }}
           >
             Start
           </button>
@@ -48,14 +56,24 @@ export default function App() {
         <button
           type="button"
           className="pause"
-          onClick={() => (state === 'running' ? session.pause() : void session.resume())}
+          onClick={() => {
+            audio.unlock(false)
+            if (state === 'running') session.pause()
+            else void session.resume()
+          }}
         >
           {state === 'running' ? 'Pause' : 'Resume'}
         </button>
       )}
 
+      {debugEnabled && (
+        <Suspense fallback={null}>
+          <AudioTestPanel link={audio} />
+        </Suspense>
+      )}
+
       <p role="status" aria-live="polite" className="status">
-        {message}
+        {audioError ? `${message} ${audioError}` : message}
       </p>
     </main>
   )
