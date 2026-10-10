@@ -159,16 +159,23 @@ export const CONFIG = {
     urgentCooldownMs: 2000,
     // Minimum time before re-announcing a track that entered a closer band. FR-10
     closerBandCooldownMs: 1500,
-    // Minimum time before repeating an unchanged in-path track. FR-10
-    repeatCooldownMs: 10000,
+    // Minimum time before re-announcing a track whose clock position changed. An unchanged object is
+    // announced once, never repeated on a timer. FR-10
+    clockChangeCooldownMs: 3000,
     // Minimum silence between two spoken alerts (urgent alerts ignore it). FR-10
     minGapMs: 800,
-    // Normal alerts waiting behind the current one; extra ones are dropped. FR-10
+    // Normal alerts waiting behind the current one; extra ones are held back or dropped. FR-10
     maxQueuedAlerts: 2,
+    // An alert counts as finished this long after it was sent even if the audio engine never reports
+    // back, so a missing report cannot silence every later alert. FR-10, SR-1
+    inFlightTimeoutMs: 8000,
     // An alert older than this, measured from its frame capture, is dropped unspoken. SR-3, NFR-4
     staleLimitMs: 1000,
-    // Objects listed by "what's around me". FR-15
-    summaryMaxItems: 3,
+    // Horizontal angle (degrees from straight ahead) at which the tone is panned fully left or right. FR-12
+    panFullAngleDeg: 30,
+    // Most objects listed by "what's around me", nearest first, and the farthest one it will mention. FR-15
+    summaryMaxItems: 5,
+    summaryMaxDistanceM: 6,
   },
 
   audio: {

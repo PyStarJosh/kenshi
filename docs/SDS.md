@@ -4,7 +4,7 @@ Version 0.1 · How we meet [SRS.md](SRS.md). Type names refer to `web/src/core/t
 
 ## 1. Architecture overview
 
-Everything runs in the browser. Heavy work (preprocessing, inference, postprocessing) runs in one Web Worker. Everything else is light and runs on the main thread. Modules talk through typed function calls along the main data path, and through the event bus for alerts, health, voice, settings, and telemetry. `app/session.ts` owns the live run (start, pause, resume, page hide) and `app/pipeline.ts` will wire the tracking, geometry, and alert modules into it as they arrive.
+Everything runs in the browser. Heavy work (preprocessing, inference, postprocessing) runs in one Web Worker. Everything else is light and runs on the main thread. Modules talk through typed function calls along the main data path, and through the event bus for alerts, health, voice, settings, and telemetry. `app/session.ts` owns the live run (start, pause, resume, page hide) and `app/pipeline.ts` wires each frame through the tracker and the alert policy, publishes the results on the event bus, and connects the audio link.
 
 ```mermaid
 flowchart TD
@@ -75,14 +75,14 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Satisfies:** FR-4, FR-5, NFR-6.
 
 ### 2.8 Alert policy and phrases
-- **Path:** `alerts/policy.ts` (decisions), `alerts/phrases.ts` (all spoken text)
-- **Responsibility:** choose which tracks become `AlertEvent`s, with priority, cooldowns, and the queue rules in section 7; build phrases in the CLAUDE.md format; hold the summary, help, and health texts. `phrases.ts` is the only place spoken wording lives, so SR-2 can be tested in one file.
-- **In → out:** `Track[]`, `HealthState`, `VoiceIntent`, `Settings` → `AlertEvent`.
+- **Path:** `alerts/policy.ts` (decisions), `alerts/phrases.ts` (the wording of object alerts and the "what's around me" answer)
+- **Responsibility:** choose which tracks become `AlertEvent`s, with priority, pan, cooldowns, and the queue rules in section 7; build the object phrases in the CLAUDE.md format; answer "what's around me". Pure: the caller passes the time. `phrases.ts` holds the object and summary wording, so SR-2 can be tested in one file; health, voice, and help texts live with their own modules (`health/monitor.ts`, `voice/commands.ts`), and `alerts/wording.test.ts` checks the wording of all of them against the SR-2 word list.
+- **In → out:** `Track[]` + the time of the frame and the current time → at most one `AlertEvent` per frame, plus the alerts it dropped; `notifyOutcome(alertId, AlertOutcome)` from the audio side; `summarize(Track[])` → one phrase.
 - **Satisfies:** FR-9, FR-10, FR-11, SR-2, SR-3, SR-4, SR-7, NFR-6.
 
 ### 2.9 Event bus
 - **Path:** `alerts/bus.ts`
-- **Responsibility:** a minimal typed publish/subscribe keyed by `EventMap` (`frame`, `tracks`, `alert`, `alertOutcome`, `health`, `voice`, `settings`, `telemetry`). No other module imports another track's internals.
+- **Responsibility:** a minimal typed publish/subscribe keyed by `EventMap` (`frame`, `tracks`, `alert`, `alertOutcome`, `health`, `voice`, `settings`, `telemetry`). A listener that throws is reported (`console.error`) and does not stop the others. No other module imports another track's internals. Today the pipeline publishes `frame`, `tracks`, `alert`, and `alertOutcome`; the other topics arrive with S3.
 - **In → out:** `EventMap[K]` in, same payload out to subscribers.
 - **Satisfies:** SR-8 (errors travel on it), integration of all tracks.
 
@@ -119,7 +119,7 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Satisfies:** FR-17, FR-6, FR-7.
 
 ### 2.15 Pipeline orchestrator and screens
-- **Path:** `app/session.ts` (start, pause, resume, page hide, shutdown), `app/useSession.ts`, `app/messages.ts`, `app/screens/` (including `DebugOverlay.tsx`, shown with `?debug`), `App.tsx`; `app/pipeline.ts` arrives with tracking and geometry.
+- **Path:** `app/session.ts` (start, pause, resume, page hide, shutdown), `app/useSession.ts`, `app/messages.ts`, `app/pipeline.ts` and `app/usePipeline.ts` (tracker, alert policy, event bus, audio link), `app/screens/` (including `DebugOverlay.tsx`, shown with `?debug`, which draws the pipeline's tracks and shows its alerts as captions), `App.tsx`.
 - **Responsibility:** per-frame wiring (section 3), Start sequence (wake lock, camera, and model load all start in the Start tap), pause/resume, aria-live status line, large Talk area, first-run text stating the cane is still needed. Landscape-first layout that also works upright.
 - **Satisfies:** FR-16, FR-18, NFR-9, NFR-10, NFR-11, NFR-12, SR-7, SR-8.
 
@@ -243,37 +243,42 @@ Both raw candidates are kept in the result for tuning. The distance is smoothed 
 
 ## 7. Alert policy
 
-**Eligibility.** A confirmed track with `alertable` class that is `inPath` or `approaching`, with `distanceM` within `corridorDepthM`.
+Implemented in `alerts/policy.ts` and `alerts/phrases.ts`, run by `app/pipeline.ts` once per frame.
+
+**Eligibility.** A confirmed track of an announced class (`ClassInfo.alertable`) that is `inPath` with `distanceM` within `corridorDepthM`, or `approaching` with `timeToContactS <= approachMaxTtcS` (4 s).
 
 **Priorities.**
-- `urgent`: eligible track that is `inPath` with `distanceM <= urgentDistanceM` (1.5 m) or `timeToContactS <= urgentTtcS` (2 s). Health warnings are also `urgent`.
-- `normal`: other eligible tracks.
-- `info`: summaries ("what's around me"), help, status confirmations, descriptions.
+- `urgent`: eligible and `inPath` with `distanceM <= urgentDistanceM` (1.5 m) or `timeToContactS <= urgentTtcS` (2 s). Health warnings are also `urgent`.
+- `normal`: any other in-path track.
+- `info`: a track that is approaching but outside the path. The audio engine uses `info` for summaries, help, and status too.
+
+**When a track is announced.** Each track is announced once. It is announced again only when:
+- it becomes urgent (escalation; again no sooner than `urgentCooldownMs` (2 s) after its last urgent alert, and a fall back below urgent makes a later return a new escalation);
+- it enters the path (after `closerBandCooldownMs`, 1.5 s);
+- it moves into a closer distance band (`distanceBandsM` 1.5, 3, 4), measured against the band last announced, after `closerBandCooldownMs`;
+- its clock position changes, after `clockChangeCooldownMs` (3 s).
+
+There is **no repeat on a timer**: a stationary chair is announced once however long you stand there (the heartbeat, not repetition, shows the app is working). A track that disappears and returns gets a new id and is announced again. The first draft of this section also repeated an unchanged object every 10 s; step A5 removed that, and `repeatCooldownMs` with it.
 
 **Speaking rules.**
-- One alert at a time. An `urgent` alert cancels the current speech, plays its tone, and speaks. `normal` and `info` never interrupt.
-- Waiting alerts are kept in a queue of at most `maxQueuedAlerts` (2), ordered by priority, then nearest distance. A newer alert for the same track replaces its queued one.
-- At least `minGapMs` (800) between spoken alerts, except urgent.
+- One alert in flight. The policy learns when it ends from `notifyOutcome` (the audio link reports `finished`, `preempted`, or a drop through the bus), and treats it as ended `inFlightTimeoutMs` (8 s) after it was sent if nothing is reported, so a missing report cannot silence later alerts. At least `minGapMs` (800 ms) passes before the next one, except urgent.
+- Urgent preempts a non-urgent alert in flight. It never cuts off another urgent alert; it waits for it.
+- Waiting alerts: at most `maxQueuedAlerts` (2). More than that are held back (their track is not marked as announced, so they come up again as room appears), and a nearer or more urgent arrival pushes out the least important waiting alert. When several compete, the most urgent goes first, then the nearest. A newer alert for the same track replaces its waiting one.
+- A waiting alert follows its track: it is rewritten from every new frame, so waiting behind speech never makes it stale.
 
-**Cooldowns and re-announcement** (per track).
-- First time a track is eligible: announce.
-- Escalation to `urgent`: announce immediately, once per escalation; repeat no sooner than `urgentCooldownMs` (2 s).
-- Entering a closer distance band (`distanceBandsM` 1.5, 3, 4): announce again after `closerBandCooldownMs` (1.5 s).
-- Otherwise unchanged and still eligible: repeat only after `repeatCooldownMs` (10 s).
-- A track that was deleted and reappears is a new track and is announced again.
+**Dropping.** Every drop is recorded with a reason (`DropRecord`, also kept in `getDropLog()`): `stale` (the frame feeding the policy is older than `staleLimitMs`, 1 s; waiting alerts are dropped and nothing is announced from it), `track-gone`, `not-eligible` (its track left the path), `superseded`, or `queue-full`. The first two are also published as `alertOutcome` (`dropped-stale`, `dropped-track-gone`). The audio engine makes its own last-moment check, right before speech starts, for the same two conditions (SR-3).
 
-**Stale-drop.** Before speech starts, the audio engine drops an alert if `now - frameTimeMs > staleLimitMs` (1000 ms) or if `trackId` no longer exists. Each drop is reported as `dropped-stale` or `dropped-track-gone`.
+**An alert that was not heard is announced again.** If the audio engine reports an alert as dropped or cut off, or if an urgent alert cuts off a normal one, the track is treated as not yet announced and comes up again from a fresh frame (unless a newer alert for it is already waiting). Without this, one dropped alert, for example one that waited behind the Start greeting, would mean the user never hears about that object.
+
+**Tone.** The pan follows the horizontal angle: `-1` full left to `+1` full right, reaching full at `panFullAngleDeg` (30°). The pulse rate of the urgent tone is worked out by the audio engine from the track's live distance when the tone starts (`audio/tones.ts`), so it rises as the object nears; the policy does not duplicate that.
 
 **Phrase format.** `<object>, <clock> o'clock, about <meters> meters[, on the floor | , at head height]`.
-- Object: `ClassInfo.spokenName`. Clock: "11 o'clock", "12 o'clock", "1 o'clock"; for far positions, "far left" or "far right" replaces "<clock> o'clock".
+- Object: `ClassInfo.spokenName`, capitalized. Clock: "11 o'clock", "12 o'clock", "1 o'clock"; for far positions, "far left" or "far right" replaces "<clock> o'clock". The distance is left out when unknown ("Pole, far right.").
 - Meters: rounded to the nearest 0.5, numerals ("about 1.5 meters"); "1 meter" is singular.
 - Suffix only for `floor` and `head`.
 - Example: "Backpack, 1 o'clock, about 2 meters, on the floor."
 
-**Other texts** (all in `phrases.ts`, none may contain "clear", "safe", "free", "no obstacles", or similar):
-- Summary with items: up to `summaryMaxItems` (3) phrases, nearest first.
-- Summary with none: "I don't detect anything right now. I can miss things, so keep using your cane."
-- Health warnings, pause and resume confirmations, help, and the paused reminder.
+**"What's around me".** The nearest `summaryMaxItems` (5) confirmed tracks of announced classes within `summaryMaxDistanceM` (6 m), in or out of the path, each as the same short phrase, in clock order from left to right. With none: "I don't detect anything right now. I can miss things, so keep using your cane." Every sentence in `phrases.ts`, and the health, voice, status, and greeting texts, is tested against the SR-2 word list (no "clear", "safe", "free", "no obstacles").
 
 ## 8. Threading and scheduling
 - **Main thread:** UI, camera, scheduler, orchestrator, tracker, geometry, policy, audio scheduling, speech, voice.

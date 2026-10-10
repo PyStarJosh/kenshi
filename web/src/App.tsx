@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import { lazy, Suspense, useState, useSyncExternalStore } from 'react'
 import { useAudioLink } from './app/useAudioLink'
+import { usePipeline } from './app/usePipeline'
 import TalkButton from './app/screens/TalkButton'
 import { useSession } from './app/useSession'
 
@@ -17,6 +18,7 @@ type View = 'main' | 'settings' | 'calibrate'
 export default function App() {
   const { session, snapshot, setVideo } = useSession()
   const audio = useAudioLink(session)
+  const pipeline = usePipeline(session, audio)
   const audioError = useSyncExternalStore(audio.subscribe, () => audio.getView().error)
   const voiceMessage = useSyncExternalStore(audio.subscribe, () => audio.getView().voiceMessage)
   const [view, setView] = useState<View>('main')
@@ -33,7 +35,7 @@ export default function App() {
         <video ref={setVideo} className="video" aria-hidden="true" />
         {debugEnabled && live && (
           <Suspense fallback={null}>
-            <DebugOverlay session={session} snapshot={snapshot} />
+            <DebugOverlay session={session} snapshot={snapshot} pipeline={pipeline} />
           </Suspense>
         )}
       </div>
