@@ -58,6 +58,33 @@
   margin: 0;
 }
 
+/* The latest alerts the policy sent, shown as captions until they are heard through the speakers. */
+.debug-captions {
+  position: absolute;
+  left: max(0.5rem, env(safe-area-inset-left));
+  bottom: 4.5rem;
+  max-width: 60%;
+  margin: 0;
+  padding: 0.25rem 0.5rem 0.25rem 1.5rem;
+  background: #000a;
+  color: #fff;
+  font: 0.8rem/1.35 ui-monospace, monospace;
+  list-style: none;
+  pointer-events: none;
+}
+
+.debug-captions:empty {
+  display: none;
+}
+
+.debug-caption-urgent {
+  color: #ff8a80;
+}
+
+.debug-caption-info {
+  color: #b3e5fc;
+}
+
 .debug-clock {
   position: absolute;
   right: max(0.5rem, env(safe-area-inset-right));

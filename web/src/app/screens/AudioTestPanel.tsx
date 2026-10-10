@@ -1,6 +1,6 @@
 // Audio test panel (?debug): fires sample alerts and health announcements before the alert policy (A5)
 // exists, and shows the measured tone and speech delays.
-import { useEffect, useSyncExternalStore } from 'react'
+import { useSyncExternalStore } from 'react'
 import type { AlertPriority } from '../../core/types'
 import { HEALTH_PHRASES } from '../../health/monitor'
 import type { HealthAnnouncement } from '../../health/monitor'
@@ -36,19 +36,12 @@ const HEALTH: { label: string; announcement: HealthAnnouncement }[] = [
   { label: 'Recovered', announcement: { kind: 'recovered', phrase: HEALTH_PHRASES.recovered } },
 ]
 
-const SAMPLE_SUMMARY = 'Test summary: backpack, 1 o\'clock, about 2 meters, on the floor.'
 
 const ms = (value: number | null) => (value === null ? '-' : `${value.toFixed(0)} ms`)
 
 export default function AudioTestPanel({ link }: Props) {
   const view = useSyncExternalStore(link.subscribe, link.getView)
   const { health, timing } = view
-
-  // Until the alert policy (A5) provides summarize(), "what's around me" says a sample phrase.
-  useEffect(() => {
-    link.setSummarizer(() => SAMPLE_SUMMARY)
-    return () => link.setSummarizer(null)
-  }, [link])
 
   return (
     <section className="audio-test" aria-label="Audio test panel">

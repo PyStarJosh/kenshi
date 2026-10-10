@@ -3,8 +3,7 @@
 import { useEffect, useState } from 'react'
 import { CONFIG } from '../../core/config'
 import type { FrameResult, Track } from '../../core/types'
-import { CLASSES } from '../../detection/classes'
-import { Tracker } from '../../tracking/tracker'
+import type { Caption, Pipeline } from '../pipeline'
 import { settingsStore } from '../settings'
 import type { Session, SessionSnapshot } from '../session'
 import { trackGeometryLabel, trackMotionLabel } from './geometryLabel'
@@ -14,6 +13,7 @@ import './DebugOverlay.css'
 interface Props {
   session: Session
   snapshot: SessionSnapshot
+  pipeline: Pipeline
 }
 
 interface Shown {
@@ -23,23 +23,27 @@ interface Shown {
 
 const ms = (value: number) => value.toFixed(0)
 
-export default function DebugOverlay({ session, snapshot }: Props) {
+export default function DebugOverlay({ session, snapshot, pipeline }: Props) {
   const [stats] = useState(() => new LiveStats())
-  const [tracker] = useState(() => new Tracker(CLASSES))
   const [shown, setShown] = useState<Shown | null>(null)
+  const [captions, setCaptions] = useState<readonly Caption[]>(() => pipeline.getCaptions())
   const [nowMs, setNowMs] = useState(() => performance.now())
 
-  useEffect(
-    () =>
-      session.onResult((result) => {
+  // The pipeline publishes each frame, then its tracks, then any alert, all in one go.
+  useEffect(() => {
+    let latest: FrameResult | null = null
+    const stops = [
+      pipeline.bus.subscribe('frame', (result) => {
         stats.push(result)
-        // Pair the frame with the tilt at the moment it was captured, not the moment it finished.
-        const tilt = session.getOrientationAt(result.captureTimeMs)
-        const settings = settingsStore.getSnapshot()
-        setShown({ result, tracks: tracker.update(result, tilt, settings) })
+        latest = result
       }),
-    [session, stats, tracker],
-  )
+      pipeline.bus.subscribe('tracks', (tracks) => {
+        if (latest) setShown({ result: latest, tracks })
+      }),
+      pipeline.bus.subscribe('alert', () => setCaptions(pipeline.getCaptions())),
+    ]
+    return () => stops.forEach((stop) => stop())
+  }, [pipeline, stats])
 
   useEffect(() => {
     const id = setInterval(() => setNowMs(performance.now()), CONFIG.debug.clockUpdateMs)
@@ -108,6 +112,13 @@ export default function DebugOverlay({ session, snapshot }: Props) {
         <dt>camera</dt>
         <dd>{cameraLabel ?? '-'}</dd>
       </dl>
+      <ol className="debug-captions" aria-hidden="true">
+        {captions.slice(-4).map((c) => (
+          <li key={c.alert.id} className={`debug-caption-${c.alert.priority}`}>
+            {c.alert.priority} ({c.reason}): {c.alert.phrase}
+          </li>
+        ))}
+      </ol>
       <div className="debug-clock" aria-hidden="true">
         {elapsedS.toFixed(1)} s
       </div>

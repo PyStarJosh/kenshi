@@ -1,9 +1,10 @@
 // Connects the live session to the health monitor and the audio engine: frames and the session's tilt
 // readings go into the monitor, its state and warnings go to the engine, and the heartbeat ticks on the
 // same check timer. Audio settings come from the settings store.
-// AlertEvents arrive through handleAlert once the alert policy (A5) and the event bus exist.
+// AlertEvents arrive through handleAlert (the pipeline delivers them from the event bus); the pipeline also
+// supplies the live track lookup and the "what's around me" summarizer, and listens for alert outcomes.
 import { AudioEngine } from '../audio/engine'
-import type { AlertTiming } from '../audio/engine'
+import type { AlertTiming, TrackLookup } from '../audio/engine'
 import { createBrowserSpeaker } from '../audio/speech'
 import { listeningTone, TonePlayer } from '../audio/tones'
 import { GREETING, unlockAudioContext } from '../audio/unlock'
@@ -67,6 +68,8 @@ export class AudioLink {
   })
   private session: Session | null = null
   private testTracks = new Map<number, { distanceM: number }>()
+  private trackLookup: TrackLookup | null = null
+  private outcomeListeners = new Set<(alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null) => void>()
   private testCount = 0
   private simulateHealthy = false
   private listeners = new Set<() => void>()
@@ -107,9 +110,9 @@ export class AudioLink {
       this.engine = new AudioEngine({
         tones: this.tones,
         speaker: this.speech.speaker,
-        // Real tracks join this lookup with the tracker (A4); until then only test alerts pass the
-        // track check, and any other obstacle alert is dropped as track-gone (SR-3).
-        getTrack: (id) => this.testTracks.get(id) ?? null,
+        // Test alerts use fake tracks; real alerts check the live tracks the pipeline supplies, and an
+        // alert whose track is gone is dropped as track-gone (SR-3).
+        getTrack: (id) => this.testTracks.get(id) ?? this.trackLookup?.(id) ?? null,
         now: () => performance.now(),
         onOutcome: (alert, outcome, latencyMs) => this.recordOutcome(alert, outcome, latencyMs),
         onError: (message) => this.reportError(message),
@@ -162,7 +165,18 @@ export class AudioLink {
     this.voice.longPress()
   }
 
-  /** Where "what's around me" gets its phrase; the alert policy (A5) or the test panel sets it. */
+  /** The live tracks, for the engine's track-gone check and its distance-based tone pulse. Null clears it. */
+  setTrackLookup(lookup: TrackLookup | null): void {
+    this.trackLookup = lookup
+  }
+
+  /** Hear what happened to every alert (started, finished, preempted, dropped). Returns a stop function. */
+  onAlertOutcome(listener: (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null) => void): () => void {
+    this.outcomeListeners.add(listener)
+    return () => this.outcomeListeners.delete(listener)
+  }
+
+  /** Where "what's around me" gets its phrase; the pipeline sets it from the alert policy. */
   setSummarizer(summarizer: Summarizer | null): void {
     this.summarizer = summarizer
   }
@@ -223,6 +237,7 @@ export class AudioLink {
 
   private recordOutcome(alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null): void {
     if (alert.trackId !== null && outcome !== 'started') this.testTracks.delete(alert.trackId)
+    for (const listener of this.outcomeListeners) listener(alert, outcome, latencyMs)
     const latency = latencyMs === null ? '' : ` after ${latencyMs.toFixed(0)} ms`
     this.update({ lastOutcome: `${alert.id} ${outcome}${latency}` })
   }
