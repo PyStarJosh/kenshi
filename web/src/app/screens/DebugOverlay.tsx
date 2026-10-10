@@ -68,6 +68,8 @@ export default function DebugOverlay({ session, snapshot }: Props) {
         <dd>
           {ms(view.inferenceP50)} / {ms(view.inferenceP95)} ms
         </dd>
+        <dt>objects / brightness</dt>
+        <dd>{result ? `${result.detections.length} / ${result.meanLuma.toFixed(2)}` : '-'}</dd>
         <dt>frame</dt>
         <dd>{frameSize ? `${frameSize.width}x${frameSize.height}` : '-'}</dd>
         <dt>model</dt>
