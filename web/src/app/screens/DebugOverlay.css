@@ -10,6 +10,11 @@
   border: 0.15rem solid #ffeb3b;
 }
 
+/* A track not yet confirmed is drawn dashed. */
+.debug-box-tentative {
+  border-style: dashed;
+}
+
 /* A box in the walking corridor is drawn in a different color. */
 .debug-box-path {
   border-color: #ff5252;

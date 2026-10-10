@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
+import type { Track } from '../../core/types'
 import type { GeometryResult } from '../../geometry/geometry'
-import { clockText, geometryLabel } from './geometryLabel'
+import { clockText, geometryLabel, trackGeometryLabel, trackMotionLabel } from './geometryLabel'
 
 const base: GeometryResult = {
   clock: { position: 12, angleDeg: 0 },
@@ -46,8 +47,33 @@ describe('geometryLabel', () => {
   })
 
   test('shows a question mark when there is no distance', () => {
-    expect(geometryLabel({ ...base, distanceM: null, distanceRoundedM: null, distanceSource: null })).toBe(
+    expect(geometryLabel({ ...base, distanceRoundedM: null, distanceSource: null })).toBe(
       "12 o'clock | distance ?",
     )
+  })
+})
+
+describe('track labels', () => {
+  const track = {
+    id: 7,
+    status: 'confirmed',
+    clock: { position: 12, angleDeg: 0 },
+    distanceM: 2.1,
+    distanceSource: 'box-size',
+    elevation: 'body',
+    inPath: false,
+    approaching: true,
+    timeToContactS: 1.84,
+  } as unknown as Track
+
+  test('motion label shows id, state, time to contact, and the approach flag', () => {
+    expect(trackMotionLabel(track)).toBe('#7 confirmed | ttc 1.8 s | APPROACHING')
+    expect(trackMotionLabel({ ...track, status: 'tentative', approaching: false, timeToContactS: null })).toBe(
+      '#7 tentative | ttc -',
+    )
+  })
+
+  test('geometry label rounds the smoothed distance', () => {
+    expect(trackGeometryLabel(track)).toBe("12 o'clock | 2.0 m box")
   })
 })

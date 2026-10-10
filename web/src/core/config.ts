@@ -67,6 +67,24 @@ export const CONFIG = {
     closingSpeedSmoothing: 0.3,
     // History window used to measure closing speed. FR-5
     closingSpeedWindowMs: 500,
+    // Exponential smoothing factor for the horizontal angle. FR-4
+    angleSmoothing: 0.4,
+    // Smoothing factors are per frame at this frame period; other periods are scaled from it,
+    // so a changing frame rate does not change how fast the tracker follows. FR-4, NFR-1
+    smoothingRefMs: 67,
+    // A new track nearer than this and at least this confident is confirmed on its first match. FR-4
+    nearConfirmDistanceM: 2,
+    nearConfirmConfidence: 0.7,
+    // Boxes whose longer side is below this (normalized) may match by center distance when IoU fails;
+    // the centers must be within this many longer sides of each other. FR-4
+    smallBoxMaxSide: 0.12,
+    smallBoxCenterFactor: 1,
+    // Motion needs at least this many samples spanning at least half the closing speed window. FR-5
+    minMotionSamples: 3,
+    // Box height growth (per second) below this gives no time-to-contact in the height fallback. FR-5
+    minHeightGrowthPerS: 0.05,
+    // Time-to-contact must stay below the limit this long before a track counts as approaching. FR-5, NFR-6
+    approachHoldMs: 300,
   },
 
   geometry: {

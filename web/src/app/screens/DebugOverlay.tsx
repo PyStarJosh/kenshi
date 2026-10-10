@@ -2,13 +2,12 @@
 // for lining up recordings.
 import { useEffect, useState } from 'react'
 import { CONFIG } from '../../core/config'
-import type { FrameResult } from '../../core/types'
+import type { FrameResult, Track } from '../../core/types'
 import { CLASSES } from '../../detection/classes'
-import { locateDetection } from '../../geometry/geometry'
-import type { GeometryResult } from '../../geometry/geometry'
+import { Tracker } from '../../tracking/tracker'
 import { settingsStore } from '../settings'
 import type { Session, SessionSnapshot } from '../session'
-import { geometryLabel } from './geometryLabel'
+import { trackGeometryLabel, trackMotionLabel } from './geometryLabel'
 import { LiveStats } from './liveStats'
 import './DebugOverlay.css'
 
@@ -19,14 +18,14 @@ interface Props {
 
 interface Shown {
   result: FrameResult
-  /** One entry per detection, in the same order. */
-  located: GeometryResult[]
+  tracks: Track[]
 }
 
 const ms = (value: number) => value.toFixed(0)
 
 export default function DebugOverlay({ session, snapshot }: Props) {
   const [stats] = useState(() => new LiveStats())
+  const [tracker] = useState(() => new Tracker(CLASSES))
   const [shown, setShown] = useState<Shown | null>(null)
   const [nowMs, setNowMs] = useState(() => performance.now())
 
@@ -36,14 +35,10 @@ export default function DebugOverlay({ session, snapshot }: Props) {
         stats.push(result)
         // Pair the frame with the tilt at the moment it was captured, not the moment it finished.
         const tilt = session.getOrientationAt(result.captureTimeMs)
-        const frame = { width: result.frameWidth, height: result.frameHeight }
         const settings = settingsStore.getSnapshot()
-        setShown({
-          result,
-          located: result.detections.map((d) => locateDetection(d, CLASSES, frame, tilt, settings)),
-        })
+        setShown({ result, tracks: tracker.update(result, tilt, settings) })
       }),
-    [session, stats],
+    [session, stats, tracker],
   )
 
   useEffect(() => {
@@ -62,21 +57,23 @@ export default function DebugOverlay({ session, snapshot }: Props) {
   return (
     <>
       <div className="debug-boxes" aria-hidden="true">
-        {result?.detections.map((d, i) => (
+        {shown?.tracks.map((t) => (
           <div
-            key={i}
-            className={shown!.located[i].inPath ? 'debug-box debug-box-path' : 'debug-box'}
+            key={t.id}
+            className={`debug-box${t.inPath ? ' debug-box-path' : ''}${t.status === 'tentative' ? ' debug-box-tentative' : ''}`}
             style={{
-              left: `${d.box.x * 100}%`,
-              top: `${d.box.y * 100}%`,
-              width: `${d.box.width * 100}%`,
-              height: `${d.box.height * 100}%`,
+              left: `${t.box.x * 100}%`,
+              top: `${t.box.y * 100}%`,
+              width: `${t.box.width * 100}%`,
+              height: `${t.box.height * 100}%`,
             }}
           >
             <span>
-              {d.label} {d.confidence.toFixed(2)}
+              {t.label} {t.confidence.toFixed(2)}
               <br />
-              {geometryLabel(shown!.located[i])}
+              {trackMotionLabel(t)}
+              <br />
+              {trackGeometryLabel(t)}
             </span>
           </div>
         ))}
@@ -102,8 +99,8 @@ export default function DebugOverlay({ session, snapshot }: Props) {
         <dd>
           {settings.horizontalFovDeg.toFixed(1)} deg / {settings.eyeHeightM.toFixed(2)} m
         </dd>
-        <dt>objects / brightness</dt>
-        <dd>{result ? `${result.detections.length} / ${result.meanLuma.toFixed(2)}` : '-'}</dd>
+        <dt>objects / tracks / brightness</dt>
+        <dd>{result ? `${result.detections.length} / ${shown!.tracks.length} / ${result.meanLuma.toFixed(2)}` : '-'}</dd>
         <dt>frame</dt>
         <dd>{frameSize ? `${frameSize.width}x${frameSize.height}` : '-'}</dd>
         <dt>model</dt>
