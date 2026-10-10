@@ -10,10 +10,13 @@ export const CONFIG = {
   },
 
   detection: {
-    // Square model input size in pixels, 320 or 416; Gate A decides. NFR-1, NFR-2
-    inputSize: 320,
+    // Square model input size in pixels, 320 or 416; Gate A chose 416. Selects models/yolo26n-<size>.onnx. NFR-1, NFR-2
+    inputSize: 416,
     // Cap on the detection rate to protect battery and heat; the scheduler never queues frames. FR-1, NFR-10
     maxFps: 15,
+    // A frame is accepted once this fraction of the minimum gap has passed, so camera timing jitter
+    // does not cost a whole frame (30 fps camera, 15 fps cap). FR-1, NFR-1
+    frameGapTolerance: 0.9,
     // Confidence needed to keep a detection, per class label; "default" covers the rest. NFR-5, NFR-6
     confidenceThreshold: {
       default: 0.45,
@@ -27,6 +30,17 @@ export const CONFIG = {
     nmsIou: 0.45,
     // Cap on WebAssembly threads when cross-origin isolated. NFR-1, NFR-2
     maxWasmThreads: 4,
+    // Which provider the live app asks for: "auto" tries WebGPU, then WebAssembly. NFR-1
+    provider: 'auto' as 'auto' | 'webgpu' | 'wasm',
+    // Consecutive failed frames after which the live loop stops and says so. FR-14, SR-8
+    maxConsecutiveErrors: 5,
+  },
+
+  debug: {
+    // Frames kept for the overlay's inference percentiles. FR-19
+    statsSamples: 60,
+    // How often the overlay's session clock redraws. FR-19
+    clockUpdateMs: 100,
   },
 
   benchmark: {

@@ -4,7 +4,7 @@ Version 0.1 · How we meet [SRS.md](SRS.md). Type names refer to `web/src/core/t
 
 ## 1. Architecture overview
 
-Everything runs in the browser. Heavy work (preprocessing, inference, postprocessing) runs in one Web Worker. Everything else is light and runs on the main thread. Modules talk through typed function calls along the main data path, and through the event bus for alerts, health, voice, settings, and telemetry. `app/pipeline.ts` wires them together.
+Everything runs in the browser. Heavy work (preprocessing, inference, postprocessing) runs in one Web Worker. Everything else is light and runs on the main thread. Modules talk through typed function calls along the main data path, and through the event bus for alerts, health, voice, settings, and telemetry. `app/session.ts` owns the live run (start, pause, resume, page hide) and `app/pipeline.ts` will wire the tracking, geometry, and alert modules into it as they arrive.
 
 ```mermaid
 flowchart TD
@@ -39,14 +39,14 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Satisfies:** all (indirectly).
 
 ### 2.2 Camera
-- **Path:** `camera/camera.ts`
-- **Responsibility:** opens the rear camera in landscape (`CONFIG.camera`), requests a screen wake lock, reports stream loss.
-- **In → out:** user gesture → a playing video element; errors → `HealthIssue` `no-camera`.
+- **Path:** `camera/camera.ts`, `camera/wakeLock.ts`
+- **Responsibility:** opens the rear camera at about 1280x720 (`CONFIG.camera`) with no audio, then switches to the plain wide "Back Camera" lens when the device lists one (virtual multi-lens devices can change the field of view on their own); plays it in a muted, inline video element; reports frame-size changes (rotation) and stream loss. `wakeLock.ts` holds the screen awake while running and is re-requested on resume. Failures are typed (`permission-denied`, `no-camera`, `camera-busy`, `insecure-page`, `unknown`), each with one spoken sentence.
+- **In → out:** user gesture → a playing video element and `CameraInfo`; errors → `CameraError`.
 - **Satisfies:** FR-1, FR-18, SR-8.
 
 ### 2.3 Frame scheduler
 - **Path:** `camera/scheduler.ts`
-- **Responsibility:** latest-frame-wins capture. When the worker is idle and `1000 / maxFps` ms have passed, grabs one `ImageBitmap` stamped with `captureTimeMs` and transfers it. Never queues.
+- **Responsibility:** latest-frame-wins capture. Driven by `requestVideoFrameCallback` (`requestAnimationFrame` where missing). When the worker is idle and 90% of `1000 / maxFps` ms have passed (`frameGapTolerance`, so camera jitter does not cost a whole frame), grabs one `ImageBitmap` stamped with `captureTimeMs` and transfers it; it also captures again as soon as a detection finishes, because waiting for the next video frame would drop a 30 fps camera to 10 fps when detection takes about 70 ms. If a bitmap cannot be made from the video element it draws to a canvas instead. Never queues.
 - **In → out:** video element, worker idle flag → `{frameId, captureTimeMs, bitmap}` to the worker.
 - **Satisfies:** FR-1, NFR-1, NFR-12.
 
@@ -117,8 +117,8 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Satisfies:** FR-17, FR-6, FR-7.
 
 ### 2.15 Pipeline orchestrator and screens
-- **Path:** `app/pipeline.ts`, `app/screens/`, `app/App.tsx`
-- **Responsibility:** per-frame wiring (section 3), Start sequence, pause/resume, aria-live status line, large Talk area, first-run text stating the cane is still needed.
+- **Path:** `app/session.ts` (start, pause, resume, page hide, shutdown), `app/useSession.ts`, `app/messages.ts`, `app/screens/` (including `DebugOverlay.tsx`, shown with `?debug`), `App.tsx`; `app/pipeline.ts` arrives with tracking and geometry.
+- **Responsibility:** per-frame wiring (section 3), Start sequence (wake lock, camera, and model load all start in the Start tap), pause/resume, aria-live status line, large Talk area, first-run text stating the cane is still needed. Landscape-first layout that also works upright.
 - **Satisfies:** FR-16, FR-18, NFR-9, NFR-10, NFR-11, NFR-12, SR-7, SR-8.
 
 ### 2.16 Offline cache
@@ -297,7 +297,7 @@ Every failure is spoken (unless spoken feedback is off), written to the aria-liv
 ## 10. Model plan
 
 - **Base model:** YOLO26n (COCO, 80 classes). `ml/export_onnx.py` exports it at 320 and 416 (opset 18, simplified by onnxslim) to `web/public/models/yolo26n-<size>.onnx` (9.8 MB each, under the 15 MB limit). The export used here is **raw**: one output of shape `[1, 4 + 80, N]` (N is 2100 at 320 and 3549 at 416) holding center x, center y, width, and height in input pixels, then one score per class (already between 0 and 1). The graph contains no NMS, so postprocess decodes it, applies per-class thresholds, and runs class-aware NMS (`nmsIou`). An end-to-end NMS-free export also exists and could trim postprocess later, but postprocess already measures under 3 ms (section 4.1).
-- **Input size:** 320 or 416, decided at **Gate A** on the demo iPhone: choose 416 only if p95 inference stays at or below 120 ms and the frame rate stays at or above 8 fps; otherwise 320. Until then `CONFIG.detection.inputSize` is 320.
+- **Input size: 416.** Gate A chose 416 (owner decision after running the benchmark on the demo iPhone); `CONFIG.detection.inputSize` is 416 and the app loads `yolo26n-416.onnx`. The rule for this choice was to take 416 only if p95 inference stays at or below 120 ms and the frame rate stays at or above 8 fps, otherwise 320. The iPhone numbers are not recorded in this repository yet; add them to section 4.1. The 320 model stays available for the benchmark and as a fallback if NFR-1 or NFR-2 fail in the field.
 - **Class map:** `ml/class_map.json` is the hand-maintained source of truth (per class id: spoken name, typical height, ground contact, alertable). `ml/gen_classes.py` generates `detection/classes.ts` as `ClassInfo[]`. Initial alertable COCO classes: person, bicycle, car, motorcycle, bus, truck, bench, chair, couch, dining table, potted plant, backpack, suitcase, handbag, fire hydrant, parking meter, dog.
 - **Retrained hazard model (M2, M3):** the base classes plus stairs, curb, pole, and door. COCO ids 0 to 79 keep their numbers and the new classes take 80 to 83, so the class map stays compatible. It replaces the base model only if it wins on our own field-test labels: better recall on the four new classes, no loss of more than 2 points of in-path recall on the COCO obstacle classes, no more false alerts per minute, and inference still within NFR-2 on the iPhone.
 - **Stairs and curb** have no usable typical height, so their distance comes from the ground plane only (or `min-visible`).
