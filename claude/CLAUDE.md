@@ -20,7 +20,14 @@ Kenshi: a real-time obstacle guide for blind and low-vision pedestrians that run
 ## Structure
 ```
 pyproject.toml, uv.lock     Python tooling (uv); dependency groups: ml, analysis
-ml/                         model export, class map (class_map.json), dataset prep, Colab notebook, model comparison, walk evaluation
+ml/                         model export, class map (class_map.json; class_map.hazard.json is the 84-class draft for M3), walk evaluation
+  datasets.md               hazard datasets: sources, licenses, class mapping, what to download by hand
+  dataset_sources.json      per-dataset class mapping and sample sizes
+  fetch_zoo.py, fetch_argoverse.py, convert_zenodo.py   download and convert the raw datasets into datasets/raw/
+  prepare_dataset.py        merge, pseudo-label, write datasets/hazards/ (and a zip for Google Drive)
+  train_colab.ipynb         fine-tune on Colab (GPU), export ONNX
+  compare_models.py         base versus retrained model on the validation set and on field-tests/clips/
+  tests/                    unit tests: uv run --group ml python -m unittest discover -s ml/tests -t .
 web/                        Vite + React + TypeScript app
   public/models/            ONNX models (each under 15 MB)
   public/ort/               onnxruntime-web WebAssembly files, copied by scripts/copy-ort.mjs (gitignored)
@@ -110,6 +117,9 @@ Python (repo root):
 - Sync: uv sync --all-groups
 - Export model: uv run --group ml python ml/export_onnx.py
 - Generate class map: uv run --group ml python ml/gen_classes.py (reads ml/class_map.json, writes web/src/detection/classes.ts)
+- Prepare hazard data (see ml/datasets.md): fetch_zoo.py, convert_zenodo.py, fetch_argoverse.py, then prepare_dataset.py --zip
+- Train: ml/train_colab.ipynb on Colab. Compare: uv run --group ml python ml/compare_models.py --hazard <retrained.onnx>
+- Python tests: uv run --group ml python -m unittest discover -s ml/tests -t .  Lint: ruff check ml
 - Evaluate walks: uv run --group analysis python ml/eval_walks.py <round folder>
 
 Web (in web/):
