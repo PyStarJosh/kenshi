@@ -94,6 +94,12 @@ export class Tracker {
       if (matchedTracks.has(i)) return
       t.consecutiveMisses += 1
       t.hitWindow = [...t.hitWindow, false].slice(-this.cfg.confirmationWindow)
+      // An object that was not seen this frame is not known to be closing in.
+      t.approaching = false
+      t.approachSinceMs = null
+      t.timeToContactS = null
+      t.closingSpeedMps = null
+      t.heightGrowthPerS = null
     })
 
     detections.forEach((d, i) => {
@@ -207,8 +213,15 @@ export class Tracker {
     t.geometry = this.locate(t.box, t.classId, frame, tilt, settings)
     t.angleDeg = ema(t.angleDeg, t.geometry.clock.angleDeg, factor(this.cfg.angleSmoothing))
     if (t.geometry.distanceM !== null) {
-      t.distanceM =
-        t.distanceM === null ? t.geometry.distanceM : ema(t.distanceM, t.geometry.distanceM, factor(this.cfg.distanceSmoothing))
+      if (t.distanceSource !== null && t.geometry.distanceSource !== t.distanceSource) {
+        // A different method gives a different number for the same object. Restart the distance
+        // history so the jump is not read as movement; the height growth covers until it refills.
+        t.distanceM = t.geometry.distanceM
+        for (const sample of t.samples) sample.distanceM = null
+      } else {
+        t.distanceM =
+          t.distanceM === null ? t.geometry.distanceM : ema(t.distanceM, t.geometry.distanceM, factor(this.cfg.distanceSmoothing))
+      }
       t.distanceSource = t.geometry.distanceSource
     }
     t.lastSeenMs = nowMs
