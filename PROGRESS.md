@@ -3,7 +3,7 @@
 Edit only your own track's section. Keep this file under 80 lines.
 
 ## Shared
-**Works:** S1 skeleton: uv project (Python 3.11, groups ml and analysis), Vite + React + TypeScript app in web/, private GitHub repo.
+**Works:** S1 skeleton: uv project (Python 3.13, groups ml and analysis), Vite + React + TypeScript app in web/, private GitHub repo.
 **Broken:** nothing known.
 **Next:** S2 SRS, SDS, and shared contracts (docs/SRS.md, docs/SDS.md, web/src/core/types.ts).
 
@@ -23,6 +23,6 @@ Edit only your own track's section. Keep this file under 80 lines.
 **Next:** M1 export model and class map.
 
 ## Decisions
-- Python 3.11 is pinned (.python-version, requires-python >=3.11). The project is tooling only (tool.uv package = false), so there is no installable package.
+- Python 3.13 is pinned (.python-version); requires-python stays >=3.11 so older interpreters still work. The project is tooling only (tool.uv package = false), so there is no installable package.
 - Cross-origin isolation (COOP same-origin, COEP require-corp) is sent by the Vite dev and preview servers and by Vercel, because multi-threaded WebAssembly in onnxruntime-web needs it.
 - The Vite dev server accepts ngrok hosts (.ngrok-free.app, .ngrok-free.dev) so a phone can reach it.
