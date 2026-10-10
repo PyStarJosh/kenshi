@@ -3,9 +3,9 @@
 Edit only your own track's section. Keep this file under 80 lines.
 
 ## Shared
-**Works:** S1 skeleton (uv project, Vite app, private GitHub repo). S2 done: docs/SRS.md (20 FR, 13 NFR, 9 SR), docs/SDS.md, web/src/core/types.ts, web/src/core/config.ts.
-**Broken:** nothing known.
-**Next:** tracks start A1, U1, M1 in parallel against types.ts and config.ts. Then S3 integration (Gate B).
+**Works:** S1 skeleton, S2 docs and contracts. S3 (Gate B code side): all tracks are on main; app/pipeline.ts is the one orchestrator (frames to tracker, geometry, policy, bus, audio link; health state and voice intents also go on the bus). A frame counts for the health monitor only after the whole chain handled it, so a failing pipeline ends in the "stalled" warning instead of a silent heartbeat. Latency: every alert carries its frame's capture time; ?debug shows p50/p95 of capture-to-tone (all and urgent) and capture-to-speech (app/latency.ts). Found and fixed in the SRS pass: SR-9 paused reminder was configured but never spoken (now every 15 s), SR-7 first-run text lacked the cane statement (Start screen and greeting). Test panels stay behind ?debug.
+**Broken:** nothing known in code. Gate B is NOT passed: nothing here ran on the iPhone. Unmet requirements: FR-19 (no telemetry or export yet, S4), FR-17 (Test mode has no switch in Settings yet, U3), FR-20 (stretch), NFR-8 (no service worker, so no offline use), NFR-1 to NFR-7 and NFR-10 need field numbers.
+**Next:** run the S3 phone checklist (hallway chair, person, backpack, head-height box, covered camera, lowered phone, "what's around me") and read p50/p95 in ?debug against NFR-3 (300 ms) and NFR-4 (600 ms); then U3, S4.
 
 ## App
 **Works:** A1 detection worker + engine + ?bench (desktop numbers in SDS 4.1). A2 live loop (camera, frame loop, ?debug overlay, pause/resume/page hide); the owner ran it on an iOS 27 iPhone with WebGPU and boxes appeared. A3 geometry: tilt sensor (permission in the Start tap, pitch/roll for either landscape direction and upright), geometry.ts (clock, ground-plane and box-size distance, floor/head height, path), Settings (eye height) and Calibrate field of view, and per-box direction, distance, method, height, plus pitch/roll, in ?debug. Checked in desktop Edge 155 with simulated tilt: pitch/roll readouts match hand-computed values; settings and calibration save and reach the overlay.

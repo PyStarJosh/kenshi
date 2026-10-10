@@ -3,7 +3,17 @@ import { EventBus } from '../alerts/bus'
 import { AlertPolicy } from '../alerts/policy'
 import type { TrackLookup } from '../audio/engine'
 import { CONFIG } from '../core/config'
-import type { AlertEvent, AlertOutcome, ClassInfo, EventMap, FrameResult, OrientationSample, Track } from '../core/types'
+import type {
+  AlertEvent,
+  AlertOutcome,
+  ClassInfo,
+  EventMap,
+  FrameResult,
+  HealthState,
+  OrientationSample,
+  Track,
+  VoiceIntent,
+} from '../core/types'
 import { Pipeline } from './pipeline'
 import type { PipelineLink, PipelineSession, PipelineTracker } from './pipeline'
 import type { SessionState } from './session'
@@ -82,6 +92,9 @@ class FakeLink implements PipelineLink {
   lookup: TrackLookup | null = null
   summarizer: (() => string) | null = null
   throwOnAlert = false
+  recorded: number[] = []
+  private intentListeners = new Set<(intent: VoiceIntent) => void>()
+  private healthListeners = new Set<(health: HealthState) => void>()
   private outcomeListeners = new Set<(alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null) => void>()
 
   handleAlert(alert: AlertEvent) {
@@ -98,6 +111,20 @@ class FakeLink implements PipelineLink {
     this.outcomeListeners.add(listener)
     return () => this.outcomeListeners.delete(listener)
   }
+  recordFrame(result: FrameResult) {
+    this.recorded.push(result.frameId)
+  }
+  onVoiceIntent(listener: (intent: VoiceIntent) => void) {
+    this.intentListeners.add(listener)
+    return () => this.intentListeners.delete(listener)
+  }
+  onHealth(listener: (health: HealthState) => void) {
+    this.healthListeners.add(listener)
+    return () => this.healthListeners.delete(listener)
+  }
+  say(intent: VoiceIntent) {
+    for (const listener of [...this.intentListeners]) listener(intent)
+  }
   report(alert: AlertEvent, outcome: AlertOutcome) {
     for (const listener of [...this.outcomeListeners]) listener(alert, outcome, null)
   }
@@ -110,14 +137,16 @@ function setup(options: { onBusError?: (topic: string, error: unknown) => void }
   const tracker = {
     updates: [] as { tiltTimeMs: number | null; eye: number }[],
     resets: 0,
+    throwNext: false as boolean,
     update(_result, tilt, settings) {
+      if (this.throwNext) throw new Error('tracker broke')
       this.updates.push({ tiltTimeMs: tilt?.timeMs ?? null, eye: settings.eyeHeightM })
       return current
     },
     reset() {
       this.resets += 1
     },
-  } satisfies PipelineTracker & { updates: unknown[]; resets: number }
+  } satisfies PipelineTracker & { updates: unknown[]; resets: number; throwNext: boolean }
   const clock = { nowMs: 1000 }
   const bus = new EventBus<EventMap>(options.onBusError)
   const pipeline = new Pipeline({
@@ -338,5 +367,27 @@ describe('failures', () => {
     t.clock.nowMs += 200
     t.send([track()])
     expect(t.events.filter((e) => e === 'tracks')).toHaveLength(2)
+  })
+
+  test('a frame counts for the health monitor only after the whole pipeline handled it', () => {
+    const t = setup()
+    t.send([track()])
+    expect(t.link.recorded).toHaveLength(1)
+    t.tracker.throwNext = true
+    const telemetry: string[] = []
+    t.bus.subscribe('telemetry', (e) => telemetry.push(e.kind === 'error' ? `${e.source}: ${e.message}` : e.kind))
+    expect(() => t.send([track()])).toThrow('tracker broke')
+    expect(t.link.recorded).toHaveLength(1)
+    expect(telemetry).toEqual(['pipeline: tracker broke'])
+  })
+})
+
+describe('voice goes on the bus', () => {
+  test('voice intents reach bus subscribers', () => {
+    const t = setup()
+    const intents: VoiceIntent[] = []
+    t.bus.subscribe('voice', (intent) => intents.push(intent))
+    t.link.say('whats-around')
+    expect(intents).toEqual(['whats-around'])
   })
 })

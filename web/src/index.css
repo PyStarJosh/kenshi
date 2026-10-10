@@ -73,6 +73,11 @@ body {
   text-align: center;
 }
 
+.cane-note {
+  margin: 0;
+  text-align: center;
+}
+
 .start {
   flex: 1;
   width: 100%;

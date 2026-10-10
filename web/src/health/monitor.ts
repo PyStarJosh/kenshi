@@ -7,6 +7,8 @@ import type { FrameResult, HealthIssue, HealthState, HealthStatus, InferenceBack
 export type HealthAnnouncement =
   | { kind: 'warning'; issue: HealthIssue; phrase: string }
   | { kind: 'recovered'; phrase: string }
+  /** Repeats while the user has paused detection, so a paused app is never mistaken for a quiet path (SR-9). */
+  | { kind: 'reminder'; phrase: string }
 
 export interface HealthUpdate {
   state: HealthState
@@ -42,6 +44,7 @@ export const HEALTH_PHRASES = {
   'audio-blocked': 'Sound is off. Tap the screen to restore it.',
   'no-orientation': 'Motion sensor unavailable. Distances will be less accurate.',
   recovered: 'Detection back.',
+  pausedReminder: 'Detection is paused. Keep using your cane.',
 } as const
 
 export class HealthMonitor {
@@ -62,6 +65,7 @@ export class HealthMonitor {
   /** When each active issue's condition last turned false. */
   private clearSinceMs = new Map<HealthIssue, number>()
   private lastWarningMs = -Infinity
+  private lastReminderMs = 0
 
   /** Running, paused, or stopped. Any change starts the checks fresh and drops warnings silently. */
   setRunState(run: RunState, nowMs: number): void {
@@ -75,6 +79,7 @@ export class HealthMonitor {
     this.active.clear()
     this.clearSinceMs.clear()
     this.lastWarningMs = -Infinity
+    this.lastReminderMs = nowMs
   }
 
   recordFrame(result: FrameResult): void {
@@ -151,6 +156,11 @@ export class HealthMonitor {
       this.lastWarningMs = nowMs
     } else if (hadIssues && issues.length === 0) {
       announcements.push({ kind: 'recovered', phrase: HEALTH_PHRASES.recovered })
+    }
+
+    if (this.run === 'paused' && nowMs - this.lastReminderMs >= CONFIG.audio.pausedReminderIntervalMs) {
+      announcements.push({ kind: 'reminder', phrase: HEALTH_PHRASES.pausedReminder })
+      this.lastReminderMs = nowMs
     }
 
     let status: HealthStatus = 'healthy'

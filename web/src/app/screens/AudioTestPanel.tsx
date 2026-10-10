@@ -1,10 +1,11 @@
-// Audio test panel (?debug): fires sample alerts and health announcements before the alert policy (A5)
-// exists, and shows the measured tone and speech delays.
+// Audio test panel (?debug): fires sample alerts and health announcements, and shows the measured tone and
+// speech delays, including p50 and p95 from capture over the real alerts (NFR-3, NFR-4).
 import { useSyncExternalStore } from 'react'
 import type { AlertPriority } from '../../core/types'
 import { HEALTH_PHRASES } from '../../health/monitor'
 import type { HealthAnnouncement } from '../../health/monitor'
 import type { AudioLink } from '../audioLink'
+import { formatSpread } from '../latency'
 import './AudioTestPanel.css'
 
 interface Props {
@@ -74,6 +75,9 @@ export default function AudioTestPanel({ link }: Props) {
         <br />
         alert→tone {ms(timing?.alertToToneMs ?? null)} · frame→tone {ms(timing?.frameToToneMs ?? null)} ·
         frame→speech {ms(timing?.frameToSpeechMs ?? null)} · last {view.lastOutcome ?? '-'} · voice cmd {view.lastVoice ?? '-'}
+        <br />
+        capture→tone p50 / p95 {formatSpread(view.latency.tone)} · urgent {formatSpread(view.latency.urgentTone)} ·
+        capture→speech {formatSpread(view.latency.speech)}
       </p>
     </section>
   )
