@@ -1,0 +1,31 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+
+# Secrets (keep the example)
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+web/dist/
+
+# Models and data (ONNX files under web/public/models/ stay tracked)
+*.pt
+datasets/
+runs/
+
+# Field-test recordings
+field-tests/**/*.mp4
+field-tests/**/*.mov
+
+# OS
+.DS_Store
