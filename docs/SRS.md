@@ -107,6 +107,6 @@ This product is safety-critical. A safety requirement overrides any other requir
 - Any backend beyond the optional FR-20 function.
 
 ## 7. Open items
-- Gate A decides the model input size (320 or 416) and confirms NFR-1 and NFR-2 on the demo iPhone.
+- Gate A chose the 416 model input size. NFR-1 and NFR-2 still need confirming with recorded numbers from the demo iPhone, and again in the first field test.
 - The horizontal field of view default (65°) is an estimate until calibration is measured on the demo phone.
 - Whether Safari speech recognition works reliably with AirPods in transparency mode is unverified (FR-15, FR-16).

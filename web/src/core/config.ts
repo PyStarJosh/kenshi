@@ -10,8 +10,8 @@ export const CONFIG = {
   },
 
   detection: {
-    // Square model input size in pixels, 320 or 416; Gate A decides. NFR-1, NFR-2
-    inputSize: 320,
+    // Square model input size in pixels, 320 or 416; Gate A chose 416. Selects models/yolo26n-<size>.onnx. NFR-1, NFR-2
+    inputSize: 416,
     // Cap on the detection rate to protect battery and heat; the scheduler never queues frames. FR-1, NFR-10
     maxFps: 15,
     // Confidence needed to keep a detection, per class label; "default" covers the rest. NFR-5, NFR-6

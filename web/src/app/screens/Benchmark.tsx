@@ -67,7 +67,7 @@ function SpreadRow({ name, spread }: { name: string; spread: Spread }) {
 }
 
 export default function Benchmark() {
-  const [size, setSize] = useState<ModelSize>(320)
+  const [size, setSize] = useState<ModelSize>(CONFIG.detection.inputSize as ModelSize)
   const [provider, setProvider] = useState<ProviderChoice>('auto')
   const [phase, setPhase] = useState<Phase>('idle')
   const [done, setDone] = useState(0)
