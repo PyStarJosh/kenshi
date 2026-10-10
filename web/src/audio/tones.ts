@@ -65,6 +65,16 @@ export function warningTone(): TonePlan {
   }
 }
 
+/** Listening earcon: two rising notes at the start, the same two falling at the stop. Centered, soft. */
+export function listeningTone(phase: 'start' | 'stop'): TonePlan {
+  const { earconHz, earconNoteMs } = CONFIG.voice
+  const hz = phase === 'start' ? earconHz : [...earconHz].reverse()
+  return {
+    notes: hz.map((value, i) => ({ offsetMs: i * earconNoteMs, durationMs: earconNoteMs, hz: value, gain: 0.7 })),
+    pan: 0,
+  }
+}
+
 export function heartbeatTone(): TonePlan {
   const { heartbeatToneHz, heartbeatToneMs } = CONFIG.audio
   return { notes: [{ offsetMs: 0, durationMs: heartbeatToneMs, hz: heartbeatToneHz, gain: 1 }], pan: 0 }

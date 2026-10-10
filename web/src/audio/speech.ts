@@ -71,6 +71,7 @@ export class Speaker {
   private rate = CONFIG.settings.speechRate
   private voice: VoiceLike | null = null
   private enabled = true
+  private held = false
 
   constructor(deps: SpeakerDeps) {
     this.deps = deps
@@ -98,10 +99,23 @@ export class Speaker {
     return this.current !== null
   }
 
+  /**
+   * While held (the microphone is open), the current phrase stops and normal phrases are dropped,
+   * so the app does not hear itself. Urgent phrases still speak (SR-4).
+   */
+  setHeld(held: boolean): void {
+    this.held = held
+    if (held) this.interrupt()
+  }
+
   speak(request: SpeechRequest): void {
     if (request.urgent) {
       this.interrupt()
       this.begin(request)
+      return
+    }
+    if (this.held) {
+      request.onDone?.('preempted')
       return
     }
     if (this.current) {
