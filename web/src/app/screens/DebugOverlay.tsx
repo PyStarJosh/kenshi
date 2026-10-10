@@ -1,8 +1,14 @@
-// Debug overlay (?debug): what the model sees, how fast it runs, and a clock for lining up recordings.
+// Debug overlay (?debug): what the model sees and where it puts it, how fast it runs, and a clock
+// for lining up recordings.
 import { useEffect, useState } from 'react'
 import { CONFIG } from '../../core/config'
 import type { FrameResult } from '../../core/types'
+import { CLASSES } from '../../detection/classes'
+import { locateDetection } from '../../geometry/geometry'
+import type { GeometryResult } from '../../geometry/geometry'
+import { settingsStore } from '../settings'
 import type { Session, SessionSnapshot } from '../session'
+import { geometryLabel } from './geometryLabel'
 import { LiveStats } from './liveStats'
 import './DebugOverlay.css'
 
@@ -11,18 +17,31 @@ interface Props {
   snapshot: SessionSnapshot
 }
 
+interface Shown {
+  result: FrameResult
+  /** One entry per detection, in the same order. */
+  located: GeometryResult[]
+}
+
 const ms = (value: number) => value.toFixed(0)
 
 export default function DebugOverlay({ session, snapshot }: Props) {
   const [stats] = useState(() => new LiveStats())
-  const [result, setResult] = useState<FrameResult | null>(null)
+  const [shown, setShown] = useState<Shown | null>(null)
   const [nowMs, setNowMs] = useState(() => performance.now())
 
   useEffect(
     () =>
-      session.onResult((frame) => {
-        stats.push(frame)
-        setResult(frame)
+      session.onResult((result) => {
+        stats.push(result)
+        // Pair the frame with the tilt at the moment it was captured, not the moment it finished.
+        const tilt = session.getOrientationAt(result.captureTimeMs)
+        const frame = { width: result.frameWidth, height: result.frameHeight }
+        const settings = settingsStore.getSnapshot()
+        setShown({
+          result,
+          located: result.detections.map((d) => locateDetection(d, CLASSES, frame, tilt, settings)),
+        })
       }),
     [session, stats],
   )
@@ -35,7 +54,10 @@ export default function DebugOverlay({ session, snapshot }: Props) {
   const startedAt = session.getStartedAtMs()
   const elapsedS = startedAt === null ? 0 : Math.max(0, (nowMs - startedAt) / 1000)
   const view = stats.view(nowMs)
+  const tilt = session.getOrientationLatest(nowMs)
+  const settings = settingsStore.getSnapshot()
   const { engine, frameSize, cameraLabel } = snapshot
+  const result = shown?.result ?? null
 
   return (
     <>
@@ -43,7 +65,7 @@ export default function DebugOverlay({ session, snapshot }: Props) {
         {result?.detections.map((d, i) => (
           <div
             key={i}
-            className="debug-box"
+            className={shown!.located[i].inPath ? 'debug-box debug-box-path' : 'debug-box'}
             style={{
               left: `${d.box.x * 100}%`,
               top: `${d.box.y * 100}%`,
@@ -53,6 +75,8 @@ export default function DebugOverlay({ session, snapshot }: Props) {
           >
             <span>
               {d.label} {d.confidence.toFixed(2)}
+              <br />
+              {geometryLabel(shown!.located[i])}
             </span>
           </div>
         ))}
@@ -67,6 +91,16 @@ export default function DebugOverlay({ session, snapshot }: Props) {
         <dt>inference p50 / p95</dt>
         <dd>
           {ms(view.inferenceP50)} / {ms(view.inferenceP95)} ms
+        </dd>
+        <dt>pitch / roll</dt>
+        <dd>
+          {tilt
+            ? `${tilt.pitchDeg.toFixed(1)} / ${tilt.rollDeg.toFixed(1)} deg`
+            : `none (${snapshot.orientation}), level assumed`}
+        </dd>
+        <dt>fov / eye height</dt>
+        <dd>
+          {settings.horizontalFovDeg.toFixed(1)} deg / {settings.eyeHeightM.toFixed(2)} m
         </dd>
         <dt>objects / brightness</dt>
         <dd>{result ? `${result.detections.length} / ${result.meanLuma.toFixed(2)}` : '-'}</dd>

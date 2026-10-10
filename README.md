@@ -16,7 +16,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173/. Tap Start to run the camera loop (add `?debug` for the overlay with boxes, fps, and timings). Add `?bench` to the URL for the benchmark screen instead. To test on a phone, run `ngrok http 5173` in a second terminal and open the ngrok address on the phone.
+Open http://localhost:5173/. Tap Start to run the camera loop (add `?debug` for the overlay with boxes, direction, distance, tilt, fps, and timings). Settings holds the eye height and the field-of-view calibration; hold the phone sideways. Add `?bench` to the URL for the benchmark screen instead. To test on a phone, run `ngrok http 5173` in a second terminal and open the ngrok address on the phone.
 
 Checks: `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`.
 

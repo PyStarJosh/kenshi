@@ -57,15 +57,15 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Satisfies:** FR-2, NFR-1, NFR-2, NFR-5, NFR-6, NFR-12, NFR-13.
 
 ### 2.5 Orientation sensor
-- **Path:** `sensors/orientation.ts`
-- **Responsibility:** requests motion permission (inside the Start tap), listens to device orientation, maps to the landscape camera axis for both landscape orientations, and exposes the latest reading.
-- **In → out:** `DeviceOrientationEvent` → `OrientationSample`.
+- **Path:** `sensors/orientation.ts` (adapter), `sensors/attitude.ts` (pure math)
+- **Responsibility:** requests motion permission inside the Start tap (iOS needs a gesture), listens to `deviceorientation` only while running, turns beta and gamma into camera pitch and roll for the current screen angle (landscape either way, or upright; see the comments in `attitude.ts`), smooths them, and keeps one second of history so a frame is paired with the tilt at its capture time (`at(timeMs)`; orientation holds until it changes, so a reading counts for up to `staleAfterMs`). With permission refused, or no reading within `noDataTimeoutMs`, the status is `denied` or `unavailable`: geometry assumes the camera is level and is marked degraded, and the status line says distances are less accurate. Held sideways the angles are well behaved; held upright, roll is noisy near level.
+- **In → out:** `DeviceOrientationEvent` → `OrientationSample`; status `idle | waiting | ready | denied | unavailable`.
 - **Satisfies:** FR-3, FR-18.
 
 ### 2.6 Geometry
-- **Path:** `geometry/clock.ts`, `geometry/distance.ts`, `geometry/elevation.ts`, `geometry/path.ts`
-- **Responsibility:** pure functions that turn a box, an `OrientationSample`, and `Settings` into `Clock`, distance and `DistanceSource`, `Elevation`, and `inPath`. See section 5.
-- **In → out:** `Track` (box, class) + `OrientationSample | null` + `Settings` + `ClassInfo` → the same `Track` with `clock`, `distanceM`, `distanceSource`, `distanceGroundM`, `distanceBoxM`, `elevation`, `inPath` filled in.
+- **Path:** `geometry/geometry.ts` (all pure functions: `locate`, `locateDetection`, `cameraModel`, `roundDistance`)
+- **Responsibility:** turn a box, the camera tilt, and the eye height and field of view from `Settings` into the clock position, the distance and its method, the height label, and path membership. See section 5.
+- **In → out:** `BoundingBox` + `ClassInfo` + frame size + `Tilt | null` + `Settings` → `GeometryResult`: `clock`, `distanceM` (unrounded, for smoothing), `distanceRoundedM` (as spoken), `distanceSource`, `distanceGroundM`, `distanceBoxM`, `elevation`, heights, `lateralOffsetM`, `inPath`, `touchesBottom`, `degraded`. The tracker (A4) copies these onto each `Track`.
 - **Satisfies:** FR-6, FR-7, FR-8, FR-9, NFR-7.
 
 ### 2.7 Tracker, smoothing, time-to-contact
@@ -111,9 +111,9 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Satisfies:** FR-19, NFR-10 (memory cap); provides the measurements for NFR-1 to NFR-4.
 
 ### 2.14 Settings and calibration
-- **Path:** `app/settings.ts` (store, persisted in `localStorage`, validated on load), `app/calibration.ts` (pure field-of-view math), `app/screens/Settings.tsx`
-- **Responsibility:** hold `Settings` with defaults from config; publish changes on the bus; compute `horizontalFovDeg` from a measured width and distance (`2·atan(width / 2 / distance)`).
-- **In → out:** user input → `Settings`.
+- **Path:** `app/settings.ts` (store persisted in `localStorage`, values clamped on load and on change, safe when storage is blocked), `app/useSettings.ts`, `app/calibration.ts` (pure field-of-view math and the written steps), `app/screens/Settings.tsx`, `app/screens/Calibrate.tsx`
+- **Responsibility:** hold `Settings` with defaults from config. The Settings screen (a button on the Start screen) sets the eye height and opens the calibration. Calibrate shows the live camera with a vertical center line, the live pitch and roll, and the steps, written and read aloud: stand 1 m from a wall, hold the phone level and sideways at eye level, have a teammate mark the wall at the left and right edges of the view, measure the width, enter it. The field of view is `2·atan(width / 2 / distance)`, rejected outside `minFovDeg`..`maxFovDeg`, and is stored. It is measured for the stream the app actually uses (same camera and size), and applies to the landscape picture.
+- **In → out:** user input → `Settings`. Publishing changes on the event bus waits for the bus (S3); for now the store notifies subscribers directly.
 - **Satisfies:** FR-17, FR-6, FR-7.
 
 ### 2.15 Pipeline orchestrator and screens
@@ -184,43 +184,47 @@ Notes:
 
 ## 5. Geometry
 
-Notation: frame size `W×H`; `u` is the box center x and `y_t`, `y_b` the top and bottom y, all normalized 0..1 from the top-left. `hFov` is the horizontal field of view, `h` the eye height, `pitch` the camera axis angle above the horizon (positive up), `roll` the rotation about the camera axis.
+Implemented in `geometry/geometry.ts`. Notation: frame `W×H` pixels; `f` the focal length in pixels, `f = (W / 2) / tan(hFov / 2)`; `h` the eye height; `pitch` the camera axis angle above the horizon (positive up); `roll` the rotation about the camera axis (positive clockwise as seen from behind the phone).
+
+A pixel `(px, py)` becomes a ray `(u, v) = ((px - W/2) / f, (py - H/2) / f)` (right, down). The roll is taken out by turning the ray clockwise by `roll`: `u' = u cos(roll) - v sin(roll)`, `v' = u sin(roll) + v cos(roll)`. Then, with the camera axis tilted by `pitch`:
 
 ```
-Th = tan(hFov / 2)                    tan of half the horizontal field
-Tv = Th * H / W                       tan of half the vertical field
+forward = cos(pitch) + v' * sin(pitch)
+down    = v' * cos(pitch) - sin(pitch)
+tan(angle below the horizon) = down / forward
+bearing = atan2(u', forward)            horizontal angle, positive to the right
 ```
 
-Before use, rotate each point `(u, y)` about `(0.5, 0.5)` by `-roll` (aspect-corrected) so the horizon is level.
+A ray with `forward <= 0` points backward and is ignored. Edge touching: a box touches an edge when it is within `edgeTouchMargin` (0.02 of the frame) of it.
 
-**Clock position.** Horizontal angle `theta = atan((2u - 1) * Th)`, negative to the left.
+**Clock position.** `theta` is the bearing of the box center. A box touching only the left edge is **far left**, only the right edge **far right** (touching both fills the view, so the angle decides). Otherwise `|theta| <= clockCenterDeg` (15°) is **12 o'clock**, more to the right is **1**, more to the left **11**. Beyond 15° the position stays 1 or 11 up to the edge of the picture.
 
-| Angle | Position |
-|---|---|
-| `theta` < -25° | far left |
-| -25° ≤ `theta` < -10° | 11 o'clock |
-| -10° ≤ `theta` ≤ 10° | 12 o'clock |
-| 10° < `theta` ≤ 25° | 1 o'clock |
-| `theta` > 25° | far right |
+**Ground-plane distance** (primary). For a class with `groundContact`, when the box does not touch the bottom edge and its bottom edge points at least `minDepressionDeg` (3°) below the horizon: `D = h / tan(angle below the horizon at the bottom-center point)`. This is the distance ahead (along the forward direction), not the straight-line distance.
 
-The cutoffs are `clockCenterDeg` and `clockEdgeDeg`. At a 65° field the visible half-angle is 32.5°, so "far" covers the outer 7.5°.
+**Box-size distance** (fallback). `D = typicalHeightM * f / (box height in pixels)`, for classes with a typical height. It is reliable only if the box touches neither the top nor the bottom edge.
 
-**Depression angle.** For a normalized y, the ray points below the horizon by `delta(y) = atan((2y - 1) * Tv) - pitch` (degrees).
+**Nearest visible floor.** `D_min = h / tan(angle below the horizon at the bottom-center of the frame)`. An object cut off by the bottom edge is no farther than this.
 
-**Ground-plane distance** (primary). If `delta(y_b) >= minDepressionDeg` (3°), the bottom edge meets the floor, and the horizontal distance is `D = h / tan(delta(y_b))`. Used for classes with `groundContact`. Needs the orientation sensor.
+**Choosing.** Candidates outside `minValidDistanceM`..`maxValidDistanceM` (0.3 to 10 m) are discarded. Then:
+1. No tilt reading (degraded) and a reliable box-size value: use **box-size**, because the ground plane would be a guess.
+2. Else a valid ground-plane value: use **ground-plane**.
+3. Else, if the box touches the bottom edge: use the nearer of the box-size value and `D_min` (source `box-size` or `min-visible`). Both tend to overestimate for a cut-off object, so this is a limit, not an estimate.
+4. Else the box-size value, if any.
+5. Otherwise there is no distance (`null`): the object is not in the path and gets no height label.
 
-**Box-size distance** (fallback). With the class's `typicalHeightM`, the frame height spans `2 * Tv * D` at distance `D`, so `D = typicalHeightM / (2 * Tv * (y_b - y_t))`. Used when the ground plane does not apply (no sensor, bottom edge above the horizon, class without ground contact). Requires the box top and bottom not to be cut off by the frame. Typical heights (m, approximate; full table in `ml/class_map.json`): person 1.7, bicycle 1.0, motorcycle 1.2, car 1.5, bus 3.0, truck 3.0, bench 0.9, chair 0.9, couch 0.85, dining table 0.75, backpack 0.45, suitcase 0.6, potted plant 0.5, fire hydrant 0.7.
+Both raw candidates are kept in the result for tuning. The distance is smoothed by the tracker, then spoken rounded to the nearest `roundToM` (0.5 m), never below 0.5 m (`roundDistance`).
 
-**Choosing.** Prefer ground-plane, else box-size. If the box bottom is cut off (`y_b > truncatedBottomY`), the object is nearer than the closest visible floor, so report that closest visible distance, `D = h / tan(delta_max)`, with source `min-visible` (an upper bound). Both raw candidates are kept in the `Track` for tuning. Discard distances outside `minValidDistanceM`..`maxValidDistanceM`. Distances are smoothed, then spoken rounded to the nearest `roundToM` (0.5), never below 0.5.
-
-**Lateral position and width.** `X = D * (2u - 1) * Th` (right is positive); object width `w = (box width) * 2 * Th * D`.
-
-**Floor and head-height rules.** With `D` known, the height of an edge above the floor is `z(y) = h - D * tan(delta(y))`.
-- `floor` if `z(y_t) <= floorTopMaxM` (0.6 m): a low object such as a bag on the ground.
-- `head` if `z(y_b)` lies between `headBottomMinFraction * h` and `headBottomMaxFraction * h` (0.6 to 1.1 of eye height): something hanging or protruding at face level. Objects whose bottom edge is above that are over the user's head and ignored for this label.
+**Heights.** With `D` known, an edge's height above the floor is `z = h - D * tan(angle below the horizon at that edge)`, for the top and bottom of the box.
+- `floor` if the box does not touch the top edge and `z(top) <= floorTopMaxM` (0.5 m): a low object such as a bag on the ground.
+- `head` if the box does not touch the bottom edge and `z(bottom)` lies between `headBottomMinM` (1.2 m) and `headBottomMaxM` (2.0 m): something hanging or protruding at face level. A bottom edge above 2.0 m passes over the head and gets no label.
 - `body` otherwise, spoken without a suffix.
 
-**Walking-path corridor.** An object is `inPath` if `0 < D <= corridorDepthM` (4 m) and its lateral interval `[X - w/2, X + w/2]` overlaps `[-corridorHalfWidthM, +corridorHalfWidthM]` (±0.5 m). Approaching objects use the wider `approachHalfWidthM` (±1 m).
+**Walking-path corridor.** Lateral offset `X = D * tan(theta)` (right is positive). An object is `inPath` if `D <= corridorDepthM` (4 m) and `|X| <= corridorHalfWidthM` (0.5 m); only the box center counts, not its width. Approaching objects use the wider `approachHalfWidthM` (1 m), applied by the tracker.
+
+**Known limits.**
+- A cut-off box (touching the bottom edge) is the weak case: an object about 1 m away can read 1.5 m or more. The policy should treat `touchesBottom` as "close".
+- Box-size distance assumes the object stands upright and has the class's typical height; a short person or a tall chair is off by that ratio.
+- The pitch and roll signs follow the W3C Euler convention and the unit tests, but have not been checked on the demo iPhone: tilt the phone down and the pitch readout must go negative.
 
 ## 6. Tracking
 

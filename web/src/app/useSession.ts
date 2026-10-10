@@ -14,10 +14,7 @@ export function useSession(): {
   const [{ session, setVideo }] = useState(() => {
     const holder: { video: HTMLVideoElement | null } = { video: null }
     return {
-      session: createSession(() => {
-        if (!holder.video) throw new Error('The video element is not mounted')
-        return holder.video
-      }),
+      session: createSession(() => holder.video),
       setVideo: (element: HTMLVideoElement | null) => {
         holder.video = element
       },

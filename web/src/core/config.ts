@@ -74,27 +74,54 @@ export const CONFIG = {
     defaultEyeHeightM: 1.6,
     // Default horizontal field of view of the rear camera in landscape; calibration replaces it. FR-6, FR-17
     defaultHorizontalFovDeg: 65,
-    // Horizontal angle within which an object is read as 12 o'clock. FR-6
-    clockCenterDeg: 10,
-    // Horizontal angle where 11 and 1 o'clock end and far left/right begin. FR-6
-    clockEdgeDeg: 25,
+    // Accepted range for the eye height setting, in meters. FR-17
+    minEyeHeightM: 0.8,
+    maxEyeHeightM: 2.2,
+    // Accepted range for the horizontal field of view setting and for a calibration result. FR-17
+    minFovDeg: 30,
+    maxFovDeg: 120,
+    // Horizontal angle within which an object is read as 12 o'clock; beyond it, 1 or 11. FR-6
+    clockCenterDeg: 15,
+    // A box counts as touching a frame edge when it is this close to it (normalized 0..1);
+    // a box touching the left or right edge is read as "far left" or "far right". FR-6, FR-7
+    edgeTouchMargin: 0.02,
     // Ray must point at least this far below the horizon for the ground-plane distance to apply. FR-7
     minDepressionDeg: 3,
-    // Boxes whose bottom edge is below this normalized y are treated as cut off by the frame. FR-7
-    truncatedBottomY: 0.98,
     // Distances outside this range are discarded as implausible. FR-7
     minValidDistanceM: 0.3,
     maxValidDistanceM: 10,
     // An object whose top edge is at or below this height counts as "on the floor". FR-8
-    floorTopMaxM: 0.6,
-    // An object whose bottom edge is between these fractions of eye height counts as "at head height". FR-8
-    headBottomMinFraction: 0.6,
-    headBottomMaxFraction: 1.1,
+    floorTopMaxM: 0.5,
+    // An object whose bottom edge is between these heights counts as "at head height";
+    // above the upper one it passes over the head and gets no label. FR-8
+    headBottomMinM: 1.2,
+    headBottomMaxM: 2,
     // Walking corridor: half width either side of center, and depth ahead. FR-9
     corridorHalfWidthM: 0.5,
     corridorDepthM: 4,
     // Wider corridor used to judge approaching objects. FR-5, FR-9
     approachHalfWidthM: 1,
+  },
+
+  orientation: {
+    // Smoothing factor for pitch and roll, 0..1 (higher follows the sensor faster). FR-3
+    smoothing: 0.25,
+    // How long past readings are kept, so a frame can be paired with the tilt at its capture time. FR-3
+    historyMs: 1000,
+    // A reading that arrives after the requested time is used only if within this gap. FR-3
+    maxSampleGapMs: 250,
+    // Orientation holds until it changes, so a reading counts for this long; older means the sensor
+    // stopped. A still iPhone keeps sending events, so this is generous. FR-3, FR-14
+    staleAfterMs: 2000,
+    // No reading within this time after starting means the tilt sensor is unavailable. FR-3
+    noDataTimeoutMs: 1500,
+  },
+
+  settings: {
+    // Starting values for settings that have no other home in this file. FR-17
+    speechRate: 1,
+    toneVolume: 0.8,
+    heartbeatVolume: 0.3,
   },
 
   alerts: {
