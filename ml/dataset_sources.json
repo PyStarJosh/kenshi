@@ -1,0 +1,48 @@
+{
+  "comment": "One entry per downloaded dataset. Each lives under datasets/raw/<name> as images/{train,val}/ and labels/{train,val}/ in YOLO format. 'names' lists the source's class names by id ('kept' means our kept COCO classes in id order); 'map' renames them to our class labels, and anything not listed is dropped. 'kind' is 'kept' for sources that label our existing obstacle classes by hand and 'hazard' for sources that label the new classes. 'pseudo_label' adds the base model's kept-class boxes to images that do not label those classes.",
+  "sources": [
+    {
+      "name": "openimages-v7",
+      "kind": "hazard",
+      "path": "datasets/raw/openimages-v7",
+      "names": ["Stairs", "Door", "Street light"],
+      "map": { "Stairs": "stairs", "Door": "door", "Street light": "pole" },
+      "pseudo_label": true,
+      "max_images": { "train": null, "val": null }
+    },
+    {
+      "name": "zenodo-barriers",
+      "kind": "hazard",
+      "path": "datasets/raw/zenodo-barriers",
+      "names": ["stairs", "curb"],
+      "map": { "stairs": "stairs", "curb": "curb" },
+      "pseudo_label": true,
+      "max_images": { "train": null, "val": null }
+    },
+    {
+      "name": "coco-kept",
+      "kind": "kept",
+      "path": "datasets/raw/coco-kept",
+      "names": "kept",
+      "map": "identity",
+      "pseudo_label": false,
+      "max_images": { "train": 4000, "val": 500 }
+    },
+    {
+      "name": "argoverse",
+      "kind": "kept",
+      "path": "datasets/raw/Argoverse/Argoverse-1.1",
+      "names": ["person", "bicycle", "car", "motorcycle", "bus", "truck", "traffic_light", "stop_sign"],
+      "map": {
+        "person": "person",
+        "bicycle": "bicycle",
+        "car": "car",
+        "motorcycle": "motorcycle",
+        "bus": "bus",
+        "truck": "truck"
+      },
+      "pseudo_label": false,
+      "max_images": { "train": 4000, "val": 500 }
+    }
+  ]
+}

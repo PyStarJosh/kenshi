@@ -30,3 +30,6 @@ field-tests/**/*.mov
 
 # OS
 .DS_Store
+
+# Comparison output images (the report.md files stay tracked)
+results/**/frames/
