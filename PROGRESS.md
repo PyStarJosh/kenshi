@@ -18,9 +18,9 @@ Edit only your own track's section. Keep this file under 80 lines.
 **Next:** U1 audio engine and health monitor.
 
 ## Model
-**Works:** ml/ package exists with the ml and analysis dependency groups installed.
-**Broken:** nothing yet.
-**Next:** M1 export model and class map.
+**Works:** M1 done. YOLO26n exported at 320 and 416 (web/public/models/yolo26n-<size>.onnx, 9.8 MB each, input [1,3,S,S], output [1,84,N], details in SDS 4.1). Class map: ml/class_map.json -> web/src/detection/classes.ts via ml/gen_classes.py. export_onnx.py deletes weights it downloaded. ml/check_onnx.py runs the 416 model in onnxruntime: bus.jpg gives bus 0.89 and 3 persons (0.85, 0.80, 0.75); zidane.jpg gives 2 persons (0.88).
+**Broken:** nothing known. Disk was full on the dev laptop, so the export was not re-run in this step; the committed ONNX files come from A1.
+**Next:** M2 hazard dataset and training (stairs, curb, pole, door as ids 80 to 83).
 
 ## Decisions
 - Python 3.13 is pinned (.python-version); requires-python stays >=3.11 so older interpreters still work. The project is tooling only (tool.uv package = false), so there is no installable package.
