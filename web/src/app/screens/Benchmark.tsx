@@ -131,7 +131,7 @@ export default function Benchmark() {
 
   return (
     <main className="bench">
-      <h1>Navigator benchmark</h1>
+      <h1>Kenshi benchmark</h1>
       <div className="bench-controls">
         <label>
           Model size
