@@ -5,14 +5,20 @@
 import { AudioEngine } from '../audio/engine'
 import type { AlertTiming } from '../audio/engine'
 import { createBrowserSpeaker } from '../audio/speech'
-import { TonePlayer } from '../audio/tones'
+import { listeningTone, TonePlayer } from '../audio/tones'
 import { GREETING, unlockAudioContext } from '../audio/unlock'
 import { CONFIG } from '../core/config'
 import type { AlertEvent, AlertOutcome, AlertPriority, HealthState } from '../core/types'
 import { HealthMonitor } from '../health/monitor'
 import type { HealthAnnouncement, RunState } from '../health/monitor'
+import { VOICE_PHRASES } from '../voice/commands'
+import { VoiceControl } from '../voice/control'
+import { createBrowserRecognizer } from '../voice/recognizer'
 import type { Session, SessionState } from './session'
 import { settingsStore } from './settings'
+
+/** The "what's around me" summary phrase, from the alert policy (A5). Null until that is wired in. */
+export type Summarizer = () => string
 
 export interface AudioLinkView {
   unlocked: boolean
@@ -23,6 +29,10 @@ export interface AudioLinkView {
   lastOutcome: string | null
   /** The latest audio, speech, or motion problem, for the status area. */
   error: string | null
+  /** The latest voice command phrase or recognition problem, for the status area. */
+  voiceMessage: string | null
+  /** The latest voice intent and where it came from, for the debug panel. */
+  lastVoice: string | null
 }
 
 const RUN_STATE: Record<SessionState, RunState> = {
@@ -36,7 +46,25 @@ export class AudioLink {
   private monitor = new HealthMonitor()
   private speech = createBrowserSpeaker()
   private ctx: AudioContext | null = null
+  private tones: TonePlayer | null = null
   private engine: AudioEngine | null = null
+  private summarizer: Summarizer | null = null
+  private lastAlertPhrase: string | null = null
+  private voice = new VoiceControl({
+    recognizer: createBrowserRecognizer(),
+    say: (text) => this.say(text),
+    holdSpeech: (held) => this.speech.speaker.setHeld(held),
+    earcon: (phase) => this.tones?.play(listeningTone(phase), settingsStore.getSnapshot().toneVolume),
+    whatsAround: () => this.say(this.summarizer ? this.summarizer() : VOICE_PHRASES.aroundSoon),
+    pauseDetection: () => this.session?.pause(),
+    resumeDetection: () => void this.session?.resume(),
+    isPaused: () => this.session?.getSnapshot().state === 'paused',
+    getSpeechRate: () => settingsStore.getSnapshot().speechRate,
+    setSpeechRate: (speechRate) => settingsStore.update({ speechRate }),
+    lastAlertPhrase: () => this.lastAlertPhrase,
+    onIntent: (intent, source) => this.update({ lastVoice: `${intent} (${source})` }),
+    onError: (message) => this.update({ voiceMessage: message }),
+  })
   private session: Session | null = null
   private testTracks = new Map<number, { distanceM: number }>()
   private testCount = 0
@@ -49,6 +77,8 @@ export class AudioLink {
     health: null,
     timing: null,
     lastOutcome: null,
+    voiceMessage: null,
+    lastVoice: null,
     error: this.speech.available ? null : 'Speech is not available in this browser. Tones still play.',
   }
 
@@ -73,8 +103,9 @@ export class AudioLink {
     if (!this.ctx) {
       this.ctx = ctx
       ctx.addEventListener('statechange', () => this.syncContextState())
+      this.tones = new TonePlayer(ctx)
       this.engine = new AudioEngine({
-        tones: new TonePlayer(ctx),
+        tones: this.tones,
         speaker: this.speech.speaker,
         // Real tracks join this lookup with the tracker (A4); until then only test alerts pass the
         // track check, and any other obstacle alert is dropped as track-gone (SR-3).
@@ -113,7 +144,27 @@ export class AudioLink {
   }
 
   handleAlert(alert: AlertEvent): void {
+    // Urgent alerts preempt listening (SR-4): the mic closes and the tone and phrase play at once.
+    if (alert.priority === 'urgent') this.voice.cancelForUrgent()
+    if (alert.kind === 'obstacle') this.lastAlertPhrase = alert.phrase
     this.engine?.handleAlert(alert)
+  }
+
+  /** The Talk button's tap. Call synchronously inside the tap (microphone permission, audio unlock). */
+  tap(): void {
+    this.unlock(false)
+    this.voice.tap()
+  }
+
+  /** The Talk button's long press: pause or resume detection. */
+  longPress(): void {
+    this.unlock(false)
+    this.voice.longPress()
+  }
+
+  /** Where "what's around me" gets its phrase; the alert policy (A5) or the test panel sets it. */
+  setSummarizer(summarizer: Summarizer | null): void {
+    this.summarizer = summarizer
   }
 
   /** ?debug test panel: an alert with a fake track at the given distance. */
@@ -174,6 +225,12 @@ export class AudioLink {
     if (alert.trackId !== null && outcome !== 'started') this.testTracks.delete(alert.trackId)
     const latency = latencyMs === null ? '' : ` after ${latencyMs.toFixed(0)} ms`
     this.update({ lastOutcome: `${alert.id} ${outcome}${latency}` })
+  }
+
+  /** Speak a voice reply (normal priority) and show it in the status area. */
+  private say(text: string): void {
+    this.speech.speaker.speak({ text, urgent: false })
+    this.update({ voiceMessage: text })
   }
 
   private reportError(message: string): void {

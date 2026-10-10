@@ -145,6 +145,28 @@ describe('Speaker', () => {
   })
 })
 
+describe('Speaker hold', () => {
+  test('holding stops the current phrase and drops normal ones, but urgent still speaks', () => {
+    const s = setup()
+    s.speaker.speak(s.request('Bench, 12 o\'clock'))
+    s.speaker.setHeld(true)
+    expect(s.log).toContain('preempted Bench, 12 o\'clock')
+    s.speaker.speak(s.request('Chair, 1 o\'clock'))
+    expect(s.log).toContain('preempted Chair, 1 o\'clock')
+    expect(s.speaker.isBusy()).toBe(false)
+    s.speaker.speak(s.request('Pole, 12 o\'clock', true))
+    expect(s.last().text).toBe('Pole, 12 o\'clock')
+  })
+
+  test('releasing the hold lets normal phrases speak again', () => {
+    const s = setup()
+    s.speaker.setHeld(true)
+    s.speaker.setHeld(false)
+    s.speaker.speak(s.request('Bench'))
+    expect(s.last().text).toBe('Bench')
+  })
+})
+
 describe('pickVoice', () => {
   const v = (name: string, lang: string, localService = true): VoiceLike => ({ name, lang, localService })
 

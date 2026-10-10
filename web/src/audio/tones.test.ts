@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { CONFIG } from '../core/config'
-import { alertTone, panFromAngle, toneLengthMs, urgentPulseGapMs, warningTone } from './tones'
+import { alertTone, listeningTone, panFromAngle, toneLengthMs, urgentPulseGapMs, warningTone } from './tones'
 
 describe('panFromAngle', () => {
   test('center, edges, and beyond the frame', () => {
@@ -64,5 +64,21 @@ describe('alertTone', () => {
     expect(warning.pan).toBe(0)
     expect(warning.notes).toHaveLength(2)
     expect(warning.notes[0].hz).not.toBe(warning.notes[1].hz)
+  })
+})
+
+describe('listeningTone', () => {
+  test('rises when listening starts and falls when it stops, centered', () => {
+    const start = listeningTone('start')
+    const stop = listeningTone('stop')
+    expect(start.pan).toBe(0)
+    expect(start.notes[0].hz).toBeLessThan(start.notes[1].hz)
+    expect(stop.notes[0].hz).toBeGreaterThan(stop.notes[1].hz)
+  })
+
+  test('differs from the warning and alert tones', () => {
+    const hz = listeningTone('start').notes.map((n) => n.hz)
+    expect(hz).not.toEqual(warningTone().notes.map((n) => n.hz))
+    expect(hz).not.toContain(CONFIG.audio.normalToneHz)
   })
 })

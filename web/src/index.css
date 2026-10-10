@@ -91,25 +91,29 @@ body {
 }
 
 .start:focus-visible,
-.pause:focus-visible {
+.talk:focus-visible {
   outline: 0.25rem solid #4da3ff;
   outline-offset: 0.25rem;
 }
 
-.pause {
+/* The Talk button fills the whole live screen; a tap, or a long press, is handled in TalkButton. */
+.talk {
   position: absolute;
-  top: max(0.5rem, env(safe-area-inset-top));
-  right: max(0.5rem, env(safe-area-inset-right));
-  min-width: 7rem;
-  min-height: 3.25rem;
-  border: 0.2rem solid #fff;
-  border-radius: 0.75rem;
-  background: #000a;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
   color: #fff;
   font: inherit;
-  font-size: 1.25rem;
+  font-size: clamp(2.5rem, 14vmin, 6rem);
   font-weight: 700;
+  text-shadow: 0 0 0.5rem #000;
   cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .status {
@@ -124,6 +128,8 @@ body {
   color: #fff;
   font-size: 1.125rem;
   text-align: center;
+  /* Taps pass through to the Talk button underneath. */
+  pointer-events: none;
 }
 
 .dev-line {

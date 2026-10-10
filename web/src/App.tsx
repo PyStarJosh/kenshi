@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import { lazy, Suspense, useState, useSyncExternalStore } from 'react'
 import { useAudioLink } from './app/useAudioLink'
+import TalkButton from './app/screens/TalkButton'
 import { useSession } from './app/useSession'
 
 const DebugOverlay = lazy(() => import('./app/screens/DebugOverlay.tsx'))
@@ -17,6 +18,7 @@ export default function App() {
   const { session, snapshot, setVideo } = useSession()
   const audio = useAudioLink(session)
   const audioError = useSyncExternalStore(audio.subscribe, () => audio.getView().error)
+  const voiceMessage = useSyncExternalStore(audio.subscribe, () => audio.getView().voiceMessage)
   const [view, setView] = useState<View>('main')
   const { state, message, frameSize } = snapshot
   const live = state === 'running' || state === 'paused'
@@ -66,17 +68,7 @@ export default function App() {
       )}
 
       {live && (
-        <button
-          type="button"
-          className="pause"
-          onClick={() => {
-            audio.unlock(false)
-            if (state === 'running') session.pause()
-            else void session.resume()
-          }}
-        >
-          {state === 'running' ? 'Pause' : 'Resume'}
-        </button>
+        <TalkButton link={audio} />
       )}
 
       {debugEnabled && (
@@ -86,7 +78,7 @@ export default function App() {
       )}
 
       <p role="status" aria-live="polite" className="status">
-        {audioError ? `${message} ${audioError}` : message}
+        {[message, audioError, voiceMessage].filter(Boolean).join(' ')}
       </p>
 
       {view !== 'main' && (

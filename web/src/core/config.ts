@@ -235,8 +235,13 @@ export const CONFIG = {
   voice: {
     // Longest wait for a spoken command after a tap before the tap fallback runs. FR-15, FR-16
     listenTimeoutMs: 4000,
-    // A press at least this long is a long press (pause or resume). FR-16
-    longPressMs: 600,
+    // A press held this long is a long press (pause or resume). FR-16
+    longPressMs: 1000,
+    // Taps closer together than this count as one, so a tap never fires twice. FR-16
+    tapDebounceMs: 400,
+    // Earcons: a rising pair when listening starts, a falling pair when it stops. FR-15
+    earconHz: [523, 784],
+    earconNoteMs: 70,
   },
 
   telemetry: {
