@@ -233,6 +233,48 @@ describe('frame rate', () => {
   })
 })
 
+describe('stale and switching state', () => {
+  test('a track that is no longer matched stops being approaching at once', () => {
+    const tracker = newTracker()
+    let last = null
+    for (let t = 0; t <= 2500; t += 67) {
+      last = tracker.update(frameResult(t, [person(personAt(6 - (1.2 * t) / 1000))]), noLevel, SETTINGS)
+    }
+    expect(last![0].approaching).toBe(true)
+    const [after] = tracker.update(frameResult(2567, []), noLevel, SETTINGS)
+    expect(after.status).toBe('confirmed')
+    expect(after.approaching).toBe(false)
+    expect(after.timeToContactS).toBeNull()
+    expect(after.closingSpeedMps).toBeNull()
+  })
+
+  test('a change of distance method on a still object does not read as approaching', () => {
+    const base = (distanceM: number, source: 'ground-plane' | 'box-size') => ({
+      clock: { position: 12 as const, angleDeg: 0 },
+      distanceM,
+      distanceRoundedM: distanceM,
+      distanceSource: source,
+      distanceGroundM: null,
+      distanceBoxM: null,
+      elevation: 'body' as const,
+      bottomHeightM: null,
+      topHeightM: null,
+      lateralOffsetM: 0,
+      inPath: true,
+      touchesBottom: false,
+      degraded: false,
+    })
+    let frame = 0
+    // Same object, same box; after 15 frames the method changes and the answer drops from 5 m to 3 m.
+    const switching: Locator = () => (frame < 15 ? base(5, 'ground-plane') : base(3, 'box-size'))
+    const tracker = new Tracker(CLASSES, switching)
+    for (; frame < 40; frame++) {
+      const [track] = tracker.update(frameResult(frame * 67, [person(personAt(5))]), noLevel, SETTINGS)
+      expect(track.approaching).toBe(false)
+    }
+  })
+})
+
 describe('shake', () => {
   test('small random box shake on a still object does not trigger approaching', () => {
     const random = rng(42)
