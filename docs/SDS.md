@@ -4,7 +4,7 @@ Version 0.1 · How we meet [SRS.md](SRS.md). Type names refer to `web/src/core/t
 
 ## 1. Architecture overview
 
-Everything runs in the browser. Heavy work (preprocessing, inference, postprocessing) runs in one Web Worker. Everything else is light and runs on the main thread. Modules talk through typed function calls along the main data path, and through the event bus for alerts, health, voice, settings, and telemetry. `app/pipeline.ts` wires them together.
+Everything runs in the browser. Heavy work (preprocessing, inference, postprocessing) runs in one Web Worker. Everything else is light and runs on the main thread. Modules talk through typed function calls along the main data path, and through the event bus for alerts, health, voice, settings, and telemetry. `app/session.ts` owns the live run (start, pause, resume, page hide) and `app/pipeline.ts` will wire the tracking, geometry, and alert modules into it as they arrive.
 
 ```mermaid
 flowchart TD
@@ -39,14 +39,14 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Satisfies:** all (indirectly).
 
 ### 2.2 Camera
-- **Path:** `camera/camera.ts`
-- **Responsibility:** opens the rear camera in landscape (`CONFIG.camera`), requests a screen wake lock, reports stream loss.
-- **In → out:** user gesture → a playing video element; errors → `HealthIssue` `no-camera`.
+- **Path:** `camera/camera.ts`, `camera/wakeLock.ts`
+- **Responsibility:** opens the rear camera at about 1280x720 (`CONFIG.camera`) with no audio, then switches to the plain wide "Back Camera" lens when the device lists one (virtual multi-lens devices can change the field of view on their own); plays it in a muted, inline video element; reports frame-size changes (rotation) and stream loss. `wakeLock.ts` holds the screen awake while running and is re-requested on resume. Failures are typed (`permission-denied`, `no-camera`, `camera-busy`, `insecure-page`, `unknown`), each with one spoken sentence.
+- **In → out:** user gesture → a playing video element and `CameraInfo`; errors → `CameraError`.
 - **Satisfies:** FR-1, FR-18, SR-8.
 
 ### 2.3 Frame scheduler
 - **Path:** `camera/scheduler.ts`
-- **Responsibility:** latest-frame-wins capture. When the worker is idle and `1000 / maxFps` ms have passed, grabs one `ImageBitmap` stamped with `captureTimeMs` and transfers it. Never queues.
+- **Responsibility:** latest-frame-wins capture. Driven by `requestVideoFrameCallback` (`requestAnimationFrame` where missing). When the worker is idle and 90% of `1000 / maxFps` ms have passed (`frameGapTolerance`, so camera jitter does not cost a whole frame), grabs one `ImageBitmap` stamped with `captureTimeMs` and transfers it; it also captures again as soon as a detection finishes, because waiting for the next video frame would drop a 30 fps camera to 10 fps when detection takes about 70 ms. If a bitmap cannot be made from the video element it draws to a canvas instead. Never queues.
 - **In → out:** video element, worker idle flag → `{frameId, captureTimeMs, bitmap}` to the worker.
 - **Satisfies:** FR-1, NFR-1, NFR-12.
 
@@ -117,8 +117,8 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Satisfies:** FR-17, FR-6, FR-7.
 
 ### 2.15 Pipeline orchestrator and screens
-- **Path:** `app/pipeline.ts`, `app/screens/`, `app/App.tsx`
-- **Responsibility:** per-frame wiring (section 3), Start sequence, pause/resume, aria-live status line, large Talk area, first-run text stating the cane is still needed.
+- **Path:** `app/session.ts` (start, pause, resume, page hide, shutdown), `app/useSession.ts`, `app/messages.ts`, `app/screens/` (including `DebugOverlay.tsx`, shown with `?debug`), `App.tsx`; `app/pipeline.ts` arrives with tracking and geometry.
+- **Responsibility:** per-frame wiring (section 3), Start sequence (wake lock, camera, and model load all start in the Start tap), pause/resume, aria-live status line, large Talk area, first-run text stating the cane is still needed. Landscape-first layout that also works upright.
 - **Satisfies:** FR-16, FR-18, NFR-9, NFR-10, NFR-11, NFR-12, SR-7, SR-8.
 
 ### 2.16 Offline cache

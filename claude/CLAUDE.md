@@ -28,7 +28,7 @@ web/                        Vite + React + TypeScript app
   public/sw.js              offline cache (service worker)
   api/                      stretch step S6 only: the describe function
   src/core/                 types.ts (shared contracts), config.ts (every tunable number)
-  src/camera/               camera stream, frame scheduler
+  src/camera/               camera stream, frame scheduler, wake lock
   src/detection/            worker, engine, protocol, preprocess, postprocess, classes.ts (generated)
   src/sensors/              device orientation
   src/geometry/             clock, distance, elevation, walking path
@@ -38,7 +38,7 @@ web/                        Vite + React + TypeScript app
   src/health/               health monitor
   src/voice/                recognizer, commands
   src/telemetry/            test-mode logger, export
-  src/app/                  pipeline orchestrator, screens, settings, calibration
+  src/app/                  session (live run), pipeline orchestrator, screens, settings, calibration
   scripts/copy-ort.mjs      copies onnxruntime-web WebAssembly files into public/ort (runs before dev and build)
   scripts/replay.ts         offline replay of test logs
   vercel.json               cross-origin isolation headers

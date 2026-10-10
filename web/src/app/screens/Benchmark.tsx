@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CONFIG } from '../../core/config'
 import type { Detection, FrameResult } from '../../core/types'
 import { DetectionEngine } from '../../detection/engine'
+import { modelUrl } from '../../detection/models'
 import type { EngineInfo, ProviderChoice } from '../../detection/protocol'
 import { summarize } from './benchmarkStats'
 import type { BenchmarkStats, Spread } from './benchmarkStats'
@@ -12,7 +13,6 @@ type ModelSize = 320 | 416
 type Phase = 'idle' | 'loading' | 'warmup' | 'timed' | 'done' | 'error'
 
 const SAMPLE_URL = `${import.meta.env.BASE_URL}samples/bus.jpg`
-const modelUrl = (size: ModelSize) => `${import.meta.env.BASE_URL}models/yolo26n-${size}.onnx`
 const ms = (value: number) => value.toFixed(1)
 
 function statusText(phase: Phase, done: number, total: number, error: string | null): string {

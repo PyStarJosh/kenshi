@@ -9,52 +9,128 @@
   box-sizing: border-box;
 }
 
-body {
-  margin: 0;
+html,
+body,
+#root {
+  height: 100%;
 }
 
-.screen {
+body {
+  margin: 0;
+  overscroll-behavior: none;
+}
+
+/* The app fills the screen and works held sideways in either direction, or upright. */
+.app {
+  position: fixed;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1.5rem;
-  min-height: 100dvh;
-  padding: 1rem;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+}
+
+/* The camera picture, scaled to fit the screen without cropping. */
+.stage {
+  --ar: 1.7778;
+  position: relative;
+  width: min(100vw, calc(100dvh * var(--ar)));
+  aspect-ratio: var(--ar);
+}
+
+.stage-off {
+  position: absolute;
+  width: 1px;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+/* The Start area fills the whole screen. */
+.start-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right))
+    calc(5rem + env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+}
+
+.start-screen h1 {
+  margin: 0;
+  font-size: 1.5rem;
   text-align: center;
 }
 
-h1 {
-  margin: 0;
-  font-size: 2rem;
-}
-
 .start {
-  width: min(100%, 32rem);
-  min-height: 40dvh;
-  border: 0.25rem solid currentColor;
+  flex: 1;
+  width: 100%;
+  border: 0.25rem solid #fff;
   border-radius: 1rem;
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 3rem;
+  font-size: clamp(2.5rem, 14vmin, 6rem);
   font-weight: 700;
   cursor: pointer;
 }
 
-.start:focus-visible {
-  outline: 0.25rem solid #1a73e8;
+.start:disabled {
+  opacity: 0.5;
+}
+
+.start:focus-visible,
+.pause:focus-visible {
+  outline: 0.25rem solid #4da3ff;
   outline-offset: 0.25rem;
 }
 
-.status {
-  margin: 0;
+.pause {
+  position: absolute;
+  top: max(0.5rem, env(safe-area-inset-top));
+  right: max(0.5rem, env(safe-area-inset-right));
+  min-width: 7rem;
+  min-height: 3.25rem;
+  border: 0.2rem solid #fff;
+  border-radius: 0.75rem;
+  background: #000a;
+  color: #fff;
+  font: inherit;
   font-size: 1.25rem;
+  font-weight: 700;
+  cursor: pointer;
 }
 
-.debug {
+.status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
   margin: 0;
-  font-family: ui-monospace, monospace;
-  font-size: 0.875rem;
+  padding: 0.5rem max(0.75rem, env(safe-area-inset-right)) max(0.5rem, env(safe-area-inset-bottom))
+    max(0.75rem, env(safe-area-inset-left));
+  background: #000c;
+  color: #fff;
+  font-size: 1.125rem;
+  text-align: center;
+}
+
+.dev-line {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.5rem;
+  margin: 0;
+  font: 0.75rem ui-monospace, monospace;
   opacity: 0.7;
 }
