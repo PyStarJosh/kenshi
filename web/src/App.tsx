@@ -7,7 +7,7 @@ export default function App() {
 
   return (
     <main className="screen">
-      <h1>Navigator</h1>
+      <h1>Kenshi</h1>
       <button type="button" className="start">
         Start
       </button>

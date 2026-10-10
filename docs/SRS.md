@@ -1,14 +1,14 @@
-# Software Requirements Specification: Navigator
+# Software Requirements Specification: Kenshi
 
 Version 0.1 · Source of truth for what we build. Design lives in [SDS.md](SDS.md). Changing a requirement needs the project owner's approval.
 
 ## 1. Introduction
 
 ### 1.1 Purpose
-Navigator is a real-time obstacle guide for blind and low-vision pedestrians. It runs entirely on an iPhone in Safari: the rear camera feeds an on-device object detector, and the app speaks short, guide-style alerts such as "Backpack, 1 o'clock, about 2 meters, on the floor."
+Kenshi is a real-time obstacle guide for blind and low-vision pedestrians. It runs entirely on an iPhone in Safari: the rear camera feeds an on-device object detector, and the app speaks short, guide-style alerts such as "Backpack, 1 o'clock, about 2 meters, on the floor."
 
 ### 1.2 Scope and positioning
-- Navigator **complements the white cane and never replaces it**. Code, UI text, and docs must never claim otherwise.
+- Kenshi **complements the white cane and never replaces it**. Code, UI text, and docs must never claim otherwise.
 - Demo form factor: the phone held at eye level, sideways (landscape), to simulate camera glasses. Glasses are a future target only; no integration is claimed.
 - Walk mode only. The app announces confirmed obstacles that are in the walking path or approaching.
 
@@ -94,7 +94,7 @@ This product is safety-critical. A safety requirement overrides any other requir
 | SR-4 | Urgent alerts preempt all other speech, summaries, and descriptions. | Unit test, Field test |
 | SR-5 | When detection degrades (stalled, low frame rate, low light, camera or worker errors), the app says so immediately. | Unit test, Field test |
 | SR-6 | When the phone is lowered or pointed far from the horizon, the app warns that detection may be unreliable. | Unit test, Field test |
-| SR-7 | The first-run text, help, and docs state that Navigator complements the white cane and does not replace it. | Inspection |
+| SR-7 | The first-run text, help, and docs state that Kenshi complements the white cane and does not replace it. | Inspection |
 | SR-8 | Every failure produces a spoken and on-screen message and a recovery path; no error is silently swallowed. | Unit test, Inspection |
 | SR-9 | While paused, a distinct reminder repeats at a steady interval, so a paused app is never mistaken for a quiet path. | Unit test, Field test |
 

@@ -1,4 +1,4 @@
-# Software Design Specification: Navigator
+# Software Design Specification: Kenshi
 
 Version 0.1 · How we meet [SRS.md](SRS.md). Type names refer to `web/src/core/types.ts`; tunable numbers to `web/src/core/config.ts` (`CONFIG.<section>.<name>`). Numbers written here are the starting defaults from config.
 

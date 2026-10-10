@@ -1,4 +1,4 @@
-# Navigator
+# Kenshi
 
 A real-time obstacle guide for blind and low-vision pedestrians. It runs entirely on an iPhone in Safari and complements the white cane; it never replaces it. See `docs/SRS.md` and `docs/SDS.md` for what we build and how, and `PROGRESS.md` for the current state.
 

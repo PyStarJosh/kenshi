@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Project
-Navigator: a real-time obstacle guide for blind and low-vision pedestrians that runs entirely on an iPhone in Safari. The rear camera feeds an on-device YOLO model, and the app speaks short guide-style alerts such as "Backpack, 1 o'clock, about 2 meters, on the floor."
+Kenshi: a real-time obstacle guide for blind and low-vision pedestrians that runs entirely on an iPhone in Safari. The rear camera feeds an on-device YOLO model, and the app speaks short guide-style alerts such as "Backpack, 1 o'clock, about 2 meters, on the floor."
 - It complements the white cane and never replaces it. Never claim otherwise in code, UI text, or docs.
 - Demo form factor: the phone held at eye level, sideways (landscape), to simulate camera glasses. Glasses (for example Meta's) are a future target only; do not claim any integration.
 - Built in 36 hours by a team of three, each running Claude Code.
