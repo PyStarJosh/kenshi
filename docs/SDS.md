@@ -389,7 +389,7 @@ Verification methods are the same as in the SRS.
 - Find: the Gemini model, its free-tier limits, its latency, and how well it boxes arbitrary household targets are all to be measured (section 13.4).
 - Find: gyroscope yaw drifts and has no north reference, so a stored heading is only good for a short time; how short is to be measured.
 - Find: a distance for an arbitrary target is only possible when its box bottom is on the floor (ground plane); otherwise guidance gives direction only.
-- Find: `gemini-3.8-flash`, the default model, timed out at the 8 s limit once in two tries on the chair photo and answered in 52 s once in a separate probe (13.5). Free-tier availability and speed change from day to day, so `GEMINI_MODEL` is set in Vercel and the function's default should be re-checked before the demo.
+- Find: the owner chose `gemini-3.1-flash-lite` as the model. The larger `gemini-3.8-flash` timed out at the 8 s limit once in two tries on the chair photo and answered in 52 s once in a separate probe (13.5). Free-tier availability and speed change from day to day, so re-check the model before the demo.
 
 ## 13. Find mode (steps R1 to R7)
 
@@ -400,7 +400,7 @@ Find mode is a "Find My" for blind users. The user names a target; a Gemini mode
 | Component | Path (step) | Responsibility |
 |---|---|---|
 | Install files | `public/manifest.webmanifest`, `public/icons/` (drawn by `ml/make_icons.py`), `index.html` meta (R1, done) | Home Screen install, standalone display, black status bar, no `orientation` field (portrait and both landscapes work), no service worker (FR-29) |
-| Locate function | `web/api/locate.ts` (R2, done) | One Vercel function (`POST`, Web-standard handler, `maxDuration` 15 s in `vercel.json`). Validates the body (target of 1 to 60 characters; 1 to 8 frames, each exactly `{ jpeg, heading, pitch }` with base64 JPEG data, a heading within 3600 degrees and a pitch within 180; no other fields; at most 4 MB), refuses requests from another origin, and calls Gemini through the Interactions API (`POST /v1beta/interactions`, key in the `x-goog-api-key` header, 8 s timeout). The request is an `input` array of a text prompt then "Frame n:" and an `image` part per frame, a `response_format` JSON schema, and the lowest `thinking_level` the model allows (unknown models send none). Boxes come back as `box_2d` [ymin, xmin, ymax, xmax] on 0 to 1000 and leave as `{x0, y0, x1, y1}` fractions. An answer below `CONFIG.find.minConfidence` counts as not found. Gemini failures map to `quota`, `auth`, `network`, `timeout`, `bad_response`. Stores nothing and logs only the error code. Environment: `GEMINI_API_KEY` (required) and `GEMINI_MODEL` (default `gemini-3.8-flash`). Real call checked in 13.5. (FR-22) |
+| Locate function | `web/api/locate.ts` (R2, done) | One Vercel function (`POST`, Web-standard handler, `maxDuration` 15 s in `vercel.json`). Validates the body (target of 1 to 60 characters; 1 to 8 frames, each exactly `{ jpeg, heading, pitch }` with base64 JPEG data, a heading within 3600 degrees and a pitch within 180; no other fields; at most 4 MB), refuses requests from another origin, and calls Gemini through the Interactions API (`POST /v1beta/interactions`, key in the `x-goog-api-key` header, 8 s timeout). The request is an `input` array of a text prompt then "Frame n:" and an `image` part per frame, a `response_format` JSON schema, and the lowest `thinking_level` the model allows (unknown models send none; `gemini-3.1-flash-lite` sends `minimal`). Boxes come back as `box_2d` [ymin, xmin, ymax, xmax] on 0 to 1000 and leave as `{x0, y0, x1, y1}` fractions. An answer below `CONFIG.find.minConfidence` counts as not found. Gemini failures map to `quota`, `auth`, `network`, `timeout`, `bad_response`. Stores nothing and logs only the error code. Environment: `GEMINI_API_KEY` (required) and `GEMINI_MODEL` (default `gemini-3.1-flash-lite`). Real call checked in 13.5. (FR-22) |
 | Locate client | `find/locateClient.ts`, `find/messages.ts` (R2, done); the shared types are in `core/types.ts` | `Locator.locate(target, captures)` encodes each frame to about 640 px wide at JPEG quality 0.7 (`OffscreenCanvas.convertToBlob`, which compresses off the main thread; a canvas element on an older Safari), posts to `/api/locate` with a 12 s timeout, and returns `{ ok, result }` or `{ ok: false, error, message, retryAfterMs }`; it never throws. A `CallLimiter` refuses a call less than 6 s after the previous one (`too_soon`) or a ninth in any 60 s (`limit`); a failed call still counts. `messages.ts` holds the spoken sentence for each code (SR-2 tested). (FR-22, NFR-14) |
 | Frame capture | `find/capture.ts` (R4) | Grabs frames from the camera (reusing the scheduler's bitmap grabber) at the moments the controller asks for and hands them to `frameToJpegBase64`. |
 | Heading | `sensors/heading.ts`, `sensors/attitude.ts` (R3) | Gyroscope yaw from device orientation, unwrapped and relative to the Find start. Pure math plus a thin adapter. (FR-24) |
@@ -484,7 +484,7 @@ Nothing in this table has been measured on the demo phone or the demo network. E
 
 ### 13.5 Locate function, checked for real (step R2)
 
-Run on 2026-10-11 from a Windows desktop through `vercel dev` (`curl` with a 960 px JPEG of a chair, target "chair"; `GEMINI_MODEL` was `gemini-3.1-flash-lite`). The picture is a Wikimedia Commons photo, "Empty Chair (27591598184)", downscaled by the site to 960 px; it is not in the repo.
+Run on 2026-10-11 from a Windows desktop through `vercel dev` (later reruns through `npm run dev:api` gave the same boxes, 1.6 s and 2.5 s function time) (`curl` with a 960 px JPEG of a chair, target "chair"; `GEMINI_MODEL` was `gemini-3.1-flash-lite`, now also the default). The picture is a Wikimedia Commons photo, "Empty Chair (27591598184)", downscaled by the site to 960 px; it is not in the repo.
 
 | Case | HTTP | Function `latencyMs` | Total (curl) | Reply |
 |---|---|---|---|---|
@@ -495,14 +495,14 @@ The total includes `vercel dev` compiling the function on its first calls. The f
 
 **The raw Gemini reply (Interactions API).** There is no top-level `output_text` in the REST response (the SDKs add one). The answer is in `steps`: an optional `{"type":"thought","signature":...}` step, then `{"type":"model_output","content":[{"type":"text","text":"<the JSON string>"}]}`. Other top-level fields: `id`, `status` ("completed"), `usage` (token counts by modality), `created`, `updated`, `service_tier`, `object` ("interaction"), `model`. `locate.ts` reads the last `model_output` step and falls back to `output_text`.
 
-**Models compared on the chair photo** (the function with `GEMINI_MODEL` set; the same desktop; two runs each; times are the function's total):
+**Models compared on the chair photo** (the function with `GEMINI_MODEL` set; the same desktop; two runs each; times are the function's total). The owner chose `gemini-3.1-flash-lite`, the default:
 
 | Model | Thinking level sent | Run 1 | Run 2 |
 |---|---|---|---|
-| `gemini-3.8-flash` (default) | low | timeout at 8 s | 3.3 s, found |
+| `gemini-3.8-flash` | low | timeout at 8 s | 3.3 s, found |
 | `gemini-3.6-flash` | minimal | 2.1 s, found | 503 from Gemini |
 | `gemini-3.5-flash-lite` | minimal | 2.0 s, found | 2.3 s, found |
-| `gemini-3.1-flash-lite` | none (not in the docs table) | 2.8 s, found | 3.4 s, found |
+| `gemini-3.1-flash-lite` (default) | minimal (not in the docs table; accepted by a real call, 0 thought tokens against 615 at `high`) | 2.8 s, found | 3.4 s, found |
 
 On the bus photo, in a separate probe, `gemini-3.8-flash` took 52 s once and timed out twice. All four models drew nearly the same chair box (x0 0.398 to 0.400, x1 0.794 to 0.797). The free tier does not guarantee any of this tomorrow.
 

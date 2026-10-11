@@ -156,6 +156,7 @@ describe('the Gemini request', () => {
     const level = (model: string) =>
       (buildGeminiBody(request, model) as { generation_config: { thinking_level?: string } }).generation_config.thinking_level
     expect(level('gemini-3.8-flash')).toBe('low')
+    expect(level('gemini-3.1-flash-lite')).toBe('minimal')
     expect(level('gemini-3.5-flash-lite')).toBe('minimal')
     expect(level('gemini-3.6-flash')).toBe('minimal')
     expect(level('some-future-model')).toBeUndefined()
@@ -172,8 +173,9 @@ describe('the Gemini request', () => {
     expect(buildPrompt('x', 1)).toContain('1 frame')
   })
 
-  test('the default model is gemini-3.8-flash', () => {
-    expect(internals.DEFAULT_MODEL).toBe('gemini-3.8-flash')
+  test('the default model is gemini-3.1-flash-lite, the owner\'s choice', () => {
+    expect(internals.DEFAULT_MODEL).toBe('gemini-3.1-flash-lite')
+    expect(LOWEST_THINKING_LEVEL[internals.DEFAULT_MODEL]).toBe('minimal')
   })
 })
 

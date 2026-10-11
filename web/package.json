@@ -9,6 +9,7 @@
   "scripts": {
     "predev": "node scripts/copy-ort.mjs",
     "dev": "vite",
+    "dev:api": "node scripts/vercel-dev.mjs",
     "prebuild": "node scripts/copy-ort.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",

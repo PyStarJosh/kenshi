@@ -113,9 +113,9 @@ Python (repo root): sync with uv sync --all-groups. Export the model: uv run --g
 
 Web (in web/):
 - Install: npm install
-- Dev: npm run dev (phone access: ngrok http 5173). With the function: vercel dev (needs GEMINI_API_KEY in web/.env.local, which is never printed or committed)
+- Dev: npm run dev (phone access: ngrok http 5173). With the function: npm run dev:api (vercel dev on port 3000 with web/.env.local loaded; the file is never printed or committed)
 - Checks: npm run lint, npm run typecheck, npm run test, npm run build
-- Try the function with a real key: node scripts/try-locate.mjs <image.jpg> "<target>" [base url]. `vercel dev` reads Development variables from Vercel, not web/.env.local, so run `node --env-file=.env.local <vercel cli> dev --listen 3000` or set GEMINI_API_KEY for the Development environment.
+- Try the function with a real key: node scripts/try-locate.mjs <image.jpg> "<target>" [base url]
 
 Deploy: push to main. Vercel builds web/ (root directory web, framework Vite).
 

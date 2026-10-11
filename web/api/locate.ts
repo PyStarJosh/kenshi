@@ -23,13 +23,16 @@ const LIMITS = {
   minConfidence: 0.5,
 } as const
 
-// Override with GEMINI_MODEL when Google retires or renames models.
-const DEFAULT_MODEL = 'gemini-3.8-flash'
+// Override with GEMINI_MODEL when Google retires or renames models. The owner chose gemini-3.1-flash-lite: it
+// answered in about 2 to 3.5 s with the same box on every repeat (SDS 13.5), where gemini-3.8-flash timed out.
+const DEFAULT_MODEL = 'gemini-3.1-flash-lite'
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions'
 
 // The lowest thinking level each model allows (Gemini thinking docs). A model not listed gets no thinking_level,
 // so it runs with its own default rather than with a value it might reject.
 const LOWEST_THINKING_LEVEL: Record<string, 'minimal' | 'low'> = {
+  // Not in the docs table: 'minimal' was accepted by a real call on 2026-10-11 and used no thinking tokens.
+  'gemini-3.1-flash-lite': 'minimal',
   'gemini-3.8-flash': 'low',
   'gemini-3.6-flash': 'minimal',
   'gemini-3.5-flash-lite': 'minimal',
