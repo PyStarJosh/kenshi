@@ -16,8 +16,9 @@ const LIMITS = {
   minConfidence: 0.5,
 } as const
 
-// Override with GEMINI_MODEL when Google retires or renames models; free-tier availability is to be confirmed.
-const DEFAULT_MODEL = 'gemini-2.5-flash'
+// Override with GEMINI_MODEL when Google retires or renames models. gemini-2.5-flash answers 404 for new keys
+// ("no longer available to new users"); gemini-3.1-flash-lite was checked on 2026-10-11 (about 1 to 4 s, same box on repeats).
+const DEFAULT_MODEL = 'gemini-3.1-flash-lite'
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 
 const STATUS: Record<LocateErrorKind, number> = {
