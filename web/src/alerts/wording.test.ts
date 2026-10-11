@@ -3,6 +3,7 @@
 import { describe, expect, test } from 'vitest'
 import { MESSAGES } from '../app/messages'
 import { GREETING } from '../audio/unlock'
+import { FIND_MESSAGES } from '../find/messages'
 import { HEALTH_PHRASES } from '../health/monitor'
 import { VOICE_PHRASES } from '../voice/commands'
 import { SUMMARY_NONE } from './phrases'
@@ -15,6 +16,7 @@ const sources: [string, Record<string, string> | string][] = [
   ['health phrases', HEALTH_PHRASES],
   ['status messages', MESSAGES],
   ['greeting', { greeting: GREETING }],
+  ['find messages', FIND_MESSAGES],
 ]
 
 describe('SR-2 wording', () => {
