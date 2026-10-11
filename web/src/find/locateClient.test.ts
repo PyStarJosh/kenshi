@@ -58,9 +58,9 @@ describe('scaledSize', () => {
     expect(scaledSize(10000, 2, 100)).toEqual({ width: 100, height: 1 })
   })
 
-  test('the default width is the owner\'s 640', () => {
-    expect(CONFIG.find.imageWidthPx).toBe(640)
-    expect(CONFIG.find.jpegQuality).toBe(0.7)
+  test('the default is 720 px wide at quality 0.8', () => {
+    expect(CONFIG.find.imageWidthPx).toBe(720)
+    expect(CONFIG.find.jpegQuality).toBe(0.8)
   })
 })
 

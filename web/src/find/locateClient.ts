@@ -56,7 +56,7 @@ export function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /**
- * Downscale a camera frame to about 640 px wide and encode it as base64 JPEG (no "data:" prefix). Encoding runs
+ * Downscale a camera frame to about 720 px wide and encode it as base64 JPEG (no "data:" prefix). Encoding runs
  * through OffscreenCanvas.convertToBlob, which does the compression off the main thread; an older Safari without
  * OffscreenCanvas falls back to a canvas element.
  */

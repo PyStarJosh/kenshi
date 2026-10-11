@@ -242,9 +242,10 @@ export const CONFIG = {
     // Frames per request: one for a look, up to eight for a scan sweep. FR-22, FR-23
     maxFrames: 8,
     // Width of a frame sent to Gemini, in pixels (height keeps the aspect). Starting value; to be measured. FR-22, NFR-14
-    imageWidthPx: 640,
-    // JPEG quality (0 to 1) for those frames. Starting value; to be measured. NFR-14
-    jpegQuality: 0.7,
+    imageWidthPx: 720,
+    // JPEG quality (0 to 1) for those frames. Raised from 0.7 and 640 px (owner request): a frame is about 50% larger
+    // (36 KB to 54 KB for the test photo) with no added delay seen in four calls. Starting value; to be measured. NFR-14
+    jpegQuality: 0.8,
     // Limits web/api/locate.ts enforces (a test keeps them equal to these): one base64 frame, the whole body
     // (Vercel allows 4.5 MB), the target name, and the largest heading and pitch magnitudes in degrees. FR-22
     maxFrameChars: 600_000,
@@ -257,7 +258,7 @@ export const CONFIG = {
     geminiTimeoutMs: 8_000,
     requestTimeoutMs: 14_000,
     // An answer below this confidence counts as not found. Starting value; to be measured. SR-11
-    minConfidence: 0.5,
+    minConfidence: 0.6,
     // A remembered target direction is dropped after this long: a gyroscope heading drifts and has no north
     // reference. Starting value; how fast it drifts is to be measured on the phone. FR-24
     memoryMaxAgeMs: 60_000,

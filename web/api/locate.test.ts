@@ -212,6 +212,12 @@ describe('parseGeminiReply', () => {
     expect(parseGeminiReply(interaction({ ...foundAnswer, frameIndex: null }), 1)).toMatchObject({ found: true, frameIndex: 0 })
   })
 
+  test('the cutoff is 0.6: 0.59 is not found, 0.6 is', () => {
+    expect(LIMITS.minConfidence).toBe(0.6)
+    expect(parseGeminiReply(interaction({ ...foundAnswer, confidence: 0.59 }), 2)).toMatchObject({ found: false })
+    expect(parseGeminiReply(interaction({ ...foundAnswer, confidence: 0.6 }), 2)).toMatchObject({ found: true })
+  })
+
   test('a confidence below the minimum counts as not found', () => {
     const result = parseGeminiReply(interaction({ ...foundAnswer, confidence: LIMITS.minConfidence - 0.01 }), 2)
     expect(result).toMatchObject({ found: false, frameIndex: null, box: null })

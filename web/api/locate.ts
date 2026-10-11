@@ -20,7 +20,7 @@ const LIMITS = {
   maxHeadingDeg: 3600,
   maxPitchDeg: 180,
   geminiTimeoutMs: 8_000,
-  minConfidence: 0.5,
+  minConfidence: 0.6,
   // Two tries at most, and a retry only if the first failed within this long.
   geminiAttempts: 2,
   retryWithinMs: 4_000,
