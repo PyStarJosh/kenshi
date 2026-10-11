@@ -39,6 +39,13 @@ describe('screenAlert', () => {
     expect(screenAlert(alert(), 1001 + CONFIG.alerts.staleLimitMs, tracks)).toBe('dropped-stale')
   })
 
+  test('Find speech may wait longer than an obstacle alert before it is dropped', () => {
+    const find = alert({ kind: 'find', trackId: null, pan: null })
+    expect(screenAlert(find, 1000 + CONFIG.alerts.staleLimitMs + 500, tracks)).toBe('ok')
+    expect(screenAlert(find, 1000 + CONFIG.find.speechStaleMs, tracks)).toBe('ok')
+    expect(screenAlert(find, 1001 + CONFIG.find.speechStaleMs, tracks)).toBe('dropped-stale')
+  })
+
   test('a gone track is dropped; alerts without a track skip the check', () => {
     expect(screenAlert(alert({ trackId: 9 }), 1200, tracks)).toBe('dropped-track-gone')
     expect(screenAlert(alert({ trackId: null, kind: 'status' }), 1200, tracks)).toBe('ok')

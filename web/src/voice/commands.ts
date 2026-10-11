@@ -2,24 +2,49 @@
 // spoken back. Order matters: the first rule that matches wins.
 import { CONFIG } from '../core/config'
 import type { VoiceIntent } from '../core/types'
+import { cleanTarget } from '../find/targets'
 
 const RULES: { intent: VoiceIntent; pattern: RegExp }[] = [
   { intent: 'help', pattern: /\b(help|commands|what can i say|options)\b/ },
+  { intent: 'stop', pattern: /\b(stop|cancel|never mind|forget it)\b/ },
   { intent: 'slower', pattern: /\b(slower|slow down|too fast|speak slower)\b/ },
   { intent: 'faster', pattern: /\b(faster|speed up|too slow|speak faster)\b/ },
   { intent: 'resume', pattern: /\b(resume|continue|start|restart|go on|unpause)\b/ },
   { intent: 'pause', pattern: /\b(pause|hold on|wait)\b/ },
 ]
 
-/** Map recognized text to an intent; anything not matched is 'unknown'. */
-export function parseCommand(text: string): VoiceIntent {
-  const normalized = text
+function normalize(text: string): string {
+  return text
     .toLowerCase()
     .replace(/['’]/g, '')
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+// "find <target>", "where is the <target>", "take me to <target>" (and a few near neighbours). The apostrophe is
+// already gone from "where's" by the time these run.
+const FIND_PATTERNS: RegExp[] = [
+  /^(?:please )?(?:find|locate|look for|search for) (?:me )?(.+)$/,
+  /^(?:please )?where(?: is| are|s) (.+)$/,
+  /^(?:please )?take me to (.+)$/,
+]
+
+/** The target named in a Find command ("find my keys" gives "keys"), or null when the text is not one. */
+export function parseFind(text: string): string | null {
+  const normalized = normalize(text)
+  for (const pattern of FIND_PATTERNS) {
+    const match = pattern.exec(normalized)
+    if (match) return cleanTarget(match[1]) || null
+  }
+  return null
+}
+
+/** Map recognized text to an intent; anything not matched is 'unknown'. */
+export function parseCommand(text: string): VoiceIntent {
+  const normalized = normalize(text)
   if (!normalized) return 'unknown'
+  if (parseFind(text) !== null) return 'find'
   return RULES.find((rule) => rule.pattern.test(normalized))?.intent ?? 'unknown'
 }
 
@@ -38,7 +63,8 @@ export const VOICE_PHRASES = {
   resumed: 'Resuming.',
   slower: 'Slower.',
   faster: 'Faster.',
+  nothingToStop: 'Nothing to stop.',
   slowestReached: 'Slowest speed.',
   fastestReached: 'Fastest speed.',
-  help: 'Tap, then say: pause, resume, slower, faster, or help. Hold for one second to pause or resume.',
+  help: 'Tap, then say: find and the name of a thing, stop, pause, resume, slower, faster, or help. Hold for one second to stop a search, or to pause or resume.',
 } as const

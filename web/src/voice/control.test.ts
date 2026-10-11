@@ -3,7 +3,7 @@ import { VoiceControl } from './control'
 import type { VoiceControlDeps } from './control'
 import type { ListenResult } from './recognizer'
 
-function setup(options: { supported?: boolean; paused?: boolean; rate?: number } = {}) {
+function setup(options: { supported?: boolean; paused?: boolean; rate?: number; findActive?: boolean } = {}) {
   const log: string[] = []
   let resolveListen: ((result: ListenResult) => void) | null = null
   let listening = false
@@ -30,6 +30,9 @@ function setup(options: { supported?: boolean; paused?: boolean; rate?: number }
     say: (text) => log.push(`say: ${text}`),
     holdSpeech: (held) => log.push(`hold ${held}`),
     earcon: (phase) => log.push(`earcon ${phase}`),
+    startFind: (target) => log.push(`find ${target}`),
+    cancelFind: () => log.push('cancelFind'),
+    isFindActive: () => options.findActive ?? false,
     pauseDetection: () => log.push('pause'),
     resumeDetection: () => log.push('resume'),
     isPaused: () => options.paused ?? false,
@@ -128,6 +131,49 @@ describe('VoiceControl', () => {
     const paused = setup({ paused: true })
     paused.control.longPress()
     expect(paused.log).toContain('resume')
+  })
+
+  test('"find <target>" starts a search and says nothing itself (Find speaks its own confirmation)', async () => {
+    const { control, log, finishListen } = setup()
+    control.tap()
+    log.length = 0
+    await finishListen({ kind: 'text', text: "Where's the exit?" })
+    expect(log).toEqual(['hold false', 'earcon stop', 'intent find speech', 'find exit'])
+  })
+
+  test('"take me to" and "find my" give the cleaned target', async () => {
+    for (const [text, target] of [['take me to the elevator', 'elevator'], ['find my keys please', 'keys']] as const) {
+      const { control, log, finishListen } = setup()
+      control.tap()
+      await finishListen({ kind: 'text', text })
+      expect(log).toContain(`find ${target}`)
+    }
+  })
+
+  test('"stop" cancels a running Find', async () => {
+    const { control, log, finishListen } = setup({ findActive: true })
+    control.tap()
+    log.length = 0
+    await finishListen({ kind: 'text', text: 'stop' })
+    expect(log).toContain('cancelFind')
+    expect(log).not.toContain('pause')
+  })
+
+  test('"stop" with nothing running says so, and does not pause', async () => {
+    const { control, log, finishListen } = setup({ findActive: false })
+    control.tap()
+    log.length = 0
+    await finishListen({ kind: 'text', text: 'stop' })
+    expect(log).toContain('say: Nothing to stop.')
+    expect(log).not.toContain('cancelFind')
+    expect(log).not.toContain('pause')
+  })
+
+  test('a long press cancels a running Find instead of pausing', () => {
+    const running = setup({ findActive: true, paused: false })
+    running.control.longPress()
+    expect(running.log).toContain('cancelFind')
+    expect(running.log).not.toContain('pause')
   })
 
   test('slower and faster change the rate and stop at the limits', async () => {

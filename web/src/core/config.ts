@@ -265,6 +265,36 @@ export const CONFIG = {
     // Owner defaults; to be measured against the real limits. FR-22
     minGapMs: 6_000,
     maxPerMinute: 8,
+
+    // ---- Find controller (R4). Every value below is a starting value; to be measured on the phone. FR-23, FR-25 ----
+    // The sweep takes a frame each time the heading has turned this far, up to maxFrames frames or this much turn.
+    sweepStepDeg: 45,
+    sweepFullTurnDeg: 360,
+    // A turn of at least this much since the last check counts as the user still turning.
+    sweepProgressDeg: 3,
+    // No turning for this long: remind once. Still none after sweepGiveUpMs: send what there is, or give up.
+    sweepReminderMs: 4_000,
+    sweepGiveUpMs: 15_000,
+    // Arrived: the target is this near and within this angle of straight ahead.
+    arrivalDistanceM: 1.0,
+    arrivalAngleDeg: 20,
+    // While guiding, ask Gemini again no sooner than this when the target should be in view, and call it lost after
+    // this many answers that do not find it.
+    recheckIntervalMs: 6_000,
+    lostAfterFailedRechecks: 2,
+    // Arrived, not found, and error go back to idle after this long.
+    resultHoldMs: 3_000,
+    // While waiting on a search the user hears something at least this often.
+    feedbackMaxGapMs: 5_000,
+    // A spoken direction change waits at least this long after the previous direction phrase.
+    guideSpeechCooldownMs: 2_500,
+    // Direction words: ahead within directionAheadDeg, slightly left or right up to directionSlightDeg, to your
+    // left or right up to directionBehindDeg, behind you beyond that.
+    directionAheadDeg: 15,
+    directionSlightDeg: 45,
+    directionBehindDeg: 135,
+    // Find speech that waits behind other speech is dropped after this long (a direction this old is wrong). SR-3
+    speechStaleMs: 6_000,
   },
 }
 

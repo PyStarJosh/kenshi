@@ -5,6 +5,7 @@ import type {
   AlertEvent,
   AlertOutcome,
   EventMap,
+  FindRequest,
   FrameResult,
   HealthState,
   OrientationSample,
@@ -79,6 +80,8 @@ class FakeLink implements PipelineLink {
   throwOnAlert = false
   private outcomeListeners = new Set<(alert: AlertEvent, outcome: AlertOutcome) => void>()
   private healthListeners = new Set<(health: HealthState) => void>()
+  private findListeners = new Set<(request: FindRequest) => void>()
+  private cancelListeners = new Set<() => void>()
   recorded: number[] = []
   private intentListeners = new Set<(intent: VoiceIntent) => void>()
 
@@ -99,6 +102,20 @@ class FakeLink implements PipelineLink {
   onVoiceIntent(listener: (intent: VoiceIntent) => void) {
     this.intentListeners.add(listener)
     return () => this.intentListeners.delete(listener)
+  }
+  onFindRequest(listener: (request: FindRequest) => void) {
+    this.findListeners.add(listener)
+    return () => this.findListeners.delete(listener)
+  }
+  onFindCancel(listener: () => void) {
+    this.cancelListeners.add(listener)
+    return () => this.cancelListeners.delete(listener)
+  }
+  requestFind(request: FindRequest) {
+    for (const listener of [...this.findListeners]) listener(request)
+  }
+  cancelFind() {
+    for (const listener of [...this.cancelListeners]) listener()
   }
   onHealth(listener: (health: HealthState) => void) {
     this.healthListeners.add(listener)
@@ -272,6 +289,27 @@ describe('failures', () => {
     t.tracker.throwNext = true
     expect(() => t.send([track()])).toThrow('tracker broke')
     expect(t.link.recorded).toHaveLength(1)
+  })
+})
+
+describe('Find requests go on the bus', () => {
+  test('a request to find something and a cancel reach bus subscribers', () => {
+    const t = setup()
+    const seen: string[] = []
+    t.bus.subscribe('findRequest', (request) => seen.push(`${request.source}:${request.target}`))
+    t.bus.subscribe('findCancel', () => seen.push('cancel'))
+    t.link.requestFind({ target: 'chair', source: 'voice' })
+    t.link.cancelFind()
+    expect(seen).toEqual(['voice:chair', 'cancel'])
+  })
+
+  test('detaching stops listening for them', () => {
+    const t = setup()
+    const seen: string[] = []
+    t.bus.subscribe('findRequest', () => seen.push('request'))
+    t.detach()
+    t.link.requestFind({ target: 'chair', source: 'voice' })
+    expect(seen).toEqual([])
   })
 })
 

@@ -17,7 +17,7 @@ Kenshi: a real-time guide for blind and low-vision people that runs on an iPhone
 - Install: web manifest and icons so it can be added to the Home Screen. No service worker.
 - Spoken phrases: only Find guidance ("Turn right a little", "Straight ahead, about 3 meters"), voice replies, status, and health warnings. No object phrases.
 - Audio: Find speech and the beacon through AirPods in transparency mode. A quiet heartbeat tick while healthy; a distinct warning the moment detection degrades.
-- Controls: tap anywhere to talk (find <target>, stop, pause, resume, slower, faster, help). A tap that hears nothing does nothing. Long press pauses or resumes. "Stop" is not a pause word: it is reserved for cancelling Find (R4). Pause is "pause", "hold on", or "wait".
+- Controls: tap anywhere to talk (find <target>, where is the <target>, take me to <target>, stop, pause, resume, slower, faster, help). A tap that hears nothing does nothing. A long press cancels a running Find, and otherwise pauses or resumes. "Stop" cancels Find; pause is "pause", "hold on", or "wait". The quick-pick buttons (Exit, Door, Elevator, Stairs, Restroom sign, Chair, Trash can, Person) always work, even when speech recognition does not.
 - Geometry: device orientation (pitch and roll), a calibrated horizontal field of view, and the user's eye height give ground-plane distance; box-size distance is the fallback.
 
 ## Structure
@@ -40,8 +40,8 @@ web/                        Vite + React + TypeScript app
   src/audio/                unlock, tones, speech, heartbeat, engine; beacon (R5)
   src/health/               health monitor
   src/voice/                recognizer, commands, control, gesture
-  src/find/                 locate client and messages (R2; the Locate types are in core/types.ts), target memory (R3); scan sweep, controller, guidance (R4-R5)
-  src/app/                  session, audio link, pipeline, settings, calibration, screens (Find screen R6)
+  src/find/                 locate client and messages (R2; the Locate types are in core/types.ts), target memory (R3), the Find controller (a pure reducer), phrases and targets (R4); guidance (R5)
+  src/app/                  session, audio link, pipeline, Find runner (the adapter for the Find controller), settings, calibration, screens (quick-pick panel R4, Find screen R6)
   scripts/copy-ort.mjs      copies onnxruntime-web WebAssembly files into public/ort (runs before dev and build)
   vercel.json               cross-origin isolation headers
 docs/                       SRS.md, SDS.md, DEMO.md (R8)

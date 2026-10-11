@@ -1,7 +1,9 @@
 // Voice control: what a tap does. Listen for one command and run it. If recognition is unsupported or
 // denied, say so once; a tap that hears nothing does nothing (FR-16). Objects are never read out.
+// "find <target>" and "stop" start and cancel a Find; a long press cancels a Find that is running, and otherwise
+// pauses or resumes detection.
 import type { VoiceIntent } from '../core/types'
-import { parseCommand, stepSpeechRate, VOICE_PHRASES } from './commands'
+import { parseCommand, parseFind, stepSpeechRate, VOICE_PHRASES } from './commands'
 import type { ListenResult } from './recognizer'
 
 export type VoiceSource = 'speech' | 'tap-fallback' | 'long-press'
@@ -13,6 +15,12 @@ export interface VoiceControlDeps {
   /** Pause or resume speech output around the microphone, so the app does not hear itself. */
   holdSpeech: (held: boolean) => void
   earcon: (phase: 'start' | 'stop') => void
+  /** Start looking for a target (a voice command). */
+  startFind: (target: string) => void
+  /** Cancel a Find that is running. */
+  cancelFind: () => void
+  /** True while a Find is running, so a long press and "stop" mean cancel it. */
+  isFindActive: () => boolean
   pauseDetection: () => void
   resumeDetection: () => void
   /** True while detection is paused by the user. */
@@ -51,9 +59,13 @@ export class VoiceControl {
     void this.listen()
   }
 
-  /** A long press toggles detection. */
+  /** A long press cancels a running Find; otherwise it toggles detection. */
   longPress(): void {
     this.deps.recognizer.cancel()
+    if (this.deps.isFindActive()) {
+      this.run('stop', 'long-press')
+      return
+    }
     this.run(this.deps.isPaused() ? 'resume' : 'pause', 'long-press')
   }
 
@@ -73,7 +85,7 @@ export class VoiceControl {
       case 'text': {
         const intent = parseCommand(result.text)
         if (intent === 'unknown') deps.say(VOICE_PHRASES.notUnderstood)
-        else this.run(intent, 'speech')
+        else this.run(intent, 'speech', result.text)
         return
       }
       case 'silence':
@@ -94,10 +106,21 @@ export class VoiceControl {
     this.deps.say(VOICE_PHRASES.unavailable)
   }
 
-  private run(intent: VoiceIntent, source: VoiceSource): void {
+  private run(intent: VoiceIntent, source: VoiceSource, text = ''): void {
     const { deps } = this
     deps.onIntent(intent, source)
     switch (intent) {
+      case 'find': {
+        // Find speaks its own confirmation ("Looking for a chair."), so there is no reply here.
+        const target = parseFind(text)
+        if (target !== null) deps.startFind(target)
+        return
+      }
+      case 'stop':
+        // Find speaks "Find stopped." itself.
+        if (deps.isFindActive()) deps.cancelFind()
+        else deps.say(VOICE_PHRASES.nothingToStop)
+        return
       case 'pause':
         deps.pauseDetection()
         deps.say(VOICE_PHRASES.paused)
