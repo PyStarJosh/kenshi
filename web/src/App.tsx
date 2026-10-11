@@ -8,7 +8,7 @@ import { useSession } from './app/useSession'
 
 const DebugOverlay = lazy(() => import('./app/screens/DebugOverlay.tsx'))
 const AudioTestPanel = lazy(() => import('./app/screens/AudioTestPanel.tsx'))
-const FindPanel = lazy(() => import('./app/screens/FindPanel.tsx'))
+const FindScreen = lazy(() => import('./app/screens/FindScreen.tsx'))
 const LocateDebugPanel = lazy(() => import('./app/screens/LocateDebugPanel.tsx'))
 const SettingsScreen = lazy(() => import('./app/screens/Settings.tsx'))
 const CalibrateScreen = lazy(() => import('./app/screens/Calibrate.tsx'))
@@ -26,6 +26,8 @@ export default function App() {
   const audioError = useSyncExternalStore(audio.subscribe, () => audio.getView().error)
   const voiceMessage = useSyncExternalStore(audio.subscribe, () => audio.getView().voiceMessage)
   const [view, setView] = useState<View>('main')
+  // The camera picture is a small inset in the corner; a tap makes it fill the screen behind the Find screen.
+  const [enlarged, setEnlarged] = useState(false)
   const { state, message, frameSize } = snapshot
   const live = state === 'running' || state === 'paused'
   const aspect = frameSize ? frameSize.width / frameSize.height : DEFAULT_ASPECT
@@ -33,7 +35,7 @@ export default function App() {
   return (
     <main className="app">
       <div
-        className={live ? 'stage' : 'stage stage-off'}
+        className={!live ? 'stage stage-off' : enlarged ? 'stage stage-large' : 'stage stage-inset'}
         style={{ '--ar': aspect } as CSSProperties}
       >
         <video ref={setVideo} className="video" aria-hidden="true" />
@@ -79,8 +81,19 @@ export default function App() {
 
       {live && (
         <Suspense fallback={null}>
-          <FindPanel runner={find} />
+          <FindScreen runner={find} link={audio} seeThrough={enlarged} />
         </Suspense>
+      )}
+
+      {live && (
+        <button
+          type="button"
+          className={enlarged ? 'inset-toggle inset-toggle-large' : 'inset-toggle'}
+          aria-label={enlarged ? 'Make the camera view small' : 'Make the camera view large'}
+          aria-pressed={enlarged}
+          style={{ '--ar': aspect } as CSSProperties}
+          onClick={() => setEnlarged((value) => !value)}
+        />
       )}
 
       {debugEnabled && (

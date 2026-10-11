@@ -322,12 +322,26 @@ export const CONFIG = {
     tiltPitchDeg: -25,
     tiltPromptCooldownMs: 8_000,
     tiltPromptMax: 2,
+    // Stick to the first one: a later sighting or Gemini answer is taken to be the same object only if it lies within
+    // this many degrees of where the object is remembered (more when it is close, where walking moves its bearing a lot).
+    // Anything outside is another object of the same kind and is ignored.
+    sameObjectDeg: 35,
+    sameObjectNearDeg: 55,
+    sameObjectNearM: 2.5,
     // The detector must lose a followed target for this long before it counts as lost or another object is followed.
     yoloLostMs: 1_000,
     // A direction word changes only when the bearing is this far past its boundary, so it does not flap.
     directionHysteresisDeg: 5,
     // Automatic retries of the first check after a transient failure (network, timeout, unusable reply).
     checkRetryMax: 1,
+
+    // ---- The Find screen (R6). FR-27 ----
+    // The whole background turns green inside alignedEnterDeg of straight ahead, and stays green until the bearing passes
+    // alignedExitDeg, so it does not flicker at the edge.
+    alignedEnterDeg: 15,
+    alignedExitDeg: 20,
+    // The "Found: Exit" screen stays up this long before the guiding view.
+    foundScreenMs: 1_500,
 
     // ---- Guidance (R5). Starting values; to be measured on the phone. FR-25 ----
     // An instruction that asks the user to do something (turn, bear, go around) is said again this often until they do.

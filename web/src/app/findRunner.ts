@@ -6,9 +6,10 @@
 import { CONFIG } from '../core/config'
 import type { EventMap, FindRequest, FindSnapshot, OrientationSample, Settings, Track } from '../core/types'
 import type { EventBus } from '../alerts/bus'
-import { initialContext, reduce, snapshotOf } from '../find/findController'
+import { initialContext, reduce, sameObjectGateDeg, snapshotOf } from '../find/findController'
 import type { FindContext, FindEffect, FindEvent, FrameMeta } from '../find/findController'
 import type { Capture, LocateOptions, LocateOutcome } from '../find/locateClient'
+import { bearing } from '../find/targetMemory'
 import { cleanTarget, findYoloSighting } from '../find/targets'
 import type { FrameDims } from '../geometry/geometry'
 
@@ -42,40 +43,6 @@ interface Grabbed extends Capture {
 
 /** How often the controller is ticked besides once per detected frame, so timers run on a still camera. */
 const TICK_MS = 250
-
-/** How far to turn, for the screen only: "20 degrees left". It changes with every degree, so it is not a live region. */
-export function describeBearing(snapshot: FindSnapshot): string {
-  if (snapshot.state !== 'guiding' || snapshot.bearingDeg === null) return ''
-  return `${Math.abs(snapshot.bearingDeg)} degrees ${snapshot.bearingDeg >= 0 ? 'right' : 'left'}`
-}
-
-/**
- * A short line for the status text: what Find is doing. It names the state and not the changing bearing, because it
- * sits in a live region, and a screen reader would otherwise read out every degree over the app's own speech.
- */
-export function describeSnapshot(snapshot: FindSnapshot): string {
-  const target = snapshot.target ?? ''
-  switch (snapshot.state) {
-    case 'idle':
-      return ''
-    case 'checking':
-      return `Looking for ${target}...`
-    case 'sweeping':
-      return `Turn slowly to your right to look for ${target}.`
-    case 'sweepChecking':
-      return `Checking the pictures for ${target}...`
-    case 'guiding':
-      return `Guiding to ${target}.`
-    case 'lost':
-      return `Lost the ${target}. Scanning.`
-    case 'arrived':
-      return `${target}: within reach.`
-    case 'notFound':
-      return `Could not find ${target} here.`
-    case 'error':
-      return "Find isn't available right now."
-  }
-}
 
 export class FindRunner {
   private readonly deps: FindRunnerDeps
@@ -140,11 +107,18 @@ export class FindRunner {
       return
     }
     const now = this.deps.now()
+    const heading = this.deps.orientationLatest(now)?.headingDeg ?? null
+    // While guiding, a track other than the followed one counts only if it is where the remembered object is.
+    const { memory } = this.ctx
+    const near =
+      this.ctx.state === 'guiding' && memory !== null && heading !== null
+        ? { angleDeg: bearing(memory, heading), maxDeg: sameObjectGateDeg(memory, CONFIG.find) }
+        : null
     this.dispatch({
       type: 'tick',
       nowMs: now,
-      heading: this.deps.orientationLatest(now)?.headingDeg ?? null,
-      yolo: findYoloSighting(this.ctx.target, this.deps.getTracks(), this.ctx.followId),
+      heading,
+      yolo: findYoloSighting(this.ctx.target, this.deps.getTracks(), this.ctx.followId, near),
       canLocate: this.deps.locator.canLocate(true),
       canLook: this.deps.locator.canLocate(false),
       pitch: this.deps.orientationLatest(now)?.pitchDeg ?? null,
@@ -171,7 +145,9 @@ export class FindRunner {
       prev.target === next.target &&
       prev.bearingDeg === next.bearingDeg &&
       prev.distanceM === next.distanceM &&
-      prev.source === next.source
+      prev.distanceIsBound === next.distanceIsBound &&
+      prev.source === next.source &&
+      prev.sweepFrames === next.sweepFrames
     ) {
       return
     }

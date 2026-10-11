@@ -232,8 +232,12 @@ export interface FindSnapshot {
   bearingDeg: number | null
   /** Estimated distance in meters, or null. */
   distanceM: number | null
+  /** The distance is only an upper bound (the target's base is out of the frame), so it must not be shown as measured. */
+  distanceIsBound: boolean
   /** Who found it: the Gemini locate call or the on-device detector. */
   source: 'gemini' | 'yolo' | null
+  /** How many sweep frames have been taken so far (0 outside a sweep). */
+  sweepFrames: number
 }
 
 /** A request to start looking for something: from a voice command or the quick-pick list. */
