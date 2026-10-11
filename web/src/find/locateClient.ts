@@ -202,6 +202,12 @@ export class Locator {
     try {
       body = await response.json()
     } catch {
+      // A server with no functions (the static preview behind ngrok, or any plain file server) answers 404, 405, or
+      // the app's own HTML page. Say so plainly: it is a setup problem, not a network problem.
+      const isPage = (response.headers.get('content-type') ?? '').includes('text/html')
+      if (response.status === 404 || response.status === 405 || isPage) {
+        return failure('auth', `No locate function at ${this.endpoint} on this server (HTTP ${response.status}). Use the deployed URL, or run npm run dev:api.`)
+      }
       return failure(response.ok ? 'bad_response' : 'network', 'The reply was not JSON.')
     }
     if (!response.ok) {

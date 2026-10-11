@@ -219,8 +219,21 @@ describe('Locator', () => {
     expect(await html.locator.locate('chair', [capture()])).toMatchObject({ error: 'network' })
   })
 
+  test('a server with no locate function (404, 405, or the app\'s HTML page) is auth with a clear message, not network', async () => {
+    for (const reply of [
+      new Response('Not Found', { status: 404 }),
+      new Response('', { status: 405 }),
+      new Response('<!doctype html>', { status: 200, headers: { 'content-type': 'text/html' } }),
+    ]) {
+      const { locator } = setup({ reply: () => Promise.resolve(reply) })
+      const outcome = await locator.locate('chair', [capture()])
+      expect(outcome).toMatchObject({ ok: false, error: 'auth' })
+      expect(outcome.ok ? '' : outcome.message).toMatch(/No locate function at \/api\/locate/)
+    }
+  })
+
   test('a 200 that is not JSON or has the wrong shape is bad_response', async () => {
-    const html = setup({ reply: () => Promise.resolve(new Response('<html>', { status: 200 })) })
+    const html = setup({ reply: () => Promise.resolve(new Response('not json', { status: 200 })) })
     expect(await html.locator.locate('chair', [capture()])).toMatchObject({ error: 'bad_response' })
     const wrong = setup({ reply: () => Promise.resolve(json({ found: 'maybe' })) })
     expect(await wrong.locator.locate('chair', [capture()])).toMatchObject({ error: 'bad_response' })
