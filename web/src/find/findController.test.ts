@@ -723,24 +723,24 @@ describe('guiding, re-checks, and lost', () => {
 })
 
 describe('guidance through the controller', () => {
-  test('the distance counts down as the target is crossed at 10, 5, 3 and 2 meters while facing it', () => {
+  test('the depth is told as far, then close, as the target is approached while facing it (never in meters)', () => {
     const sim = new Sim()
     sim.request('chair', { angleDeg: 0, distanceM: 12, trackId: 3 })
     const said: string[] = []
-    for (const distanceM of [11, 9.5, 8, 4.5, 2.5, 1.5]) {
+    for (const distanceM of [11, 9.5, 4, 2.5, 1.5]) {
       said.push(...sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 0, distanceM, trackId: 3 } })))
     }
-    expect(said).toEqual(['chair, about 10 meters.', 'chair, about 5 meters.', 'chair, about 3 meters.', 'chair, about 2 meters.'])
+    expect(said).toEqual(['Chair is close.']) // far was the level when it was found, so only the nearer one is new
   })
 
-  test('a distance that is only an upper bound (the base is out of the frame) is never counted down', () => {
+  test('a distance that is only an upper bound (the base is out of the frame) is never said to be far', () => {
     const sim = new Sim()
     sim.request('chair', { angleDeg: 0, distanceM: 12, trackId: 3 })
     const said: string[] = []
     for (const distanceM of [9.5, 4.5, 2.5]) {
       said.push(...sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 0, distanceM, trackId: 3, clipped: true } })))
     }
-    expect(said.filter((s) => s.includes('meters'))).toEqual([])
+    expect(said.filter((s) => /far|meters/.test(s))).toEqual([])
   })
 
   test('with the path line saying go around, it says which way, and still only when it changes or is due again', () => {
@@ -797,7 +797,7 @@ describe('not talking over itself', () => {
   test('the tilt request waits for the same reason', () => {
     const sim = new Sim()
     sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
-    const cut = { angleDeg: 0, distanceM: 2.2, trackId: 7, clipped: true }
+    const cut = { angleDeg: 0, distanceM: 3.7, trackId: 7, clipped: true }
     const busy = sim.tick(CFG.tiltPromptCooldownMs, { yolo: cut, pitch: -5, speaking: true })
     expect(sim.said(busy).filter((s) => s === FIND_PHRASES.tiltDown)).toEqual([])
     const free = sim.tick(100, { yolo: cut, pitch: -5, speaking: false })
@@ -984,7 +984,7 @@ describe('keeping hold of a target (reliability)', () => {
     const sim = new Sim()
     sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
     // its base is out of view, then it leaves the frame altogether
-    sim.tick(100, { yolo: { angleDeg: 0, distanceM: 2.2, trackId: 7, clipped: true } })
+    sim.tick(100, { yolo: { angleDeg: 0, distanceM: 3.7, trackId: 7, clipped: true } })
     const gone = sim.tick(CFG.guideSpeechCooldownMs, { yolo: null, pitch: -10 })
     expect(sim.said(gone)).toEqual([FIND_PHRASES.tiltDown])
     // it is not called lost, and nothing is counted against it
@@ -997,7 +997,7 @@ describe('keeping hold of a target (reliability)', () => {
     const asked = (patch: { pitch: number | null }, angleDeg = 0) => {
       const sim = new Sim()
       sim.request('chair', { angleDeg, distanceM: 4, trackId: 7 })
-      const seen = { angleDeg, distanceM: 2.2, trackId: 7, clipped: true }
+      const seen = { angleDeg, distanceM: 3.7, trackId: 7, clipped: true }
       let count = 0
       const tilts = (effects: FindEffect[]) => sim.said(effects).filter((s) => s === FIND_PHRASES.tiltDown).length
       for (let i = 0; i < 4; i++) {

@@ -28,6 +28,7 @@ import {
   foundPhrase,
   lookingFor,
   lostPhrase,
+  depthLevel,
   notFoundPhrase,
 } from './phrases'
 import { initialGuidance, nextGuidance, seedGuidance } from './guidance'
@@ -80,7 +81,7 @@ export interface FindContext {
   rechecking: boolean
   failedRechecks: number
   lastRecheckAt: number
-  /** What guidance last said and when, the direction zone it is in, and the countdown levels announced. */
+  /** What guidance last said and when, the direction zone it is in, and the depth level said. */
   guidance: GuidanceState
   /** The detector's track being followed, so a second object of the same kind is not swapped in. */
   followId: number | null
@@ -258,7 +259,7 @@ function enterGuiding(d: Draft, memory: TargetMemory, bearingDeg: number, nowMs:
   c.failedRechecks = 0
   c.rechecking = false
   c.lastRecheckAt = nowMs
-  c.guidance = seedGuidance(direction, nowMs)
+  c.guidance = seedGuidance(direction, nowMs, depthLevel(memory.distanceM, memory.clipped === true, d.cfg))
   c.pending = null
   c.sweepPending = []
   c.arrivalSince = null
@@ -611,7 +612,7 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
     c.arrivalSince = null
   }
 
-  // What to say about the way to go: an instruction (turn, bear, straight, around) or the distance countdown. A box cut
+  // What to say about the way to go: an instruction (turn, bear, straight, around) or the depth level. A box cut
   // off at the bottom gives only an upper bound for the distance, which must not be read out as if it were measured.
   const guided = nextGuidance(
     c.guidance,

@@ -4,7 +4,7 @@
 // such ("< 2.5 m") and never as if it were measured.
 import { CONFIG } from '../core/config'
 import type { FindSnapshot, FindStateName } from '../core/types'
-import { stableDirection } from '../find/phrases'
+import { depthLevel, stableDirection } from '../find/phrases'
 import type { Direction } from '../find/phrases'
 import { wrap180 } from '../sensors/heading'
 
@@ -22,9 +22,9 @@ export interface FindView {
   arrowKnown: boolean
   /** Facing the target (inside 15 degrees, held to 20 once there): the whole background turns green. */
   aligned: boolean
-  /** "6 m", "< 2.5 m" (an upper bound), or "--" (unknown); empty when no distance belongs on this screen. */
+  /** "Far", "Close", "Within reach", or "--" (unknown); empty when no distance belongs on this screen. */
   distanceText: string
-  /** The same distance worded for a screen reader ("6 meters"); empty when distanceText is. */
+  /** The same distance for a screen reader ("far", "within reach"); empty when distanceText is. */
   distanceLabel: string
   /** "ahead", "to your right", "behind you"; empty when there is no bearing. */
   directionText: string
@@ -65,20 +65,16 @@ export function isAligned(bearingDeg: number | null, wasAligned: boolean, cfg = 
   return wasAligned && size <= cfg.alignedExitDeg
 }
 
-const meters = (value: number) => (Number.isInteger(value) ? String(value) : value.toFixed(1))
-
-/** "6 m", "2.5 m", "< 2.5 m" when the distance is only an upper bound, "--" when unknown. */
-export function distanceText(distanceM: number | null, isBound: boolean): string {
-  if (distanceM === null || !Number.isFinite(distanceM) || distanceM < 0) return '--'
-  return isBound ? `< ${meters(distanceM)} m` : `${meters(distanceM)} m`
+/** "Far", "Close", "Within reach", or "--" when unknown (an upper bound past the close distance counts as unknown). */
+export function distanceText(distanceM: number | null, isBound: boolean, cfg = CONFIG.find): string {
+  const level = depthLevel(distanceM, isBound, cfg)
+  return level === null ? '--' : level === 'reach' ? 'Within reach' : level === 'close' ? 'Close' : 'Far'
 }
 
-/** The same, for a screen reader: "6 meters", "under 2.5 meters", "distance unknown". */
-export function distanceSpeech(distanceM: number | null, isBound: boolean): string {
-  if (distanceM === null || !Number.isFinite(distanceM) || distanceM < 0) return 'distance unknown'
-  const value = meters(distanceM)
-  const unit = distanceM === 1 ? 'meter' : 'meters'
-  return isBound ? `under ${value} ${unit}` : `${value} ${unit}`
+/** The same, for a screen reader: "far", "close", "within reach", or "distance unknown". */
+export function distanceSpeech(distanceM: number | null, isBound: boolean, cfg = CONFIG.find): string {
+  const level = depthLevel(distanceM, isBound, cfg)
+  return level === null ? 'distance unknown' : level === 'reach' ? 'within reach' : level
 }
 
 const DIRECTION_TEXT: Record<Direction, string> = {
@@ -213,8 +209,8 @@ export function makeView(
           rotationDeg,
           arrowKnown: bearing !== null,
           aligned,
-          distanceText: distanceText(snapshot.distanceM, snapshot.distanceIsBound),
-          distanceLabel: distanceSpeech(snapshot.distanceM, snapshot.distanceIsBound),
+          distanceText: distanceText(snapshot.distanceM, snapshot.distanceIsBound, cfg),
+          distanceLabel: distanceSpeech(snapshot.distanceM, snapshot.distanceIsBound, cfg),
           directionText: direction === null ? '' : directionText(direction),
           liveText: `Guiding to ${target}.`,
         },

@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'vitest'
 import { CONFIG } from '../core/config'
-import { countdownPhrase, GUIDANCE_PHRASES, initialGuidance, instructionFor, nextGuidance, seedGuidance } from './guidance'
+import { GUIDANCE_PHRASES, initialGuidance, instructionFor, nextGuidance, seedGuidance } from './guidance'
+import { levelPhrase } from './phrases'
 import type { GuidanceInput, GuidanceState } from './guidance'
 
 const CFG = CONFIG.find
-/** Config with the repeat switched off, for tests about hysteresis and the countdown alone. */
+/** Config with the repeat switched off, for tests about hysteresis and the depth levels alone. */
 const NO_REPEAT = { ...CFG, guidanceRepeatMs: 1e9 }
 
 const input = (patch: Partial<GuidanceInput> = {}): GuidanceInput => ({
@@ -161,84 +162,80 @@ describe('while something is being said', () => {
     expect(free.say).toBe('Turn right.')
   })
 
-  test('the countdown waits as well, and the bookkeeping carries on', () => {
+  test('the depth level waits as well, and the bookkeeping carries on', () => {
     const first = nextGuidance(initialGuidance(), input({ bearing: 2, distanceM: 12, nowMs: 0 }))
-    const busy = nextGuidance(first.state, input({ bearing: 2, distanceM: 4.9, nowMs: 10_000, speaking: true }))
+    const busy = nextGuidance(first.state, input({ bearing: 2, distanceM: 2.9, nowMs: 10_000, speaking: true }))
     expect(busy.say).toBeNull()
-    const free = nextGuidance(busy.state, input({ bearing: 2, distanceM: 4.9, nowMs: 10_200 }))
-    expect(free.say).toBe('chair, about 5 meters.')
+    const free = nextGuidance(busy.state, input({ bearing: 2, distanceM: 2.9, nowMs: 10_200 }))
+    expect(free.say).toBe('Chair is close.')
   })
 })
 
-describe('the distance countdown', () => {
+describe('depth in three levels (far, close, within reach)', () => {
   const ahead = (distanceM: number | null, patch: Partial<GuidanceInput> = {}): Partial<GuidanceInput> => ({
     bearing: 2,
     distanceM,
     ...patch,
   })
 
-  test('says the label and about N meters on crossing 10, 5, 3 and 2, once each', () => {
-    const out = run([ahead(12), ahead(10.4), ahead(9.8), ahead(7), ahead(5.2), ahead(4.9), ahead(3.5), ahead(2.9), ahead(2.5), ahead(1.9), ahead(1.2)])
-    // The first step is the instruction ("Straight ahead."); the rest are the countdown.
-    expect(out.said).toEqual([
-      'Straight ahead.',
-      null,
-      'chair, about 10 meters.',
-      null,
-      null,
-      'chair, about 5 meters.',
-      null,
-      'chair, about 3 meters.',
-      null,
-      'chair, about 2 meters.',
-      null,
-    ])
+  test('says far, then close, as the target gets nearer, once each; within reach is left to the arrival phrase', () => {
+    const out = run([ahead(12), ahead(11), ahead(7), ahead(3.2), ahead(2.9), ahead(2), ahead(1.2), ahead(0.8)])
+    // The first step is the instruction ("Straight ahead."); the rest are the levels.
+    expect(out.said).toEqual(['Straight ahead.', 'Chair is far.', null, null, 'Chair is close.', null, null, null])
   })
 
-  test('the levels are 10, 5, 3 and 2 meters', () => {
-    expect([...CFG.countdownM]).toEqual([10, 5, 3, 2])
-    expect(countdownPhrase('exit', 3)).toBe('exit, about 3 meters.')
+  test('the words read naturally for one thing or several', () => {
+    expect(levelPhrase('exit', 'far')).toBe('Exit is far.')
+    expect(levelPhrase('stairs', 'close')).toBe('Stairs are close.')
+    expect(levelPhrase('bus', 'far')).toBe('Bus is far.')
   })
 
-  test('jumping over several levels says only the nearest, and counts them all as done', () => {
-    const out = run([ahead(12), ahead(2.6), ahead(2.4), ahead(2.0)])
-    expect(out.said).toEqual(['Straight ahead.', 'chair, about 3 meters.', null, 'chair, about 2 meters.'])
-    expect(out.state.announced.sort()).toEqual([10, 2, 3, 5])
+  test('close is within 3 m, within reach within 1 m', () => {
+    expect([CFG.levelCloseM, CFG.arrivalDistanceM]).toEqual([3, 1])
+    expect(run([ahead(12), ahead(3)]).said[1]).toBe('Chair is close.')
+    expect(run([ahead(12), ahead(3.1)]).said[1]).toBe('Chair is far.')
   })
 
-  test('a level is announced again if the user moves back out past it and comes in again', () => {
-    const out = run([ahead(12), ahead(4.9), ahead(4.0), ahead(5.6), ahead(4.8)])
-    expect(out.said).toEqual(['Straight ahead.', 'chair, about 5 meters.', null, null, 'chair, about 5 meters.'])
+  test('jumping straight from far to within reach says nothing more: the arrival phrase does', () => {
+    expect(run([ahead(12), ahead(11), ahead(0.8)]).said).toEqual(['Straight ahead.', 'Chair is far.', null])
+  })
+
+  test('a level is said again if the user moves back out past it and comes in again', () => {
+    expect(run([ahead(12), ahead(2.9), ahead(3.6), ahead(2.8)]).said).toEqual(['Straight ahead.', 'Chair is close.', null, 'Chair is close.'])
+  })
+
+  test('a little way back out (under half a meter) does not repeat it', () => {
+    expect(run([ahead(12), ahead(2.9), ahead(3.3), ahead(2.8)]).said).toEqual(['Straight ahead.', 'Chair is close.', null, null])
   })
 
   test('only while roughly facing the target', () => {
-    const out = run([ahead(4.9, { bearing: 40 }), ahead(4.9, { bearing: 60 })])
+    const out = run([ahead(2.9, { bearing: 40 }), ahead(2.9, { bearing: 60 })])
     expect(out.said[0]).toBe('Bear right.')
-    expect(out.said[1]).toBe('Turn right.') // not facing it: the instruction, and no countdown
-    const turned = run([{ bearing: 0, distanceM: 12 }, { bearing: 80, distanceM: 4.9 }, { bearing: 80, distanceM: 4.9 }])
+    expect(out.said[1]).toBe('Turn right.') // not facing it: the instruction, and no level
+    const turned = run([{ bearing: 0, distanceM: 12 }, { bearing: 80, distanceM: 2.9 }, { bearing: 80, distanceM: 2.9 }])
     expect(turned.said.slice(2)).toEqual([null])
   })
 
-  test('not from a distance that is only an upper bound, or an unknown one', () => {
+  test('an upper bound never says far (the target may be much closer); an unknown distance says nothing', () => {
     const bound = run([ahead(12, { distanceIsBound: true }), ahead(4.9, { distanceIsBound: true }), ahead(1.9, { distanceIsBound: true })])
-    expect(bound.said).toEqual(['Straight ahead.', null, null])
+    expect(bound.said).toEqual(['Straight ahead.', null, 'Chair is close.'])
     const unknown = run([ahead(null), ahead(null)])
     expect(unknown.said).toEqual(['Straight ahead.', null])
   })
 
-  test('an instruction that is due comes before the countdown, and the countdown follows when it can', () => {
+  test('an instruction that is due comes before the level, and the level follows when it can', () => {
     const state = nextGuidance(initialGuidance(), input({ bearing: 2, distanceM: 12, nowMs: 0 }), NO_REPEAT).state
-    const both = nextGuidance(state, input({ bearing: 25, distanceM: 4.9, nowMs: CFG.guideSpeechCooldownMs }), NO_REPEAT)
+    const both = nextGuidance(state, input({ bearing: 25, distanceM: 2.9, nowMs: CFG.guideSpeechCooldownMs }), NO_REPEAT)
     expect(both.say).toBe('Bear right.')
-    const next = nextGuidance(both.state, input({ bearing: 25, distanceM: 4.9, nowMs: 2 * CFG.guideSpeechCooldownMs }), NO_REPEAT)
-    expect(next.say).toBe('chair, about 5 meters.')
+    const next = nextGuidance(both.state, input({ bearing: 25, distanceM: 2.9, nowMs: 2 * CFG.guideSpeechCooldownMs }), NO_REPEAT)
+    expect(next.say).toBe('Chair is close.')
   })
 
-  test('the countdown waits for the minimum gap too', () => {
+  test('the level waits for the minimum gap too', () => {
     const state = nextGuidance(initialGuidance(), input({ bearing: 2, distanceM: 12, nowMs: 0 }), NO_REPEAT).state
-    expect(nextGuidance(state, input({ bearing: 2, distanceM: 4.9, nowMs: 1000 }), NO_REPEAT).say).toBeNull()
-    expect(nextGuidance(state, input({ bearing: 2, distanceM: 4.9, nowMs: CFG.guideSpeechCooldownMs }), NO_REPEAT).say).toBe(
-      'chair, about 5 meters.',
+    expect(nextGuidance(state, input({ bearing: 2, distanceM: 2.9, nowMs: 1000 }), NO_REPEAT).say).toBeNull()
+    expect(nextGuidance(state, input({ bearing: 2, distanceM: 2.9, nowMs: CFG.guideSpeechCooldownMs }), NO_REPEAT).say).toBe(
+      'Chair is close.',
     )
   })
 })

@@ -382,10 +382,12 @@ export const CONFIG = {
     // ---- Guidance (R5). Starting values; to be measured on the phone. FR-25 ----
     // An instruction that asks the user to do something (turn, bear, go around) is said again this often until they do.
     guidanceRepeatMs: 5_000,
-    // The distance is counted down as the target is crossed at these distances (meters), while roughly facing it. A
-    // level is announced again only if the user has moved back out beyond it by countdownResetM.
-    countdownM: [10, 5, 3, 2] as readonly number[],
-    countdownResetM: 0.5,
+    // Depth in three levels instead of meters (owner request): far, close (within levelCloseM), and within reach (the
+    // arrival distances above). The level is said when the target comes into a nearer one while roughly facing it, and
+    // is shown on the Find screen as a word. A level is said again only after the user has moved back out beyond it
+    // by levelResetM.
+    levelCloseM: 3,
+    levelResetM: 0.5,
   },
 
   // The beacon (R5, FR-26): short pulses while guiding. All starting values; to be measured on the phone with AirPods.

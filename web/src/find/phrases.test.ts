@@ -4,9 +4,11 @@ import {
   capitalize,
   classifyDirection,
   directionPhrase,
+  depthLevel,
   directionWords,
   FIND_PHRASES,
   foundPhrase,
+  levelPhrase,
   lookingFor,
   lostPhrase,
   notFoundPhrase,
@@ -131,5 +133,28 @@ describe('notFoundPhrase', () => {
 
   test('a sign hint with nothing readable adds nothing', () => {
     expect(notFoundPhrase('exit', '->')).toBe("I couldn't find an exit here. Try another spot or ask for something else.")
+  })
+})
+
+describe('depth levels', () => {
+  test('within reach inside 1 m, close inside 3 m, far beyond, null when unknown', () => {
+    expect(depthLevel(0.6, false)).toBe('reach')
+    expect(depthLevel(1, false)).toBe('reach')
+    expect(depthLevel(1.01, false)).toBe('close')
+    expect(depthLevel(3, false)).toBe('close')
+    expect(depthLevel(3.01, false)).toBe('far')
+    expect(depthLevel(null, false)).toBeNull()
+    expect(depthLevel(Number.NaN, false)).toBeNull()
+  })
+
+  test('an upper bound says how near it is at most, never far: reach to 1.75 m, close to 3 m, then unknown', () => {
+    expect(depthLevel(1.7, true)).toBe('reach')
+    expect(depthLevel(2.5, true)).toBe('close')
+    expect(depthLevel(5, true)).toBeNull()
+  })
+
+  test('the spoken level reads naturally for one thing or several', () => {
+    expect(levelPhrase('chair', 'close')).toBe('Chair is close.')
+    expect(levelPhrase('stairs', 'far')).toBe('Stairs are far.')
   })
 })
