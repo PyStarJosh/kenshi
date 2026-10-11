@@ -163,6 +163,8 @@ export type FindEvent =
       pitch: number | null
       /** What the path line (R7) says about the way ahead, or absent when there is no path line yet. */
       pathDecision?: PathDecision
+      /** Something is being said right now (the speaker is busy), so guidance waits instead of queueing behind it. */
+      speaking?: boolean
     }
   | { type: 'located'; id: number; nowMs: number; heading: number | null; result: LocateResult; frames: FrameMeta[] }
   | { type: 'failed'; id: number; nowMs: number; code: LocateClientErrorCode }
@@ -601,6 +603,7 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
       state: c.state,
       label: c.target,
       nowMs: now,
+      speaking: e.speaking === true,
     },
     cfg,
   )
@@ -616,6 +619,7 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
     c.tiltPrompts < cfg.tiltPromptMax &&
     now - c.lastTiltAt >= cfg.tiltPromptCooldownMs &&
     guided.say === null &&
+    e.speaking !== true &&
     now - c.guidance.spokenAt >= cfg.guideSpeechCooldownMs
   ) {
     c.tiltPrompts += 1

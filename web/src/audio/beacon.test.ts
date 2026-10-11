@@ -110,10 +110,17 @@ function setup(over: { busy?: boolean; urgent?: boolean; volume?: number } = {})
   const pans: { value: number; at: number }[] = []
   const ramps: number[] = []
   const gains: { setTargetAtTime: ReturnType<typeof vi.fn>; connectedTo: unknown[] }[] = []
-  const state = { busy: over.busy ?? false, urgent: over.urgent ?? false, volume: over.volume ?? 1 }
+  const state = { busy: over.busy ?? false, urgent: over.urgent ?? false, volume: over.volume ?? 1, autoResume: false, nowMs: 0 }
   const destination = { name: 'destination' }
+  let resumed = 0
   const ctx = {
     currentTime: 0,
+    state: 'running' as string,
+    resume() {
+      resumed += 1
+      if (state.autoResume) ctx.state = 'running'
+      return Promise.resolve()
+    },
     destination,
     createGain() {
       const node = {
@@ -155,6 +162,8 @@ function setup(over: { busy?: boolean; urgent?: boolean; volume?: number } = {})
     ctx: ctx as unknown as AudioContext,
     speaker: { isBusy: () => state.busy, isUrgent: () => state.urgent },
     volume: () => state.volume,
+    resume: () => void ctx.resume(),
+    now: () => state.nowMs,
     setTimer: (callback) => {
       wake = callback
       return 'timer'
@@ -168,7 +177,7 @@ function setup(over: { busy?: boolean; urgent?: boolean; volume?: number } = {})
     ctx.currentTime = toS
     wake?.()
   }
-  return { beacon, ctx, oscs, pans, ramps, gains, state, tick, hasTimer: () => wake !== null, cleared: () => cleared }
+  return { beacon, ctx, oscs, pans, ramps, gains, state, tick, hasTimer: () => wake !== null, cleared: () => cleared, resumed: () => resumed }
 }
 
 describe('the scheduler', () => {
@@ -322,6 +331,71 @@ describe('speech and urgent alerts', () => {
     t.tick(30)
     expect(t.oscs.length).toBeLessThanOrEqual(3)
     expect(Math.min(...t.oscs.slice(1).map((o) => o.startS))).toBeGreaterThanOrEqual(30)
+  })
+})
+
+describe('a context that is suspended or interrupted (iOS does this around speech, the microphone and calls)', () => {
+  test.each(['suspended', 'interrupted'])('while %s nothing is scheduled, because the clock is frozen', (stalledState) => {
+    const t = setup()
+    t.ctx.state = stalledState
+    t.beacon.start()
+    for (let s = 0; s <= 2; s += 0.025) {
+      t.state.nowMs += 25
+      t.tick(0) // the clock does not move
+    }
+    expect(t.oscs).toHaveLength(0)
+    expect(t.beacon.getStats().stalled).toBe(true)
+  })
+
+  test('it asks for the context to be resumed, not on every wake-up but about every half second', () => {
+    const t = setup()
+    t.ctx.state = 'interrupted'
+    t.beacon.start()
+    for (let i = 0; i < 100; i++) {
+      t.state.nowMs += 25 // 2.5 s
+      t.tick(0)
+    }
+    expect(t.resumed()).toBeGreaterThanOrEqual(4)
+    expect(t.resumed()).toBeLessThanOrEqual(6)
+    expect(t.beacon.getStats().resumeRequests).toBe(t.resumed())
+  })
+
+  test('once the context runs again it starts from now, with no pulses left over from the stall', () => {
+    const t = setup()
+    t.beacon.update({ bearingDeg: 0, distanceM: 1 })
+    t.ctx.state = 'suspended'
+    t.beacon.start()
+    t.tick(0)
+    t.tick(0)
+    expect(t.oscs).toHaveLength(0)
+    t.ctx.state = 'running'
+    t.tick(7.0) // the clock has meanwhile moved on
+    t.tick(7.1)
+    expect(t.oscs.length).toBeGreaterThan(0)
+    expect(Math.min(...t.oscs.map((o) => o.startS))).toBeGreaterThanOrEqual(7.0)
+    expect(t.beacon.getStats().stalled).toBe(false)
+  })
+
+  test('the pulse count in the stats is what was scheduled', () => {
+    const t = setup()
+    t.beacon.update({ bearingDeg: 0, distanceM: null })
+    t.beacon.start()
+    for (let s = 0; s <= 2.05; s += 0.025) t.tick(s)
+    expect(t.beacon.getStats().pulses).toBe(t.oscs.length) // one note per pulse when facing it
+    expect(t.beacon.getStats().pulses).toBeGreaterThanOrEqual(2)
+  })
+
+  test('the chime waits for a stalled context to resume, then plays', async () => {
+    const t = setup()
+    t.ctx.state = 'interrupted'
+    t.state.autoResume = true
+    t.ctx.currentTime = 9
+    t.beacon.chime()
+    expect(t.oscs).toHaveLength(0)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(t.oscs.map((o) => o.hz)).toEqual([...CFG.chimeHz])
+    expect(t.resumed()).toBeGreaterThanOrEqual(1)
   })
 })
 

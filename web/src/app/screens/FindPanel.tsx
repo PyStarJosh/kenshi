@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { QUICK_PICKS } from '../../find/targets'
 import type { FindRunner } from '../findRunner'
-import { describeSnapshot } from '../findRunner'
+import { describeBearing, describeSnapshot } from '../findRunner'
 import './FindPanel.css'
 
 interface Props {
@@ -14,6 +14,7 @@ export default function FindPanel({ runner }: Props) {
   const snapshot = useSyncExternalStore(runner.subscribe, runner.getSnapshot)
   const active = snapshot.state !== 'idle'
   const text = describeSnapshot(snapshot)
+  const bearing = describeBearing(snapshot)
 
   return (
     <section className="find-panel" aria-label="Find">
@@ -32,6 +33,11 @@ export default function FindPanel({ runner }: Props) {
       {text && (
         <p role="status" className="find-text">
           {text}
+        </p>
+      )}
+      {bearing && (
+        <p className="find-text" aria-hidden="true">
+          {bearing}
         </p>
       )}
     </section>

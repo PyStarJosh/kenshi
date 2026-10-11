@@ -20,6 +20,8 @@ export interface UtteranceLike {
 export interface SynthLike {
   speak(utterance: UtteranceLike): void
   cancel(): void
+  /** True while the engine is speaking or has something queued (the browser's `speaking` and `pending`). */
+  isSpeaking?(): boolean
 }
 
 /** How a request ended. "dropped" means prepare() refused it (for example, the alert went stale). */
@@ -50,6 +52,8 @@ interface Current {
   request: SpeechRequest
   utterance: UtteranceLike | null
   timer: unknown
+  /** The engine was found still speaking something old, and was cancelled once for this phrase. */
+  clearedStale?: boolean
 }
 
 /**
@@ -72,6 +76,7 @@ export class Speaker {
   private voice: VoiceLike | null = null
   private enabled = true
   private held = false
+  private lastCancelMs = -Infinity
 
   constructor(deps: SpeakerDeps) {
     this.deps = deps
@@ -137,17 +142,28 @@ export class Speaker {
     const pending = this.pending
     this.pending = null
     pending?.onDone?.('preempted')
+    // The settle gap is only needed when something was actually being said; when idle an urgent phrase starts at once.
+    const wasSpeaking = this.current !== null || (this.deps.synth.isSpeaking?.() ?? false)
     if (this.current) this.finish(this.current, 'preempted', undefined, false)
+    if (wasSpeaking) this.cancelEngine()
+    else this.deps.synth.cancel()
+  }
+
+  private cancelEngine(): void {
+    this.lastCancelMs = this.deps.now()
     this.deps.synth.cancel()
   }
 
   private begin(request: SpeechRequest): void {
-    const waitMs = request.prepare ? request.prepare() : 0
-    if (waitMs === null) {
+    const prepareMs = request.prepare ? request.prepare() : 0
+    if (prepareMs === null) {
       request.onDone?.('dropped')
       this.next()
       return
     }
+    // Right after a cancel the engine is not ready for the next phrase; give it a moment (see speechAfterCancelMs).
+    const settleMs = Math.max(0, this.lastCancelMs + CONFIG.audio.speechAfterCancelMs - this.deps.now())
+    const waitMs = Math.max(prepareMs, settleMs)
     const current: Current = { request, utterance: null, timer: null }
     this.current = current
     if (waitMs > 0) {
@@ -163,6 +179,14 @@ export class Speaker {
     const { request } = current
     if (!this.enabled) {
       this.finish(current, 'finished')
+      return
+    }
+    // We think nothing is speaking, but the engine still is (an utterance whose end we never heard, or one left over
+    // from a cancel): clear it once, and start again after a moment, so the old phrase does not run under the new one.
+    if (!current.clearedStale && this.deps.synth.isSpeaking?.()) {
+      current.clearedStale = true
+      this.cancelEngine()
+      current.timer = this.deps.setTimer(() => this.utter(current), CONFIG.audio.speechAfterCancelMs)
       return
     }
     const utterance = this.deps.createUtterance(request.text)
@@ -218,7 +242,11 @@ export function createBrowserSpeaker(): { speaker: Speaker; available: boolean }
   }
   const synth = window.speechSynthesis
   const speaker = new Speaker({
-    synth: { speak: (u) => synth.speak(u as SpeechSynthesisUtterance), cancel: () => synth.cancel() },
+    synth: {
+      speak: (u) => synth.speak(u as SpeechSynthesisUtterance),
+      cancel: () => synth.cancel(),
+      isSpeaking: () => synth.speaking || synth.pending,
+    },
     createUtterance: (text) => new SpeechSynthesisUtterance(text) as UtteranceLike,
     now: () => performance.now(),
     setTimer: (callback, ms) => setTimeout(callback, ms),

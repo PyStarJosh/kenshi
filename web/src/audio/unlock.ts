@@ -7,6 +7,19 @@ export const GREETING = 'Ken-shee. Hold the phone at eye level.'
 
 type AudioContextConstructor = typeof AudioContext
 
+/**
+ * Tell Safari this page plays media (iOS 16.4 and later), so Web Audio is not silenced by the ringer switch and is less
+ * likely to be interrupted when speech starts. Quietly does nothing where the browser has no such API.
+ */
+export function setMediaAudioSession(): void {
+  try {
+    const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession
+    if (session) session.type = 'playback'
+  } catch {
+    // Not supported or refused: the tones then follow the browser's default.
+  }
+}
+
 /** Create (once) and resume the AudioContext. Returns null if this browser has no Web Audio. */
 export function unlockAudioContext(
   existing: AudioContext | null,

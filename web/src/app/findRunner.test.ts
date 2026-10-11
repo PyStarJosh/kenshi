@@ -4,7 +4,7 @@ import { CONFIG } from '../core/config'
 import type { AlertEvent, EventMap, FindSnapshot, LocateResult, OrientationSample, Track } from '../core/types'
 import { FIND_PHRASES } from '../find/phrases'
 import type { Capture, LocateOutcome } from '../find/locateClient'
-import { describeSnapshot, FindRunner } from './findRunner'
+import { describeBearing, describeSnapshot, FindRunner } from './findRunner'
 
 const foundResult = (frameIndex = 0, centerX = 0.5): LocateResult => ({
   found: true,
@@ -405,13 +405,29 @@ describe('stopping', () => {
   })
 })
 
+describe('describeBearing', () => {
+  const base: FindSnapshot = { state: 'guiding', target: 'chair', bearingDeg: null, distanceM: null, source: null }
+
+  test('how far to turn, for the screen only', () => {
+    expect(describeBearing({ ...base, bearingDeg: -20 })).toBe('20 degrees left')
+    expect(describeBearing({ ...base, bearingDeg: 30 })).toBe('30 degrees right')
+    expect(describeBearing({ ...base, bearingDeg: 0 })).toBe('0 degrees right')
+  })
+
+  test('nothing when not guiding, or without a bearing', () => {
+    expect(describeBearing({ ...base, bearingDeg: null })).toBe('')
+    expect(describeBearing({ ...base, state: 'sweeping', bearingDeg: 10 })).toBe('')
+  })
+})
+
 describe('describeSnapshot', () => {
   test('a short line for each state', () => {
     const base: FindSnapshot = { state: 'idle', target: null, bearingDeg: null, distanceM: null, source: null }
     expect(describeSnapshot(base)).toBe('')
     expect(describeSnapshot({ ...base, state: 'checking', target: 'chair' })).toBe('Looking for chair...')
-    expect(describeSnapshot({ ...base, state: 'guiding', target: 'chair', bearingDeg: -20 })).toBe('chair: 20 degrees left.')
-    expect(describeSnapshot({ ...base, state: 'guiding', target: 'chair', bearingDeg: 30 })).toBe('chair: 30 degrees right.')
+    // The line in the live region does not change with the bearing, so a screen reader is not reading out every degree.
+    expect(describeSnapshot({ ...base, state: 'guiding', target: 'chair', bearingDeg: -20 })).toBe('Guiding to chair.')
+    expect(describeSnapshot({ ...base, state: 'guiding', target: 'chair', bearingDeg: 30 })).toBe('Guiding to chair.')
     expect(describeSnapshot({ ...base, state: 'error', target: 'chair' })).toBe("Find isn't available right now.")
     for (const state of ['sweeping', 'sweepChecking', 'lost', 'arrived', 'notFound'] as const) {
       expect(describeSnapshot({ ...base, state, target: 'chair' })).not.toBe('')

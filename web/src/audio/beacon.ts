@@ -83,8 +83,32 @@ export interface BeaconDeps {
   volume: () => number
   setTimer?: (callback: () => void, ms: number) => unknown
   clearTimer?: (handle: unknown) => void
+  /** Wake the AudioContext when it is suspended or interrupted (iOS does this around speech and calls). */
+  resume?: () => void
+  /** performance.now(), replaceable in tests. */
+  now?: () => number
   config?: BeaconConfig
 }
+
+/** What the beacon has done, for the ?debug panel and the tests. */
+export interface BeaconStats {
+  running: boolean
+  /** Pulses scheduled since it was created. */
+  pulses: number
+  /** The clock was not running at the last wake-up, so nothing was scheduled. */
+  stalled: boolean
+  /** Times it asked for the context to be resumed. */
+  resumeRequests: number
+}
+
+/** The context is not producing sound: suspended, or interrupted by iOS (a state the standard does not list). */
+function isStalled(ctx: AudioContext): boolean {
+  const state = ctx.state as string
+  return state === 'suspended' || state === 'interrupted'
+}
+
+/** Ask again for a stalled context to resume no more often than this. */
+const RESUME_RETRY_MS = 500
 
 /** Fade in and out over this long so notes do not click. */
 const RAMP_S = 0.004
@@ -102,6 +126,10 @@ export class Beacon {
   private nextPulseS = 0
   private duckTarget = 1
   private target: BeaconTarget = { bearingDeg: 0, distanceM: null }
+  private stalled = false
+  private pulses = 0
+  private resumeRequests = 0
+  private lastResumeMs = -Infinity
 
   constructor(deps: BeaconDeps) {
     this.deps = deps
@@ -118,6 +146,10 @@ export class Beacon {
 
   isRunning(): boolean {
     return this.running
+  }
+
+  getStats(): BeaconStats {
+    return { running: this.running, pulses: this.pulses, stalled: this.stalled, resumeRequests: this.resumeRequests }
   }
 
   /** Start pulsing. Safe to call again while running. */
@@ -155,15 +187,46 @@ export class Beacon {
 
   /** The arrival chime. Plays whether or not the beacon is running, and is not ducked. */
   chime(): void {
+    if (isStalled(this.ctx)) {
+      // The sound is off right now: wake the context, and play the chime as soon as it is running.
+      this.requestResume(true)
+      void Promise.resolve(this.ctx.resume?.()).then(() => this.playChime(), () => this.playChime())
+      return
+    }
+    this.playChime()
+  }
+
+  private playChime(): void {
     const at = this.ctx.currentTime + 0.02
     const level = clamp(this.deps.volume(), 0, 1) * 0.8
     for (const note of chimeNotes(this.cfg)) this.playNote(this.chimeOut, note, at, level)
   }
 
+  /** Ask the app to resume the context, no more often than RESUME_RETRY_MS unless forced. */
+  private requestResume(force = false): void {
+    const nowMs = (this.deps.now ?? (() => performance.now()))()
+    if (!force && nowMs - this.lastResumeMs < RESUME_RETRY_MS) return
+    this.lastResumeMs = nowMs
+    this.resumeRequests += 1
+    this.deps.resume?.()
+  }
+
   /** One wake-up of the scheduler: duck or pause for speech, then schedule the pulses that fall inside the lookahead. */
   private tick(): void {
     if (!this.running) return
+    // A suspended or interrupted context has a frozen clock. Pulses scheduled on it would all sound at once when it
+    // resumes, so nothing is scheduled; the context is asked to resume, and pulsing starts afresh when it runs.
+    if (isStalled(this.ctx)) {
+      this.stalled = true
+      this.nextPulseS = 0
+      this.requestResume()
+      return
+    }
     const now = this.ctx.currentTime
+    if (this.stalled) {
+      this.stalled = false
+      this.nextPulseS = now + 0.05
+    }
     const speaker = this.deps.speaker
     const urgent = speaker.isUrgent()
     const target = urgent ? 0 : speaker.isBusy() ? this.cfg.duckGain : 1
@@ -189,6 +252,7 @@ export class Beacon {
     const { bearingDeg } = this.target
     const level = clamp(this.deps.volume(), 0, 1) * this.cfg.gain
     this.pan.set(beaconPan(bearingDeg), at)
+    this.pulses += 1
     for (const note of pulseNotes(pulseKind(bearingDeg, this.cfg), this.cfg)) this.playNote(this.pan.node, note, at, level)
   }
 
