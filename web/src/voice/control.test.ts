@@ -5,6 +5,7 @@ import type { ListenResult } from './recognizer'
 
 function setup(options: { supported?: boolean; paused?: boolean; rate?: number; findActive?: boolean } = {}) {
   const log: string[] = []
+  const captures: boolean[] = []
   let resolveListen: ((result: ListenResult) => void) | null = null
   let listening = false
   let rate = options.rate ?? 1
@@ -30,6 +31,7 @@ function setup(options: { supported?: boolean; paused?: boolean; rate?: number; 
     say: (text) => log.push(`say: ${text}`),
     holdSpeech: (held) => log.push(`hold ${held}`),
     earcon: (phase) => log.push(`earcon ${phase}`),
+    setCapture: (capturing) => captures.push(capturing),
     startFind: (target) => log.push(`find ${target}`),
     cancelFind: () => log.push('cancelFind'),
     isFindActive: () => options.findActive ?? false,
@@ -50,7 +52,7 @@ function setup(options: { supported?: boolean; paused?: boolean; rate?: number; 
     await Promise.resolve()
     await Promise.resolve()
   }
-  return { control, log, finishListen }
+  return { control, log, captures, finishListen }
 }
 
 describe('VoiceControl', () => {
@@ -58,6 +60,14 @@ describe('VoiceControl', () => {
     const { control, log } = setup()
     control.tap()
     expect(log).toEqual(['hold true', 'earcon start', 'listen'])
+  })
+
+  test('the audio session allows recording while listening (or the microphone hears nothing) and goes back after', async () => {
+    const { control, captures, finishListen } = setup()
+    control.tap()
+    expect(captures).toEqual([true])
+    await finishListen({ kind: 'silence' })
+    expect(captures).toEqual([true, false])
   })
 
   test('a recognized command runs, after the stop earcon and releasing speech', async () => {
