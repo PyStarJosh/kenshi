@@ -75,10 +75,12 @@ function setup() {
     /** The phone turns this many degrees while a frame is being grabbed. */
     turnDuringGrab: 0,
     bitmaps: [] as { close: ReturnType<typeof vi.fn> }[],
+    /** The next grabs that find no frame (a camera just started). */
+    emptyGrabs: 0,
     /** What the path line says about the way ahead (R7). */
     pathDecision: null as 'left' | 'right' | 'straight' | null,
   }
-  const calls: { target: string; captures: Capture[]; paced: boolean }[] = []
+  const calls: { target: string; captures: Capture[]; paced: boolean; nearX?: number }[] = []
   const sample = (): OrientationSample => ({
     pitchDeg: state.pitch,
     rollDeg: 0,
@@ -95,6 +97,10 @@ function setup() {
     getPathDecision: () => state.pathDecision,
     getSettings: () => ({ eyeHeightM: 1.6, horizontalFovDeg: 65 }),
     grab: async () => {
+      if (state.emptyGrabs > 0) {
+        state.emptyGrabs -= 1
+        return null
+      }
       const bitmap = { width: 1280, height: 720, close: vi.fn() }
       state.bitmaps.push(bitmap)
       if (state.heading !== null) state.heading += state.turnDuringGrab
@@ -102,7 +108,7 @@ function setup() {
     },
     locator: {
       locate: async (target, captures, options) => {
-        calls.push({ target, captures: [...captures], paced: options?.paced ?? true })
+        calls.push({ target, captures: [...captures], paced: options?.paced ?? true, nearX: options?.nearX })
         const scripted = state.script.shift()
         return scripted ?? state.outcome
       },
@@ -178,12 +184,12 @@ describe('a search from the quick-pick list or a voice command', () => {
     expect(t.alerts.at(-1)?.phrase).toBe('Chair found, ahead. It is near.')
   })
 
-  test('offline: says Find is not available, then goes idle', async () => {
+  test('offline: says it cannot reach the internet, then goes idle', async () => {
     const t = setup()
     t.state.outcome = { ok: false, error: 'network', message: 'x', retryAfterMs: null }
     t.runner.request('chair')
     await t.flush()
-    expect(t.alerts.at(-1)?.phrase).toBe(FIND_PHRASES.unavailable)
+    expect(t.alerts.at(-1)?.phrase).toBe("I can't reach the internet, so I can't search.")
     expect(t.runner.getSnapshot().state).toBe('error')
     await t.frame(CONFIG.find.resultHoldMs + 100)
     expect(t.runner.getSnapshot().state).toBe('idle')
@@ -325,11 +331,29 @@ describe('reliability', () => {
     expect(t.calls[0].paced).toBe(true)
     expect(t.calls[1].paced).toBe(false)
     expect(t.runner.getSnapshot().state).toBe('guiding')
-    expect(t.alerts.map((a) => a.phrase)).not.toContain(FIND_PHRASES.unavailable)
+    expect(t.alerts.map((a) => a.phrase).join(' ')).not.toMatch(/internet|too long|not set up/)
   })
 })
 
 describe('guiding', () => {
+  test('a re-check tells the locate call where the target should be', async () => {
+    const t = setup()
+    t.runner.request('chair')
+    await t.flush()
+    expect(t.calls[0].nearX).toBeUndefined()
+    await t.frame(CONFIG.find.recheckIntervalMs + 100)
+    expect(t.calls).toHaveLength(2)
+    expect(t.calls[1].nearX).toBeCloseTo(0.5, 2)
+  })
+
+  test('a camera with no frame yet gets one more moment before the look gives up', async () => {
+    const t = setup()
+    t.state.emptyGrabs = 1
+    t.runner.request('chair')
+    await vi.waitFor(() => expect(t.calls).toHaveLength(1), { timeout: 2000 })
+    expect(t.runner.getSnapshot().state).toBe('guiding')
+  })
+
   test('re-checks only when the limiter allows', async () => {
     const t = setup()
     t.runner.request('chair')

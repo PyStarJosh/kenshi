@@ -437,7 +437,7 @@ describe('the sweep', () => {
     let effects: FindEffect[] = []
     for (const capture of captures) effects = sim.failed(capture.id, 'network')
     expect(sim.state).toBe('error')
-    expect(sim.said(effects)).toEqual([FIND_PHRASES.unavailable])
+    expect(sim.said(effects)).toEqual([FIND_MESSAGES.network])
   })
 
   test('looks refused by our own limits say so', () => {
@@ -639,6 +639,19 @@ describe('guiding, re-checks, and lost', () => {
     expect(sim.locateEffects(sim.tick(CFG.recheckIntervalMs - 100))).toEqual([])
     expect(sim.locateEffects(sim.tick(200, { canLocate: false }))).toEqual([])
     expect(sim.locateEffects(sim.tick(100, { canLocate: true }))).toHaveLength(1)
+  })
+
+  test('a re-check says where the target should be in the frame; the first check does not', () => {
+    const sim = new Sim()
+    const [first] = sim.locateEffects(sim.request('chair'))
+    expect(first).not.toHaveProperty('nearX')
+    sim.located(first.id, foundResult(0, 0.75)) // 16.25 degrees right
+    const [recheck] = sim.locateEffects(sim.tick(CFG.recheckIntervalMs + 100))
+    expect(recheck.nearX).toBeCloseTo(0.75, 6)
+    sim.heading = 10 // turned toward it: it should now be nearer the middle
+    sim.located(recheck.id, foundResult(0, 0.6, {}), [{ heading: 10, pitch: 0 }])
+    const [next] = sim.locateEffects(sim.tick(CFG.recheckIntervalMs + 100))
+    expect(next.nearX).toBeCloseTo(0.6, 6) // remembered at 16.5 degrees, facing 10: 6.5 degrees right of the middle
   })
 
   test('does not re-check while the target is out of view', () => {
@@ -1122,8 +1135,8 @@ describe('keeping hold of a target (reliability)', () => {
     expect(sim.ctx.failedRechecks).toBe(0)
   })
 
-  test('the first check is retried once, quietly, after a network hiccup, a timeout or an unusable reply', () => {
-    for (const code of ['network', 'timeout', 'bad_response'] as const) {
+  test('the first check is retried once, quietly, after a network hiccup or an unusable reply', () => {
+    for (const code of ['network', 'bad_response'] as const) {
       const sim = new Sim()
       const [first] = sim.locateEffects(sim.request('chair'))
       const retry = sim.failed(first.id, code)
@@ -1142,10 +1155,11 @@ describe('keeping hold of a target (reliability)', () => {
     const sim = new Sim()
     const [first] = sim.locateEffects(sim.request('chair'))
     const [second] = sim.locateEffects(sim.failed(first.id, 'network'))
-    expect(sim.said(sim.failed(second.id, 'network'))).toEqual([FIND_PHRASES.unavailable])
+    expect(sim.said(sim.failed(second.id, 'network'))).toEqual([FIND_MESSAGES.network])
     expect(sim.state).toBe('error')
 
-    for (const code of ['quota', 'auth', 'bad_request', 'too_soon', 'limit'] as const) {
+    // a timeout is not retried: a second slow try would only double the wait
+    for (const code of ['timeout', 'quota', 'auth', 'bad_request', 'too_soon', 'limit'] as const) {
       const once = new Sim()
       const [look] = once.locateEffects(once.request('chair'))
       once.failed(look.id, code)
@@ -1155,18 +1169,18 @@ describe('keeping hold of a target (reliability)', () => {
 })
 
 describe('errors and silence', () => {
-  test('offline during the first check: Find is not available (after one quiet retry), then idle', () => {
+  test('offline during the first check: says it cannot reach the internet (after one quiet retry), then idle', () => {
     const sim = new Sim()
     const [locate] = sim.locateEffects(sim.request('chair'))
     const [retry] = sim.locateEffects(sim.failed(locate.id, 'network'))
     const effects = sim.failed(retry.id, 'network')
     expect(sim.state).toBe('error')
-    expect(sim.said(effects)).toEqual(["Find isn't available right now."])
+    expect(sim.said(effects)).toEqual(["I can't reach the internet, so I can't search."])
     sim.tick(CFG.resultHoldMs)
     expect(sim.state).toBe('idle')
   })
 
-  test.each(['quota', 'timeout', 'network'] as const)('%s on every sweep look is the same sentence', (code) => {
+  test.each(['quota', 'timeout', 'network'] as const)('%s on every sweep look says what went wrong', (code) => {
     const sim = new Sim()
     const [first] = sim.locateEffects(sim.request('exit'))
     sim.located(first.id, notFoundResult())
@@ -1174,7 +1188,20 @@ describe('errors and silence', () => {
     let effects: FindEffect[] = []
     for (const capture of captures) effects = sim.failed(capture.id, code)
     expect(sim.state).toBe('error')
-    expect(sim.said(effects)).toEqual([FIND_PHRASES.unavailable])
+    expect(sim.said(effects)).toEqual([FIND_MESSAGES[code]])
+  })
+
+  test('every failure has its own sentence: what went wrong and what to do', () => {
+    expect(FIND_MESSAGES.timeout).toBe('The search took too long. Try again.')
+    expect(FIND_MESSAGES.quota).toBe('The search service is busy. Try again in a moment.')
+    for (const code of ['auth', 'bad_response', 'bad_request'] as const) {
+      const sim = new Sim()
+      const [look] = sim.locateEffects(sim.request('chair'))
+      let effects = sim.failed(look.id, code)
+      const [retry] = sim.locateEffects(effects)
+      if (retry) effects = sim.failed(retry.id, code)
+      expect(sim.said(effects), code).toEqual([FIND_MESSAGES[code]])
+    }
   })
 
   test('our own pacing limits get their own, more helpful sentences', () => {
@@ -1186,8 +1213,8 @@ describe('errors and silence', () => {
     expect(capped.said(capped.failed(b.id, 'limit'))).toEqual([FIND_MESSAGES.limit])
   })
 
-  test('the sentence does not claim anything is still on', () => {
-    expect(FIND_PHRASES.unavailable).not.toMatch(/alert|still|on\b/i)
+  test('no error sentence claims anything is still on', () => {
+    for (const text of Object.values(FIND_MESSAGES)) expect(text).not.toMatch(/alert|still on/i)
   })
 
   test('while a search is out the user hears something at least every 5 seconds', () => {

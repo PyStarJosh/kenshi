@@ -29,6 +29,8 @@ export interface LocatorDeps {
   maxPerMinute?: number
   /** Looks allowed in flight at once when they are not paced. */
   maxConcurrent?: number
+  /** How long an unpaced look waits for one in flight to come back when the cap is reached. */
+  slotWaitMs?: number
 }
 
 export interface LocateOptions {
@@ -38,6 +40,8 @@ export interface LocateOptions {
    * concurrency cap.
    */
   paced?: boolean
+  /** Where the thing being followed should be in the frame (0 left edge to 1 right edge), for a re-check. */
+  nearX?: number
 }
 
 /** Size to scale a frame to so it is at most `width` wide; frames already narrower keep their size. */
@@ -119,6 +123,18 @@ export class CallLimiter {
 
 const CODES: readonly LocateErrorCode[] = ['bad_request', 'timeout', 'quota', 'auth', 'bad_response', 'network']
 
+/**
+ * The error for an HTTP status whose body says nothing we can use: the platform's own errors (a function that ran out of
+ * time, a gateway or server error) come back as text or a page, not as our JSON.
+ */
+export function codeForStatus(status: number): LocateErrorCode {
+  if (status === 408 || status === 504) return 'timeout'
+  if (status === 429) return 'quota'
+  if (status === 401 || status === 403) return 'auth'
+  if (status >= 200 && status < 300) return 'bad_response'
+  return 'network'
+}
+
 const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 
 /** True when the value has the shape of a LocateResult (a found result must carry a frame index and a box). */
@@ -154,7 +170,10 @@ export class Locator {
   private readonly endpoint: string
   private readonly timeoutMs: number
   private readonly maxConcurrent: number
+  private readonly slotWaitMs: number
   private inFlight = 0
+  /** Unpaced looks waiting for one in flight to come back, oldest first. */
+  private slotWaiters: (() => void)[] = []
 
   constructor(deps: LocatorDeps = {}) {
     const find = CONFIG.find
@@ -165,6 +184,7 @@ export class Locator {
     this.endpoint = deps.endpoint ?? '/api/locate'
     this.timeoutMs = deps.timeoutMs ?? find.requestTimeoutMs
     this.maxConcurrent = deps.maxConcurrent ?? find.maxConcurrentCalls
+    this.slotWaitMs = deps.slotWaitMs ?? find.lookSlotWaitMs
   }
 
   /**
@@ -184,20 +204,45 @@ export class Locator {
     if (name.length === 0 || name.length > maxTargetChars) return failure('bad_request', 'The target name must be 1 to 60 characters.')
     if (captures.length < 1 || captures.length > maxFrames) return failure('bad_request', 'Send one to eight frames.')
 
+    // A look taken while the cap of looks in flight is reached waits for one to come back, rather than being dropped:
+    // a dropped sweep frame is a direction that never gets checked.
+    while (!paced && this.inFlight >= this.maxConcurrent) {
+      if (!(await this.waitForSlot())) return failure('too_soon', 'Too many looks at once.', this.timeoutMs)
+    }
     const limit = this.limiter.check(this.now(), paced)
     if (!limit.ok) return failure(limit.error, 'Too many searches too fast.', limit.retryAfterMs)
-    if (paced ? this.inFlight > 0 : this.inFlight >= this.maxConcurrent) {
-      return failure('too_soon', 'A search is already running.', this.timeoutMs)
-    }
+    if (paced && this.inFlight > 0) return failure('too_soon', 'A search is already running.', this.timeoutMs)
     this.inFlight += 1
     this.limiter.record(this.now())
     try {
-      return await this.send({ target: name, frames: await this.encodeAll(captures) })
+      const frames = await this.encodeAll(captures)
+      const nearX = options.nearX
+      const request: LocateRequest =
+        nearX !== undefined && Number.isFinite(nearX)
+          ? { target: name, frames, nearX: Math.min(1, Math.max(0, nearX)) }
+          : { target: name, frames }
+      return await this.send(request)
     } catch {
       return failure('bad_request', 'Could not prepare the pictures.')
     } finally {
       this.inFlight -= 1
+      this.slotWaiters.shift()?.()
     }
+  }
+
+  /** Resolves true when a look in flight comes back, false after slotWaitMs. */
+  private waitForSlot(): Promise<boolean> {
+    return new Promise((resolve) => {
+      const wake = () => {
+        clearTimeout(timer)
+        resolve(true)
+      }
+      const timer = setTimeout(() => {
+        this.slotWaiters = this.slotWaiters.filter((w) => w !== wake)
+        resolve(false)
+      }, this.slotWaitMs)
+      this.slotWaiters.push(wake)
+    })
   }
 
   private encodeAll(captures: readonly Capture[]): Promise<LocateFrame[]> {
@@ -213,7 +258,7 @@ export class Locator {
     try {
       response = await this.fetchImpl(this.endpoint, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify(request),
         signal: controller.signal,
       })
@@ -229,16 +274,17 @@ export class Locator {
       body = await response.json()
     } catch {
       // A server with no functions (the static preview behind ngrok, or any plain file server) answers 404, 405, or
-      // the app's own HTML page. Say so plainly: it is a setup problem, not a network problem.
+      // the app's own HTML page with a 200. Say so plainly: it is a setup problem, not a network problem. Anything else
+      // that is not JSON is the platform's own error (a function out of time, a gateway error), told by its status.
       const isPage = (response.headers.get('content-type') ?? '').includes('text/html')
-      if (response.status === 404 || response.status === 405 || isPage) {
+      if (response.status === 404 || response.status === 405 || (response.ok && isPage)) {
         return failure('auth', `No locate function at ${this.endpoint} on this server (HTTP ${response.status}). Use the deployed URL, or run npm run dev:api.`)
       }
-      return failure(response.ok ? 'bad_response' : 'network', 'The reply was not JSON.')
+      return failure(codeForStatus(response.status), `The server answered ${response.status} without JSON.`)
     }
     if (!response.ok) {
       const code = (body as { error?: unknown } | null)?.error
-      return failure(CODES.find((c) => c === code) ?? 'network', `The server answered ${response.status}.`)
+      return failure(CODES.find((c) => c === code) ?? codeForStatus(response.status), `The server answered ${response.status}.`)
     }
     if (!isLocateResult(body)) return failure('bad_response', 'The reply had the wrong shape.')
     return { ok: true, result: body }

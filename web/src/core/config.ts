@@ -309,8 +309,11 @@ export const CONFIG = {
     // skip it (they are the point of a sweep) but still count toward the per-minute cap and the concurrency cap.
     minGapMs: 6_000,
     maxPerMinute: 12,
-    // Looks allowed in flight at once (a sweep frame every ~1.5 s with answers taking 2 to 4 s).
+    // Looks allowed in flight at once (a sweep frame every ~1.5 s with answers taking 2 to 4 s). A sweep frame taken
+    // while that many are out waits up to lookSlotWaitMs for one to come back instead of being dropped (its direction
+    // would go unchecked).
     maxConcurrentCalls: 4,
+    lookSlotWaitMs: 8_000,
 
     // ---- Find controller (R4). Every value below is a starting value; to be measured on the phone. FR-23, FR-25 ----
     // The sweep takes a frame each time the heading has turned this far, up to maxFrames frames or this much turn.
@@ -387,7 +390,8 @@ export const CONFIG = {
     handoffDeg: 10,
     // A direction word changes only when the bearing is this far past its boundary, so it does not flap.
     directionHysteresisDeg: 5,
-    // Automatic retries of the first check after a transient failure (network, timeout, unusable reply).
+    // Automatic retries of the first check after a transient failure (a network error or an unusable reply; a timeout is
+    // not retried, since a second slow try would double the wait).
     checkRetryMax: 1,
 
     // The path line (R7) is used for "around the obstacle" only while the target is within this many degrees of straight ahead.

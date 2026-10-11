@@ -46,6 +46,8 @@ interface Grabbed extends Capture {
 
 /** How often the controller is ticked besides once per detected frame, so timers run on a still camera. */
 const TICK_MS = 250
+/** A grab that finds no frame is tried once more after this long. */
+const GRAB_RETRY_MS = 250
 
 export class FindRunner {
   private readonly deps: FindRunnerDeps
@@ -200,7 +202,7 @@ export class FindRunner {
     if (text) this.speak(text)
     for (const effect of effects) {
       if (effect.type === 'capture') this.capture(effect.id)
-      else if (effect.type === 'locate') void this.look(effect.id, effect.paced)
+      else if (effect.type === 'locate') void this.look(effect.id, effect.paced, effect.nearX)
     }
   }
 
@@ -239,17 +241,26 @@ export class FindRunner {
   }
 
   /** The first check, a re-check, or a pause look: a fresh frame, sent on its own. */
-  private look(id: number, paced: boolean): Promise<void> {
-    return this.sendFrame(id, paced)
+  private look(id: number, paced: boolean, nearX?: number): Promise<void> {
+    return this.sendFrame(id, paced, nearX)
   }
 
-  private async sendFrame(id: number, paced: boolean): Promise<void> {
-    let frame: Grabbed | null = null
-    try {
-      frame = await this.grabFrame()
-    } catch {
-      frame = null
+  /** A frame, or null; a camera with no frame yet (just started, or busy) is given one more moment. */
+  private async grabWithRetry(): Promise<Grabbed | null> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const frame = await this.grabFrame()
+        if (frame !== null) return frame
+      } catch {
+        // tried again below
+      }
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, GRAB_RETRY_MS))
     }
+    return null
+  }
+
+  private async sendFrame(id: number, paced: boolean, nearX?: number): Promise<void> {
+    const frame = await this.grabWithRetry()
     if (frame === null) {
       this.dispatch({ type: 'failed', id, nowMs: this.deps.now(), code: 'bad_request' })
       return
@@ -259,7 +270,7 @@ export class FindRunner {
       frame.bitmap.close()
       return
     }
-    const outcome = await this.deps.locator.locate(this.ctx.target, [frame], { paced })
+    const outcome = await this.deps.locator.locate(this.ctx.target, [frame], nearX === undefined ? { paced } : { paced, nearX })
     frame.bitmap.close()
     const nowMs = this.deps.now()
     if (!outcome.ok) {

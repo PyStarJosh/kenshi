@@ -72,7 +72,6 @@ describe('stableDirection', () => {
 describe('the sentences', () => {
   test('the owner\'s fixed lines', () => {
     expect(FIND_PHRASES.notInView).toBe('Not in view. Turn slowly to your right.')
-    expect(FIND_PHRASES.unavailable).toBe("Find isn't available right now.")
   })
 
   test('found, lost, arrived, and looking', () => {

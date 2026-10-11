@@ -35,6 +35,7 @@ import { initialGuidance, nextGuidance, seedGuidance } from './guidance'
 import type { GuidanceState, PathDecision } from './guidance'
 import { FIND_MESSAGES } from './messages'
 import type { LocateClientErrorCode } from './locateClient'
+import { targetColumn } from '../geometry/pathInput'
 import { wrap180 } from '../sensors/heading'
 import { bearing, boxCenterX, estimateTargetDistance, inView, isStale, observe, remember } from './targetMemory'
 import type { TargetMemory } from './targetMemory'
@@ -170,8 +171,11 @@ export type FindEvent =
 
 export type FindEffect =
   | { type: 'speak'; text: string }
-  /** Look for the target in the current frame. A paced call waits for the gap since the last call; a pause look does not. */
-  | { type: 'locate'; id: number; paced: boolean }
+  /**
+   * Look for the target in the current frame. A paced call waits for the gap since the last call; a pause look does not.
+   * nearX (a re-check while guiding) is where the target should be in the frame, 0 left edge to 1 right edge.
+   */
+  | { type: 'locate'; id: number; paced: boolean; nearX?: number }
   /** Capture one sweep frame now, with a soft tick, and send it on its own as a look with this id (no gap). */
   | { type: 'capture'; id: number }
 
@@ -206,10 +210,10 @@ function toIdle(d: Draft): void {
   Object.assign(d.c, initialContext(), { nextId })
 }
 
-function issueLocate(d: Draft, paced: boolean): void {
+function issueLocate(d: Draft, paced: boolean, nearX: number | null = null): void {
   d.c.nextId += 1
   d.c.pending = d.c.nextId
-  d.effects.push({ type: 'locate', id: d.c.nextId, paced })
+  d.effects.push(nearX === null ? { type: 'locate', id: d.c.nextId, paced } : { type: 'locate', id: d.c.nextId, paced, nearX })
 }
 
 function startChecking(d: Draft, nowMs: number): void {
@@ -272,8 +276,8 @@ function toNotFound(d: Draft, nowMs: number): void {
 
 function toError(d: Draft, code: LocateClientErrorCode, nowMs: number): void {
   const { c } = d
-  // The two local rate-limit codes have a more helpful sentence; every real failure is just "not available".
-  say(d, nowMs, code === 'too_soon' || code === 'limit' ? FIND_MESSAGES[code] : FIND_PHRASES.unavailable)
+  // Each failure says what went wrong and what to do ("The search took too long. Try again."), not just that Find failed.
+  say(d, nowMs, FIND_MESSAGES[code])
   c.state = 'error'
   c.enteredAt = nowMs
   c.pending = null
@@ -462,8 +466,9 @@ function onFailed(d: Draft, e: Extract<FindEvent, { type: 'failed' }>): void {
   if (sweepFrame) c.sweepPending = c.sweepPending.filter((id) => id !== e.id)
   else c.pending = null
   if (c.state === 'checking') {
-    // A hiccup (network, timeout, an unusable reply) gets one more try, quietly, before Find gives up.
-    const transient = e.code === 'network' || e.code === 'timeout' || e.code === 'bad_response'
+    // A hiccup (a network error, an unusable reply) gets one more try, quietly, before Find gives up. A timeout does not:
+    // a second slow try would only double the wait.
+    const transient = e.code === 'network' || e.code === 'bad_response'
     if (transient && c.checkRetries < d.cfg.checkRetryMax) {
       c.checkRetries += 1
       issueLocate(d, false)
@@ -682,7 +687,8 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
   ) {
     c.rechecking = true
     c.lastRecheckAt = now
-    issueLocate(d, !nearTarget)
+    // Gemini is told where the target should be, so with several of a kind in view it names the same one.
+    issueLocate(d, !nearTarget, targetColumn(bearingDeg, env.hfovDeg))
   }
 }
 

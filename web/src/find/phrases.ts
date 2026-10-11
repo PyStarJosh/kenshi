@@ -14,7 +14,6 @@ export const FIND_PHRASES = {
   stillSearching: 'Still searching.',
   checking: 'Checking.',
   stopped: 'Find stopped.',
-  unavailable: "Find isn't available right now.",
   noHeading: "I can't tell which way you turn, so I can only search what the camera sees.",
   tiltDown: 'Tilt the phone down to keep it in view.',
 } as const
