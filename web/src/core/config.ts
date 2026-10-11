@@ -322,6 +322,12 @@ export const CONFIG = {
     tiltPitchDeg: -25,
     tiltPromptCooldownMs: 8_000,
     tiltPromptMax: 2,
+    // Stick to the first one: a later sighting or Gemini answer is taken to be the same object only if it lies within
+    // this many degrees of where the object is remembered (more when it is close, where walking moves its bearing a lot).
+    // Anything outside is another object of the same kind and is ignored.
+    sameObjectDeg: 35,
+    sameObjectNearDeg: 55,
+    sameObjectNearM: 2.5,
     // The detector must lose a followed target for this long before it counts as lost or another object is followed.
     yoloLostMs: 1_000,
     // A direction word changes only when the bearing is this far past its boundary, so it does not flap.

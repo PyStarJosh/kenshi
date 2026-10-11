@@ -34,6 +34,7 @@ import { initialGuidance, nextGuidance, seedGuidance } from './guidance'
 import type { GuidanceState, PathDecision } from './guidance'
 import { FIND_MESSAGES } from './messages'
 import type { LocateClientErrorCode } from './locateClient'
+import { wrap180 } from '../sensors/heading'
 import { bearing, boxCenterX, estimateTargetDistance, inView, isStale, observe, remember } from './targetMemory'
 import type { TargetMemory } from './targetMemory'
 import { cleanTarget } from './targets'
@@ -253,6 +254,7 @@ function enterGuiding(d: Draft, memory: TargetMemory, bearingDeg: number, nowMs:
   c.state = 'guiding'
   c.enteredAt = nowMs
   c.memory = memory
+  c.followId = null // a detector start sets it right after
   c.failedRechecks = 0
   c.rechecking = false
   c.lastRecheckAt = nowMs
@@ -286,6 +288,7 @@ function toError(d: Draft, code: LocateClientErrorCode, nowMs: number): void {
 
 function toLost(d: Draft, nowMs: number): void {
   const { c } = d
+  c.followId = null
   say(d, nowMs, lostPhrase(c.target))
   c.state = 'lost'
   c.enteredAt = nowMs
@@ -330,9 +333,9 @@ function guideFromYolo(d: Draft, yolo: YoloSighting, heading: number, nowMs: num
     source: 'yolo',
     clipped: yolo.clipped ?? false,
   }
+  enterGuiding(d, memory, bearing(memory, heading), nowMs)
   d.c.followId = yolo.trackId ?? null
   d.c.yoloSeenAt = nowMs
-  enterGuiding(d, memory, bearing(memory, heading), nowMs)
 }
 
 function onRequest(d: Draft, e: Extract<FindEvent, { type: 'request' }>): void {
@@ -411,6 +414,10 @@ function onLocated(d: Draft, e: Extract<FindEvent, { type: 'located' }>): void {
     c.lastRecheckAt = e.nowMs
     const memory = found ? memoryFrom(d, e.result, e.frames[e.result.frameIndex as number], e.nowMs) : null
     if (memory !== null) {
+      // Gemini picks one object of the kind; if there are several it may name another one than the one being guided to.
+      // Stick to the first: an answer far from where that one is remembered is ignored (it counts for nothing, either way).
+      const heading = e.heading ?? memory.heading
+      if (c.memory !== null && !isSameObject(c.memory, heading, bearing(memory, heading), d.cfg)) return
       c.memory = memory
       c.failedRechecks = 0
       return
@@ -420,6 +427,16 @@ function onLocated(d: Draft, e: Extract<FindEvent, { type: 'located' }>): void {
     if (c.memory !== null && belowView(c, bearing(c.memory, e.heading ?? c.memory.heading), e.nowMs, d.cfg)) return
     failRecheck(d, e.nowMs)
   }
+}
+
+/** How far from the remembered bearing something of the same kind can be and still be taken for the same object. */
+export function sameObjectGateDeg(memory: TargetMemory, cfg: FindConfig): number {
+  return memory.distanceM !== null && memory.distanceM < cfg.sameObjectNearM ? cfg.sameObjectNearDeg : cfg.sameObjectDeg
+}
+
+/** True when a sighting at this angle from straight ahead (at this heading) is where the remembered object is. */
+export function isSameObject(memory: TargetMemory, headingDeg: number, angleDeg: number, cfg: FindConfig): boolean {
+  return Math.abs(wrap180(angleDeg - bearing(memory, headingDeg))) <= sameObjectGateDeg(memory, cfg)
 }
 
 /** The target was last seen with its base out of the bottom of the frame, is roughly ahead, and that was recent. */
@@ -549,12 +566,15 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
 
   // The detector follows a target it can see, frame by frame, so bearing and distance stay smooth. It keeps to the
   // object it started with: another of the same kind is taken up only after the first has been gone for a moment.
-  const sighting =
-    c.memory.source === 'yolo' &&
-    e.yolo !== null &&
-    (c.followId === null || e.yolo.trackId === undefined || e.yolo.trackId === c.followId || now - c.yoloSeenAt >= cfg.yoloLostMs)
-      ? e.yolo
-      : null
+  // A track with the followed id is the same object. Any other is taken up only after the first has been gone for a
+  // moment (a new id for the same object after a flicker), and only if it is where the first was.
+  const yolo = c.memory.source === 'yolo' ? e.yolo : null
+  const sameTrack = yolo !== null && yolo.trackId !== undefined && yolo.trackId === c.followId
+  const reacquired =
+    yolo !== null &&
+    (c.followId === null || yolo.trackId === undefined || now - c.yoloSeenAt >= cfg.yoloLostMs) &&
+    isSameObject(c.memory, e.heading, yolo.angleDeg, cfg)
+  const sighting = sameTrack || reacquired ? yolo : null
   if (sighting !== null) {
     c.memory = {
       ...c.memory,

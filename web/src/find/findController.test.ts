@@ -248,12 +248,12 @@ describe('the YOLO shortcut', () => {
 
   test('says the direction when it changes, no more than the cooldown allows', () => {
     const sim = new Sim()
-    sim.request('chair', { angleDeg: 0, distanceM: 4 })
-    const early = sim.tick(100, { yolo: { angleDeg: 60, distanceM: 4 } })
+    sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
+    const early = sim.tick(100, { yolo: { angleDeg: 60, distanceM: 4, trackId: 7 } })
     expect(sim.said(early)).toEqual([]) // changed, but too soon after the last phrase
-    const later = sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 60, distanceM: 4 } })
+    const later = sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 60, distanceM: 4, trackId: 7 } })
     expect(sim.said(later)).toEqual(['Turn right.'])
-    const same = sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 60, distanceM: 4 } })
+    const same = sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 60, distanceM: 4, trackId: 7 } })
     expect(sim.said(same)).toEqual([]) // unchanged: no repeat
   })
 
@@ -903,12 +903,57 @@ describe('keeping hold of a target (reliability)', () => {
     expect(sim.ctx.memory?.heading).toBe(3)
   })
 
-  test('once the first has been gone for a moment, another of the same kind is taken up', () => {
+  test('once the first has been gone for a moment, the same object under a new id is taken up again', () => {
     const sim = new Sim()
     sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
-    sim.tick(CFG.yoloLostMs + 100, { yolo: { angleDeg: 40, distanceM: 2, trackId: 9 } })
+    sim.tick(100, { yolo: { angleDeg: 8, distanceM: 2, trackId: 9 } }) // too soon: ignored
+    expect(sim.ctx.followId).toBe(7)
+    sim.tick(CFG.yoloLostMs + 100, { yolo: { angleDeg: 8, distanceM: 2, trackId: 9 } })
     expect(sim.ctx.followId).toBe(9)
-    expect(sim.ctx.memory?.heading).toBe(40)
+    expect(sim.ctx.memory?.heading).toBe(8)
+  })
+
+  test('a second chair elsewhere is never taken up, however long the first has been gone', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
+    sim.tick(CFG.yoloLostMs * 3, { yolo: { angleDeg: 70, distanceM: 2, trackId: 9 } })
+    expect(sim.ctx.followId).toBe(7)
+    expect(sim.ctx.memory?.heading).toBe(0)
+  })
+
+  test('a Gemini re-check that names a different chair is ignored; one near the first refines it', () => {
+    const sim = new Sim()
+    sim.guideByGemini() // straight ahead, 3 m
+    const before = sim.ctx.memory?.heading
+    const [other] = sim.locateEffects(sim.tick(CFG.recheckIntervalMs + 100))
+    // the frame was taken facing 60 degrees to the right and the box is in the middle: this chair lies about 60 right
+    sim.located(other.id, foundResult(0, 0.5), [{ heading: 60, pitch: 0 }])
+    expect(sim.ctx.memory?.heading).toBe(before)
+    expect(sim.state).toBe('guiding')
+    const [near] = sim.locateEffects(sim.tick(CFG.recheckIntervalMs + 100))
+    sim.located(near.id, foundResult(0, 0.6))
+    expect(sim.ctx.memory?.heading).toBeCloseTo(6.5, 9)
+  })
+
+  test('an ignored answer is not a failure and not a find: the target is kept, and ages like any other', () => {
+    const sim = new Sim()
+    sim.guideByGemini()
+    const [look] = sim.locateEffects(sim.tick(CFG.recheckIntervalMs + 100))
+    sim.located(look.id, foundResult(0, 0.5), [{ heading: 90, pitch: 0 }])
+    expect(sim.ctx.failedRechecks).toBe(0)
+    expect(sim.ctx.rechecking).toBe(false)
+    expect(sim.state).toBe('guiding')
+  })
+
+  test('after losing it, a new search is free to take whichever chair comes first', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
+    sim.tick(CFG.memoryMaxAgeMs + 100) // stale: lost
+    expect(sim.state).toBe('lost')
+    expect(sim.ctx.followId).toBeNull()
+    sim.tick(100, { yolo: { angleDeg: 70, distanceM: 2, trackId: 9 } })
+    expect(sim.state).toBe('guiding')
+    expect(sim.ctx.followId).toBe(9)
   })
 
   test('a flicker of the detector does not trigger a Gemini re-check; a real loss does, after the pause', () => {

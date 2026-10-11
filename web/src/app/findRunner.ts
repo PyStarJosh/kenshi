@@ -6,9 +6,10 @@
 import { CONFIG } from '../core/config'
 import type { EventMap, FindRequest, FindSnapshot, OrientationSample, Settings, Track } from '../core/types'
 import type { EventBus } from '../alerts/bus'
-import { initialContext, reduce, snapshotOf } from '../find/findController'
+import { initialContext, reduce, sameObjectGateDeg, snapshotOf } from '../find/findController'
 import type { FindContext, FindEffect, FindEvent, FrameMeta } from '../find/findController'
 import type { Capture, LocateOptions, LocateOutcome } from '../find/locateClient'
+import { bearing } from '../find/targetMemory'
 import { cleanTarget, findYoloSighting } from '../find/targets'
 import type { FrameDims } from '../geometry/geometry'
 
@@ -106,11 +107,18 @@ export class FindRunner {
       return
     }
     const now = this.deps.now()
+    const heading = this.deps.orientationLatest(now)?.headingDeg ?? null
+    // While guiding, a track other than the followed one counts only if it is where the remembered object is.
+    const { memory } = this.ctx
+    const near =
+      this.ctx.state === 'guiding' && memory !== null && heading !== null
+        ? { angleDeg: bearing(memory, heading), maxDeg: sameObjectGateDeg(memory, CONFIG.find) }
+        : null
     this.dispatch({
       type: 'tick',
       nowMs: now,
-      heading: this.deps.orientationLatest(now)?.headingDeg ?? null,
-      yolo: findYoloSighting(this.ctx.target, this.deps.getTracks(), this.ctx.followId),
+      heading,
+      yolo: findYoloSighting(this.ctx.target, this.deps.getTracks(), this.ctx.followId, near),
       canLocate: this.deps.locator.canLocate(true),
       canLook: this.deps.locator.canLocate(false),
       pitch: this.deps.orientationLatest(now)?.pitchDeg ?? null,

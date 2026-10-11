@@ -146,6 +146,17 @@ describe('findYoloSighting', () => {
     expect(findYoloSighting('chair', [near, far], null)).toMatchObject({ trackId: 1 })
   })
 
+  test('given where the object was, a lost track is replaced only by one on that spot', () => {
+    const here = track({ id: 3, distanceM: 4, clock: { position: 12, angleDeg: 6 } })
+    const elsewhere = track({ id: 4, distanceM: 1.5, clock: { position: 12, angleDeg: 70 } })
+    const where = { angleDeg: 0, maxDeg: 35 }
+    expect(findYoloSighting('chair', [elsewhere, here], 99, where)).toMatchObject({ trackId: 3 }) // not the nearer one
+    expect(findYoloSighting('chair', [elsewhere], 99, where)).toBeNull()
+    expect(findYoloSighting('chair', [elsewhere, here], 4, where)).toMatchObject({ trackId: 4 }) // the followed id still wins
+    const close = track({ id: 5, clock: { position: 12, angleDeg: -2 } })
+    expect(findYoloSighting('chair', [here, close], null, where)).toMatchObject({ trackId: 5 }) // the closest to the spot
+  })
+
   test('works through synonyms and for names that stand for several classes', () => {
     expect(findYoloSighting('sofa', [track({ label: 'couch', clock: { position: 1, angleDeg: 15 } })])?.angleDeg).toBe(15)
     const sink = track({ label: 'sink', distanceM: 2, clock: { position: 12, angleDeg: -8 } })

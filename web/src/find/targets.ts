@@ -4,6 +4,7 @@
 import { CONFIG } from '../core/config'
 import type { ClassInfo, Track } from '../core/types'
 import { CLASSES } from '../detection/classes'
+import { wrap180 } from '../sensors/heading'
 import type { YoloSighting } from './findController'
 
 /** The quick-pick buttons, in order. */
@@ -159,6 +160,7 @@ export function findYoloSighting(
   target: string,
   tracks: readonly Track[],
   preferTrackId: number | null = null,
+  near: { angleDeg: number; maxDeg: number } | null = null,
 ): YoloSighting | null {
   const labels = detectorLabelsFor(target)
   if (labels.length === 0) return null
@@ -167,7 +169,11 @@ export function findYoloSighting(
   matches.sort((a, b) => a.distanceM - b.distanceM || b.confidence - a.confidence)
   // Keep following the object already being followed, so two chairs in view do not swap places as their
   // estimated distances wobble.
-  const best = matches.find((t) => t.id === preferTrackId) ?? matches[0]
+  // If it is gone, only one where it was is taken for it (the same object under a new id), not another of the kind.
+  const onSpot = near === null ? matches : matches.filter((t) => Math.abs(wrap180(t.clock.angleDeg - near.angleDeg)) <= near.maxDeg)
+  if (near !== null) onSpot.sort((a, b) => Math.abs(wrap180(a.clock.angleDeg - near.angleDeg)) - Math.abs(wrap180(b.clock.angleDeg - near.angleDeg)))
+  const best = matches.find((t) => t.id === preferTrackId) ?? onSpot[0]
+  if (best === undefined) return null
   return {
     angleDeg: best.clock.angleDeg,
     distanceM: best.distanceM,
