@@ -8,9 +8,9 @@ export const MESSAGES = {
   starting: 'Starting the camera and loading the detector.',
   resuming: 'Restarting the camera.',
   running: 'Detection is running.',
-  paused: 'Paused. Press Resume to continue.',
+  paused: 'Paused. Hold the screen for a second, or say resume, to continue.',
   pausedHidden: 'Paused because the page was hidden.',
-  cameraStopped: 'The camera stopped. Press Resume to try again.',
+  cameraStopped: 'The camera stopped. Hold the screen for a second to try again.',
   unknownFailure: 'Something went wrong while starting, so press Start to try again.',
 } as const
 

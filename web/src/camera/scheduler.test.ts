@@ -250,4 +250,37 @@ describe('createBitmapGrabber', () => {
     // The video is tried once; every later frame goes through the canvas.
     expect(sources.filter((s) => s === v)).toHaveLength(1)
   })
+
+  test('the fallback canvas is sized once, not reallocated on every frame', async () => {
+    let resized = 0
+    let width = 0
+    let height = 0
+    const canvas = {
+      get width() {
+        return width
+      },
+      set width(value: number) {
+        width = value
+        resized += 1
+      },
+      get height() {
+        return height
+      },
+      set height(value: number) {
+        height = value
+        resized += 1
+      },
+      getContext: () => ({ drawImage: () => {} }),
+    } as unknown as HTMLCanvasElement
+    const v = video()
+    const grab = createBitmapGrabber(v, {
+      createBitmap: async (source) => {
+        if (source === v) throw new Error('not supported')
+        return bitmap(2)
+      },
+      createCanvas: () => canvas,
+    })
+    for (let i = 0; i < 5; i++) await grab()
+    expect(resized).toBe(2) // width and height, once
+  })
 })

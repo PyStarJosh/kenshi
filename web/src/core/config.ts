@@ -12,10 +12,12 @@ export const CONFIG = {
   detection: {
     // Square model input size in pixels, 320 or 416; Gate A chose 416. Selects models/yolo26n-<size>.onnx. NFR-1, NFR-2
     inputSize: 416,
-    // Cap on the detection rate to protect battery and heat; the scheduler never queues frames. FR-1, NFR-10
-    maxFps: 15,
+    // Cap on the detection rate to protect battery and heat; the scheduler never queues frames. Lowered from 15 (owner
+    // report: the camera picture lags): it leaves the phone room to draw the picture, and stays above NFR-1's 8.
+    // FR-1, NFR-1, NFR-10
+    maxFps: 10,
     // A frame is accepted once this fraction of the minimum gap has passed, so camera timing jitter
-    // does not cost a whole frame (30 fps camera, 15 fps cap). FR-1, NFR-1
+    // does not cost a whole frame (30 fps camera, 10 fps cap). FR-1, NFR-1
     frameGapTolerance: 0.9,
     // Confidence needed to keep a detection, per class label; "default" covers the rest. NFR-5, NFR-6
     confidenceThreshold: {
