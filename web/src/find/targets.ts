@@ -3,6 +3,7 @@
 // detector already sees can skip the network (the YOLO shortcut). Pure.
 import { CONFIG } from '../core/config'
 import type { ClassInfo, Track } from '../core/types'
+import { CLASSES } from '../detection/classes'
 import type { YoloSighting } from './findController'
 
 /** The quick-pick buttons, in order. */
@@ -21,48 +22,128 @@ export function cleanTarget(text: string): string {
   return cleaned.slice(0, CONFIG.find.maxTargetChars)
 }
 
-// What people say for things the detector knows (a COCO class label on the right). Anything else goes to Gemini.
-const DETECTOR_NAMES: Record<string, string> = {
-  person: 'person',
-  people: 'person',
-  someone: 'person',
-  chair: 'chair',
-  chairs: 'chair',
-  seat: 'chair',
-  couch: 'couch',
-  sofa: 'couch',
-  bench: 'bench',
-  table: 'dining table',
-  'dining table': 'dining table',
-  bed: 'bed',
-  toilet: 'toilet',
-  sink: 'sink',
-  tv: 'tv',
-  television: 'tv',
-  laptop: 'laptop',
-  phone: 'cell phone',
-  'cell phone': 'cell phone',
-  bottle: 'bottle',
-  cup: 'cup',
-  backpack: 'backpack',
-  suitcase: 'suitcase',
-  umbrella: 'umbrella',
-  bicycle: 'bicycle',
-  bike: 'bicycle',
-  car: 'car',
-  bus: 'bus',
-  dog: 'dog',
-  cat: 'cat',
-  plant: 'potted plant',
-  fridge: 'refrigerator',
-  refrigerator: 'refrigerator',
-  clock: 'clock',
-  book: 'book',
+// The detector knows 80 everyday classes (COCO). A target that is one of their names, or its plural, already maps to
+// it ("chair", "chairs", "traffic light", "bowl"). These are the other words people use for the same things, and a
+// few names that stand for several classes at once (a bathroom has a toilet or a sink in it). Exit, door, elevator,
+// stairs, a restroom sign and a trash can are not among the 80 classes, so they always go to Gemini.
+export const DETECTOR_SYNONYMS: Record<string, readonly string[]> = {
+  // People
+  people: ['person'],
+  human: ['person'],
+  someone: ['person'],
+  somebody: ['person'],
+  man: ['person'],
+  woman: ['person'],
+  child: ['person'],
+  kid: ['person'],
+  pedestrian: ['person'],
+  // Seats, tables, beds
+  seat: ['chair'],
+  'office chair': ['chair'],
+  'dining chair': ['chair'],
+  armchair: ['chair', 'couch'],
+  sofa: ['couch'],
+  settee: ['couch'],
+  loveseat: ['couch'],
+  table: ['dining table'],
+  'dinner table': ['dining table'],
+  'kitchen table': ['dining table'],
+  'park bench': ['bench'],
+  // Screens and gadgets
+  television: ['tv'],
+  telly: ['tv'],
+  monitor: ['tv'],
+  computer: ['laptop'],
+  notebook: ['laptop'],
+  phone: ['cell phone'],
+  cellphone: ['cell phone'],
+  smartphone: ['cell phone'],
+  'mobile phone': ['cell phone'],
+  mobile: ['cell phone'],
+  'remote control': ['remote'],
+  'tv remote': ['remote'],
+  'computer mouse': ['mouse'],
+  // Kitchen
+  mug: ['cup'],
+  'coffee cup': ['cup'],
+  teacup: ['cup'],
+  'water bottle': ['bottle'],
+  fridge: ['refrigerator'],
+  freezer: ['refrigerator'],
+  stove: ['oven'],
+  cooker: ['oven'],
+  doughnut: ['donut'],
+  // Bags
+  rucksack: ['backpack'],
+  purse: ['handbag'],
+  bag: ['handbag', 'backpack', 'suitcase'],
+  luggage: ['suitcase'],
+  // Vehicles and street
+  bike: ['bicycle'],
+  cycle: ['bicycle'],
+  motorbike: ['motorcycle'],
+  plane: ['airplane'],
+  aeroplane: ['airplane'],
+  aircraft: ['airplane'],
+  lorry: ['truck'],
+  hydrant: ['fire hydrant'],
+  'traffic signal': ['traffic light'],
+  stoplight: ['traffic light'],
+  'stop light': ['traffic light'],
+  // Home
+  plant: ['potted plant'],
+  houseplant: ['potted plant'],
+  'house plant': ['potted plant'],
+  basin: ['sink'],
+  washbasin: ['sink'],
+  'hair dryer': ['hair drier'],
+  hairdryer: ['hair drier'],
+  'blow dryer': ['hair drier'],
+  teddy: ['teddy bear'],
+  brolly: ['umbrella'],
+  // A bathroom is found by the fixtures in it
+  bathroom: ['toilet', 'sink'],
+  restroom: ['toilet', 'sink'],
+  washroom: ['toilet', 'sink'],
+  lavatory: ['toilet', 'sink'],
+  loo: ['toilet', 'sink'],
+  // Sport
+  ball: ['sports ball'],
+  football: ['sports ball'],
+  'soccer ball': ['sports ball'],
+  basketball: ['sports ball'],
+  volleyball: ['sports ball'],
+  racket: ['tennis racket'],
+  racquet: ['tennis racket'],
+  bat: ['baseball bat'],
+  // Animals
+  puppy: ['dog'],
+  kitten: ['cat'],
 }
 
-/** The detector class label for a target name, or null when the detector does not know the thing. */
-export function detectorLabelFor(target: string): string | null {
-  return DETECTOR_NAMES[cleanTarget(target)] ?? null
+/** The name and its plausible singulars: "chairs" gives "chair", "buses" gives "bus", "berries" gives "berry". */
+function candidates(name: string): string[] {
+  const out = [name]
+  if (name.endsWith('ies')) out.push(`${name.slice(0, -3)}y`)
+  if (name.endsWith('es') && name.length > 4) out.push(name.slice(0, -2))
+  if (name.endsWith('s') && !name.endsWith('ss') && name.length > 3) out.push(name.slice(0, -1))
+  return out
+}
+
+/**
+ * The detector class labels a target name stands for, or none when the detector does not know the thing. A class's
+ * own label or spoken name (or its plural) always counts; DETECTOR_SYNONYMS adds everyday words. Whole names only, so
+ * "orange chair" never turns into the fruit.
+ */
+export function detectorLabelsFor(target: string, classes: readonly ClassInfo[] = CLASSES): string[] {
+  const name = cleanTarget(target)
+  if (name === '') return []
+  const names = candidates(name)
+  // hasOwn: a spoken "constructor" must not find a property of Object itself.
+  const key = names.find((n) => Object.hasOwn(DETECTOR_SYNONYMS, n))
+  if (key !== undefined) return [...DETECTOR_SYNONYMS[key]]
+  const hit = classes.find((c) => names.includes(c.label) || names.includes(c.spokenName))
+  return hit ? [hit.label] : []
 }
 
 /** True when a label is one of the detector's classes (a guard for the table above). */
@@ -75,9 +156,9 @@ export function isDetectorLabel(label: string, classes: readonly ClassInfo[]): b
  * the most confident. A target the detector does not know never matches.
  */
 export function findYoloSighting(target: string, tracks: readonly Track[]): YoloSighting | null {
-  const label = detectorLabelFor(target)
-  if (label === null) return null
-  const matches = tracks.filter((t) => t.label === label && t.status === 'confirmed')
+  const labels = detectorLabelsFor(target)
+  if (labels.length === 0) return null
+  const matches = tracks.filter((t) => labels.includes(t.label) && t.status === 'confirmed')
   if (matches.length === 0) return null
   matches.sort((a, b) => a.distanceM - b.distanceM || b.confidence - a.confidence)
   const best = matches[0]

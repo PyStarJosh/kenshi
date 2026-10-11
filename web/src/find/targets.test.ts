@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { CONFIG } from '../core/config'
 import type { Track } from '../core/types'
 import { CLASSES } from '../detection/classes'
-import { cleanTarget, detectorLabelFor, findYoloSighting, isDetectorLabel, QUICK_PICKS } from './targets'
+import { cleanTarget, DETECTOR_SYNONYMS, detectorLabelsFor, findYoloSighting, isDetectorLabel, QUICK_PICKS } from './targets'
 
 function track(overrides: Partial<Track> = {}): Track {
   return {
@@ -56,26 +56,71 @@ describe('cleanTarget', () => {
   })
 })
 
-describe('detectorLabelFor', () => {
+describe('detectorLabelsFor', () => {
   test('the quick-picks the detector knows map to a class, the rest go to Gemini', () => {
-    expect(detectorLabelFor('Chair')).toBe('chair')
-    expect(detectorLabelFor('Person')).toBe('person')
+    expect(detectorLabelsFor('Chair')).toEqual(['chair'])
+    expect(detectorLabelsFor('Person')).toEqual(['person'])
     for (const unknown of ['Exit', 'Door', 'Elevator', 'Stairs', 'Restroom sign', 'Trash can']) {
-      expect(detectorLabelFor(unknown)).toBeNull()
+      expect(detectorLabelsFor(unknown), unknown).toEqual([])
     }
   })
 
-  test('understands common names', () => {
-    expect(detectorLabelFor('the sofa')).toBe('couch')
-    expect(detectorLabelFor('my phone')).toBe('cell phone')
-    expect(detectorLabelFor('table')).toBe('dining table')
+  test('every one of the detector\'s 80 classes is reachable by its own label, its spoken name, and its plural', () => {
+    expect(CLASSES).toHaveLength(80)
+    for (const c of CLASSES) {
+      expect(detectorLabelsFor(c.label), `label ${c.label}`).toEqual([c.label])
+      expect(detectorLabelsFor(c.spokenName), `spoken ${c.spokenName}`).toContain(c.label)
+      expect(detectorLabelsFor(c.label.toUpperCase()), `upper ${c.label}`).toEqual([c.label])
+    }
   })
 
-  test('every label in the table is a real class of the detector', () => {
-    for (const name of ['person', 'chair', 'couch', 'sofa', 'bench', 'table', 'bed', 'toilet', 'sink', 'tv', 'laptop', 'phone', 'bottle', 'cup', 'backpack', 'suitcase', 'umbrella', 'bike', 'car', 'bus', 'dog', 'cat', 'plant', 'fridge', 'clock', 'book']) {
-      const label = detectorLabelFor(name)
-      expect(label, name).not.toBeNull()
-      expect(isDetectorLabel(label!, CLASSES), `${name} -> ${label}`).toBe(true)
+  test('plurals and articles are understood', () => {
+    expect(detectorLabelsFor('the chairs')).toEqual(['chair'])
+    expect(detectorLabelsFor('my backpacks')).toEqual(['backpack'])
+    expect(detectorLabelsFor('benches')).toEqual(['bench'])
+    expect(detectorLabelsFor('sandwiches')).toEqual(['sandwich'])
+    expect(detectorLabelsFor('buses')).toEqual(['bus'])
+    expect(detectorLabelsFor('scissors')).toEqual(['scissors'])
+    expect(detectorLabelsFor('skis')).toEqual(['skis'])
+    expect(detectorLabelsFor('traffic lights')).toEqual(['traffic light'])
+  })
+
+  test('everyday words reach the class they mean', () => {
+    expect(detectorLabelsFor('the sofa')).toEqual(['couch'])
+    expect(detectorLabelsFor('my phone')).toEqual(['cell phone'])
+    expect(detectorLabelsFor('table')).toEqual(['dining table'])
+    expect(detectorLabelsFor('fridge')).toEqual(['refrigerator'])
+    expect(detectorLabelsFor('bike')).toEqual(['bicycle'])
+    expect(detectorLabelsFor('mug')).toEqual(['cup'])
+    expect(detectorLabelsFor('television')).toEqual(['tv'])
+    expect(detectorLabelsFor('hair dryer')).toEqual(['hair drier'])
+    expect(detectorLabelsFor('plant')).toEqual(['potted plant'])
+  })
+
+  test('a name that could be several things maps to each of them', () => {
+    expect(detectorLabelsFor('bag')).toEqual(['handbag', 'backpack', 'suitcase'])
+    expect(detectorLabelsFor('armchair')).toEqual(['chair', 'couch'])
+  })
+
+  test('a bathroom is found by what is in it, but a restroom sign is not a toilet', () => {
+    expect(detectorLabelsFor('bathroom')).toEqual(['toilet', 'sink'])
+    expect(detectorLabelsFor('restroom')).toEqual(['toilet', 'sink'])
+    expect(detectorLabelsFor('restroom sign')).toEqual([])
+  })
+
+  test('whole names only: a modified name goes to Gemini, and odd words never match', () => {
+    for (const name of ['orange chair', 'red backpack', 'door handle', 'exit sign', 'constructor', 'toString', '__proto__', 'hasOwnProperty', '']) {
+      expect(detectorLabelsFor(name), name).toEqual([])
+    }
+  })
+
+  test('the synonym table only names real classes, and never captures one of the signs Gemini must find', () => {
+    for (const [word, labels] of Object.entries(DETECTOR_SYNONYMS)) {
+      expect(labels.length, word).toBeGreaterThan(0)
+      for (const label of labels) expect(isDetectorLabel(label, CLASSES), `${word} -> ${label}`).toBe(true)
+      for (const pick of QUICK_PICKS.map((p) => p.toLowerCase())) {
+        if (!['chair', 'person'].includes(pick)) expect(word, `quick-pick ${pick}`).not.toBe(pick)
+      }
     }
   })
 })
@@ -84,6 +129,14 @@ describe('findYoloSighting', () => {
   test('a confirmed track of the class gives its bearing and distance', () => {
     const sighting = findYoloSighting('chair', [track({ clock: { position: 1, angleDeg: 22 }, distanceM: 3 })])
     expect(sighting).toEqual({ angleDeg: 22, distanceM: 3 })
+  })
+
+  test('works through synonyms and for names that stand for several classes', () => {
+    expect(findYoloSighting('sofa', [track({ label: 'couch', clock: { position: 1, angleDeg: 15 } })])?.angleDeg).toBe(15)
+    const sink = track({ label: 'sink', distanceM: 2, clock: { position: 12, angleDeg: -8 } })
+    const toilet = track({ id: 2, label: 'toilet', distanceM: 3, clock: { position: 12, angleDeg: 20 } })
+    expect(findYoloSighting('bathroom', [toilet, sink])?.angleDeg).toBe(-8) // the nearer of the two fixtures
+    expect(findYoloSighting('bag', [track({ label: 'backpack', clock: { position: 12, angleDeg: 3 } })])?.angleDeg).toBe(3)
   })
 
   test('ignores tentative tracks, other classes, and targets the detector does not know', () => {
