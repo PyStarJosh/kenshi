@@ -14,6 +14,8 @@ export function useFind(
   link: AudioLink,
   pipeline: Pipeline,
   getVideo: () => HTMLVideoElement | null,
+  /** ?debug: find the path line even when Find is idle. */
+  pathAlways = false,
 ): FindRunner {
   const [runner] = useState(() => {
     let grabber: { video: HTMLVideoElement; grab: () => Promise<ImageBitmap | null> } | null = null
@@ -23,6 +25,7 @@ export function useFind(
       orientationLatest: (nowMs) => session.getOrientationLatest(nowMs),
       isRunning: () => session.getSnapshot().state === 'running',
       getTracks: () => pipeline.getTracks(),
+      getPathDecision: (nowMs) => pipeline.getPathDecision(nowMs),
       getSettings: () => settingsStore.getSnapshot(),
       grab: () => {
         const video = getVideo()
@@ -40,14 +43,21 @@ export function useFind(
   })
   useEffect(() => {
     link.setFindActive(() => runner.isActive())
+    // The detector also finds the free-space path (R7) while Find is running, steering toward the target when it is in view.
+    session.setPathSource(() =>
+      runner.isActive() || pathAlways
+        ? { targetX: runner.getTargetColumn(), hfovDeg: settingsStore.getSnapshot().horizontalFovDeg }
+        : null,
+    )
     const detach = runner.attach()
     // The beacon follows the Find snapshot on the bus: pulses while guiding, a chime on arrival, silence otherwise.
     const detachBeacon = new BeaconDriver(pipeline.bus, () => link.getBeacon()).attach()
     return () => {
       detachBeacon()
+      session.setPathSource(null)
       detach()
       link.setFindActive(() => false)
     }
-  }, [runner, link, pipeline])
+  }, [runner, link, pipeline, session, pathAlways])
   return runner
 }

@@ -7,11 +7,13 @@ import type {
   EventMap,
   FindRequest,
   FrameResult,
+  FreeSpaceResult,
   HealthState,
   OrientationSample,
   Track,
   VoiceIntent,
 } from '../core/types'
+import { CONFIG } from '../core/config'
 import { Pipeline } from './pipeline'
 import type { PipelineLink, PipelineSession, PipelineTracker } from './pipeline'
 import type { SessionState } from './session'
@@ -320,5 +322,57 @@ describe('voice goes on the bus', () => {
     t.bus.subscribe('voice', (intent) => intents.push(intent))
     t.link.say('pause')
     expect(intents).toEqual(['pause'])
+  })
+})
+
+describe('the free-space path (R7)', () => {
+  const pathOf = (decision: FreeSpaceResult['decision']): FreeSpaceResult => ({
+    points: [],
+    lookahead: null,
+    decision,
+    processWidth: 320,
+    processHeight: 180,
+    roiStartRow: 72,
+    freeMask: new Uint8Array(0),
+  })
+  const sendPath = (t: ReturnType<typeof setup>, decision: FreeSpaceResult['decision']) => {
+    t.clock.nowMs += 100
+    t.session.emit({ ...frame(t.clock.nowMs - 50), freeSpace: pathOf(decision) } as FrameResult)
+  }
+
+  test('a frame with a path puts it on the bus after the tracks; a frame without one does not', () => {
+    const t = setup()
+    const seen: string[] = []
+    t.bus.subscribe('tracks', () => seen.push('tracks'))
+    t.bus.subscribe('path', (p) => seen.push(`path ${p.decision}`))
+    sendPath(t, 'left')
+    t.send([track()])
+    expect(seen).toEqual(['tracks', 'path left', 'tracks'])
+  })
+
+  test('the decision for guidance is the most common of the last few', () => {
+    const t = setup()
+    for (const d of ['left', 'left', 'right', 'left', 'right'] as const) sendPath(t, d)
+    expect(t.pipeline.getPathDecision(t.clock.nowMs)).toBe('left')
+    sendPath(t, 'right') // the oldest 'left' drops out: left, right, left, right, right
+    expect(t.pipeline.getPathDecision(t.clock.nowMs)).toBe('right')
+    expect(CONFIG.freeSpace.decisionHistory).toBe(5)
+  })
+
+  test('no result yet, a stale one, or "none" gives no opinion', () => {
+    const t = setup()
+    expect(t.pipeline.getPathDecision(t.clock.nowMs)).toBeNull()
+    sendPath(t, 'straight')
+    expect(t.pipeline.getPathDecision(t.clock.nowMs)).toBe('straight')
+    expect(t.pipeline.getPathDecision(t.clock.nowMs + CONFIG.freeSpace.maxAgeMs + 1)).toBeNull()
+    for (let i = 0; i < 5; i++) sendPath(t, 'none')
+    expect(t.pipeline.getPathDecision(t.clock.nowMs)).toBeNull()
+  })
+
+  test('a pause forgets the old decisions', () => {
+    const t = setup()
+    sendPath(t, 'left')
+    t.session.setState('paused')
+    expect(t.pipeline.getPathDecision(t.clock.nowMs)).toBeNull()
   })
 })

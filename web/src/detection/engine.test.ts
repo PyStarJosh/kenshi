@@ -95,6 +95,16 @@ describe('detect', () => {
     expect(frame?.receivedTimeMs).toBeGreaterThan(0)
   })
 
+  test('sends the path request with the frame when there is one, and none otherwise', () => {
+    const { worker, engine } = setup()
+    const path = { pitchDeg: -10, hfovDeg: 65, targetX: 0.4 }
+    void engine.detect(bitmap, 1, 0, path)
+    void engine.detect(bitmap, 2, 1)
+    expect(worker.sent[0]).toMatchObject({ type: 'detect', frameId: 1, path })
+    expect(worker.sent[1]).toMatchObject({ type: 'detect', frameId: 2 })
+    expect((worker.sent[1] as { path?: unknown }).path).toBeUndefined()
+  })
+
   test('resolves null when the worker dropped the frame for a newer one', async () => {
     const { worker, engine } = setup()
     const first = engine.detect(bitmap, 1, 0)

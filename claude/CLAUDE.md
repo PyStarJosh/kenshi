@@ -13,7 +13,7 @@ Kenshi: a real-time guide for blind and low-vision people that runs on an iPhone
 - Scan sweep: if the target is not in view, the user turns slowly; the app captures a frame about every 45 degrees (up to 8) and sends each one on its own as soon as it is taken, so the first look that finds the target ends the search. A pause of 1.5 s after turning takes one fresh look, and a target the on-device detector sees ends the search at once.
 - Heading memory: the target's direction is stored as a device heading (gyro-based yaw), so guidance continues when it is out of view.
 - Guidance: a Find My-style screen (big arrow, distance, green when aligned), an audio beacon in the AirPods (pulses speed up as the target gets closer, panned toward it), and GPS-style spoken directions.
-- Path line: web/src/geometry/freeSpacePath.ts (step R7) draws a walking line that bends around tracked obstacles. Spoken guidance follows the first leg of that line, so the route avoids objects without the app naming them.
+- Path line: web/src/geometry/freeSpacePath.ts (step R7) finds a walking line through open floor from the picture's edges (a port of a teammate's script; do not change its algorithm), on one frame in three in the detection worker. It is drawn in the Find screen's camera inset and ?debug, and its decision makes guidance say "Bear left around the obstacle" while the target is straight ahead, so the route avoids objects without the app naming them.
 - Install: web manifest and icons so it can be added to the Home Screen. No service worker.
 - Spoken phrases: only Find guidance ("Turn right", "Bear left", "Straight ahead", "Turn around", "chair, about 5 meters"), voice replies, status, and health warnings. No object phrases.
 - Audio: Find speech and the beacon through AirPods in transparency mode. A quiet heartbeat tick while healthy; a distinct warning the moment detection degrades.
@@ -34,7 +34,7 @@ web/                        Vite + React + TypeScript app
   src/camera/               camera stream, frame scheduler, wake lock
   src/detection/            worker, engine, protocol, preprocess, postprocess, classes.ts (generated)
   src/sensors/              device orientation (adapter), attitude math, heading math (R3)
-  src/geometry/             geometry.ts (clock, distance, elevation, path); freeSpacePath.ts (R7)
+  src/geometry/             geometry.ts (clock, distance, elevation, path); freeSpacePath.ts, pathInput.ts (R7)
   src/tracking/             tracker, smoothing, time-to-contact
   src/alerts/               event bus, SR-2 wording test
   src/audio/                unlock, tones, speech, heartbeat, engine, beacon (R5)

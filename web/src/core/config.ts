@@ -36,6 +36,39 @@ export const CONFIG = {
     maxConsecutiveErrors: 5,
   },
 
+  // The free-space path (R7, FR-28): a walking line through open floor found from edges in a small grayscale copy of the
+  // frame, in the detection worker. The numbers under "path" are those of the teammate's script (tuned at 640 px wide).
+  freeSpace: {
+    // The frame is analysed at this width (the height keeps the aspect ratio). Cost grows with the pixel count.
+    processWidth: 320,
+    // The path is computed on one frame in this many. If detection p95 goes past the SDS budget, raise this to 5.
+    everyNthFrame: 3,
+    // The decision handed to guidance is the most common one in this many recent results, so it does not flap.
+    decisionHistory: 5,
+    // A path result older than this is not shown or used.
+    maxAgeMs: 1_500,
+    // The overlay: free floor tinted green at this opacity, the line drawn this many pixels wide.
+    overlayOpacity: 0.35,
+    overlayLineWidthPx: 4,
+    path: {
+      roiStartFrac: 0.4,
+      horizonMarginFrac: 0.05,
+      cannyLow: 60,
+      cannyHigh: 140,
+      referenceWidth: 640,
+      dilateKernel: 7,
+      closeKernel: 17,
+      openKernel: 7,
+      rowStep: 12,
+      bottomBandRows: 8,
+      minGapFrac: 0.08,
+      smoothWindow: 5,
+      lookaheadFrac: 0.35,
+      turnDeadbandFrac: 0.08,
+      targetClearanceFrac: 0.25,
+    },
+  },
+
   debug: {
     // Frames kept for the overlay's inference percentiles. FR-19
     statsSamples: 60,
@@ -334,6 +367,9 @@ export const CONFIG = {
     directionHysteresisDeg: 5,
     // Automatic retries of the first check after a transient failure (network, timeout, unusable reply).
     checkRetryMax: 1,
+
+    // The path line (R7) is used for "around the obstacle" only while the target is within this many degrees of straight ahead.
+    pathAlignedDeg: 20,
 
     // ---- The Find screen (R6). FR-27 ----
     // The whole background turns green inside alignedEnterDeg of straight ahead, and stays green until the bearing passes

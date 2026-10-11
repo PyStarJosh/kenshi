@@ -11,12 +11,14 @@ import type {
   WorkerRequest,
   WorkerResponse,
 } from './protocol'
+import { PathStage } from './pathStage'
 import { computeLetterbox, decodeDetections, nms } from './postprocess'
 import type { Letterbox } from './postprocess'
 import { rgbaToTensor } from './preprocess'
+import type { PathInput } from '../geometry/pathInput'
 
 interface WorkerScope {
-  postMessage(message: WorkerResponse): void
+  postMessage(message: WorkerResponse, transfer?: Transferable[]): void
   onmessage: ((event: MessageEvent<WorkerRequest>) => void) | null
 }
 const scope = self as unknown as WorkerScope
@@ -41,6 +43,7 @@ interface PendingFrame {
   frameId: number
   captureTimeMs: number
   bitmap: ImageBitmap
+  path?: PathInput
 }
 
 class LoadFailure extends Error {
@@ -61,7 +64,7 @@ scope.onmessage = (event) => {
   if (request.type === 'init') {
     void init(request.modelUrl, request.provider)
   } else {
-    submit({ frameId: request.frameId, captureTimeMs: request.captureTimeMs, bitmap: request.bitmap })
+    submit({ frameId: request.frameId, captureTimeMs: request.captureTimeMs, bitmap: request.bitmap, path: request.path })
   }
 }
 
@@ -202,7 +205,7 @@ async function drain(): Promise<void> {
 }
 
 async function detect(frame: PendingFrame): Promise<void> {
-  const { frameId, captureTimeMs, bitmap } = frame
+  const { frameId, captureTimeMs, bitmap, path } = frame
   try {
     if (!loaded || !backend) throw new Error('Detection engine is not initialized')
     const model = loaded
@@ -225,8 +228,9 @@ async function detect(frame: PendingFrame): Promise<void> {
     const raw = decodeDetections(output.data as Float32Array, numAnchors, model.numClasses, model.thresholds, model.labels, lb)
     const detections = nms(raw, CONFIG.detection.nmsIou)
     const t3 = performance.now()
+    const free = runPath(bitmap, path)
 
-    scope.postMessage({
+    const message: WorkerResponse = {
       type: 'result',
       result: {
         frameId,
@@ -235,15 +239,57 @@ async function detect(frame: PendingFrame): Promise<void> {
         frameHeight,
         inputSize: model.inputSize,
         backend,
-        timings: { preprocessMs: t1 - t0, inferenceMs: t2 - t1, postprocessMs: t3 - t2 },
+        timings: {
+          preprocessMs: t1 - t0,
+          inferenceMs: t2 - t1,
+          postprocessMs: t3 - t2,
+          ...(free ? { pathMs: free.ms } : {}),
+        },
         meanLuma,
         detections,
+        ...(free ? { freeSpace: free.result } : {}),
       },
-    })
+    }
+    // The mask's buffer is handed over, not copied.
+    scope.postMessage(message, free ? [free.result.freeMask.buffer] : [])
   } catch (error) {
     scope.postMessage({ type: 'detect-error', frameId, message: describe(error) })
   } finally {
     bitmap.close()
+  }
+}
+
+// The free-space path stage reads the frame through one canvas that is kept and only resized when the shape changes.
+let pathCanvas: OffscreenCanvas | null = null
+let pathCtx: OffscreenCanvasRenderingContext2D | null = null
+let pathBitmap: ImageBitmap | null = null
+const pathStage = new PathStage({
+  now: () => performance.now(),
+  readRgba: (width, height) => {
+    if (!pathBitmap) throw new Error('No frame to read')
+    if (!pathCanvas || !pathCtx) {
+      pathCanvas = new OffscreenCanvas(width, height)
+      pathCtx = pathCanvas.getContext('2d', { willReadFrequently: true })
+      if (!pathCtx) throw new Error('Could not create an OffscreenCanvas 2D context for the path')
+    }
+    if (pathCanvas.width !== width || pathCanvas.height !== height) {
+      pathCanvas.width = width
+      pathCanvas.height = height
+    }
+    pathCtx.drawImage(pathBitmap, 0, 0, width, height)
+    return pathCtx.getImageData(0, 0, width, height).data
+  },
+})
+
+/** The path on this frame if one is due; a failure here never costs the detections. */
+function runPath(bitmap: ImageBitmap, path: PathInput | undefined) {
+  pathBitmap = bitmap
+  try {
+    return pathStage.run(bitmap.width, bitmap.height, path)
+  } catch {
+    return null
+  } finally {
+    pathBitmap = null
   }
 }
 

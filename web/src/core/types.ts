@@ -42,6 +42,24 @@ export interface FrameTimings {
   preprocessMs: number
   inferenceMs: number
   postprocessMs: number
+  /** The free-space path stage (R7), on the frames where it ran. */
+  pathMs?: number
+}
+
+/** The free-space path for one frame (R7, FR-28): a walking line through open floor, in image space. */
+export interface FreeSpaceResult {
+  /** The line from the bottom of the frame up, in 0 to 1 coordinates of the full frame (y points down). Empty: no path. */
+  points: { x: number; y: number }[]
+  /** The point on the line used for the turn decision, or null. */
+  lookahead: { x: number; y: number } | null
+  /** Which way the line goes ahead; 'none' when there is no open path. */
+  decision: 'left' | 'right' | 'straight' | 'none'
+  /** The size the frame was analysed at, and the first analysed row in those pixels. */
+  processWidth: number
+  processHeight: number
+  roiStartRow: number
+  /** Open floor connected to the user (1) or not (0): processWidth x (processHeight - roiStartRow), row-major. */
+  freeMask: Uint8Array
 }
 
 /** Everything the detection worker returns for one frame. */
@@ -61,6 +79,8 @@ export interface FrameResult {
   /** Mean brightness of the frame, 0 (black) to 1 (white). Feeds the low-light check. */
   meanLuma: number
   detections: Detection[]
+  /** Present on the frames where the path stage ran (every few frames, only while Find or ?debug asks for it). */
+  freeSpace?: FreeSpaceResult
 }
 
 /** Horizontal direction as spoken: clock positions 11, 12, 1, or beyond the clock range. */
@@ -258,6 +278,8 @@ export interface EventMap {
   findRequest: FindRequest
   findCancel: undefined
   find: FindSnapshot
+  /** A free-space path result (R7); the mask buffer is shared, so listeners must not change it. */
+  path: FreeSpaceResult
 }
 
 // Find: the contract of POST /api/locate (web/api/locate.ts), shared by the function and the client (FR-22).

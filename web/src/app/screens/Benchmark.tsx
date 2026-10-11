@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CONFIG } from '../../core/config'
 import type { Detection, FrameResult } from '../../core/types'
 import { DetectionEngine } from '../../detection/engine'
+import { settingsStore } from '../settings'
 import { modelUrl } from '../../detection/models'
 import type { EngineInfo, ProviderChoice } from '../../detection/protocol'
 import { summarize } from './benchmarkStats'
@@ -106,7 +107,13 @@ export default function Benchmark() {
         setPhase(i < warmupRuns ? 'warmup' : 'timed')
         const bitmap = await createImageBitmap(blob)
         const sent = performance.now()
-        const result = await engine.detect(bitmap, i, sent)
+        // The path stage runs on every frame here (force), to time it; the live app runs it on one in a few.
+        const result = await engine.detect(bitmap, i, sent, {
+          pitchDeg: null,
+          hfovDeg: settingsStore.getSnapshot().horizontalFovDeg,
+          targetX: null,
+          force: true,
+        })
         const roundTrip = performance.now() - sent
         if (!result) throw new Error('The benchmark was stopped')
         last = result
@@ -199,6 +206,10 @@ export default function Benchmark() {
             <SpreadRow name="Postprocess" spread={stats.postprocess} />
             <SpreadRow name="Total (worker)" spread={stats.total} />
             <SpreadRow name="Round trip" spread={stats.roundTrip} />
+            {stats.path && <SpreadRow name={`Path (${CONFIG.freeSpace.processWidth} px wide, each frame)`} spread={stats.path} />}
+            {stats.totalWithPath && (
+              <SpreadRow name={`Total with path on 1 frame in ${CONFIG.freeSpace.everyNthFrame}`} spread={stats.totalWithPath} />
+            )}
           </tbody>
         </table>
       )}
