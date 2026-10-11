@@ -1,6 +1,6 @@
 {
   "functions": {
-    "api/locate.ts": { "maxDuration": 30 }
+    "api/locate.ts": { "maxDuration": 15 }
   },
   "headers": [
     {

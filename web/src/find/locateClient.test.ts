@@ -1,112 +1,278 @@
 import { describe, expect, test, vi } from 'vitest'
 import { CONFIG } from '../core/config'
-import { bytesToBase64, LocateError, locateTarget, scaledSize } from './locateClient'
-import type { LocateErrorKind } from './locateTypes'
+import type { LocateErrorCode, LocateResult } from '../core/types'
+import { bytesToBase64, CallLimiter, isLocateResult, Locator, scaledSize } from './locateClient'
+import type { Capture, LocateClientErrorCode } from './locateClient'
 import { describeLocateError, FIND_MESSAGES } from './messages'
 
-const request = { target: 'keys', frames: ['/9j/AAAA'] }
+const bitmap = {} as ImageBitmap
+const capture = (heading = 0, pitch = 0): Capture => ({ bitmap, heading, pitch })
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
-const found = { found: true, frameIndex: 0, box: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 }, label: 'keys', confidence: 0.9 }
 
-async function kindOf(promise: Promise<unknown>): Promise<LocateErrorKind | 'no error'> {
-  try {
-    await promise
-    return 'no error'
-  } catch (error) {
-    if (error instanceof LocateError) return error.kind
-    throw error
-  }
+const found: LocateResult = {
+  found: true,
+  frameIndex: 0,
+  box: { x0: 0.1, y0: 0.2, x1: 0.5, y1: 0.6 },
+  label: 'chair',
+  onFloor: true,
+  distanceM: 2.5,
+  confidence: 0.9,
+  signHint: null,
+  latencyMs: 1200,
+}
+const notFound: LocateResult = {
+  found: false,
+  frameIndex: null,
+  box: null,
+  label: '',
+  onFloor: false,
+  distanceM: null,
+  confidence: 0,
+  signHint: null,
+  latencyMs: 900,
+}
+
+function setup(options: { reply?: () => Promise<Response>; minGapMs?: number; maxPerMinute?: number; timeoutMs?: number } = {}) {
+  const clock = { nowMs: 100_000 }
+  const fetchImpl = vi.fn(options.reply ?? (() => Promise.resolve(json(found))))
+  const encode = vi.fn(async () => '/9j/AAAA')
+  const locator = new Locator({
+    fetchImpl: fetchImpl as unknown as typeof fetch,
+    encode,
+    now: () => clock.nowMs,
+    minGapMs: options.minGapMs ?? 6000,
+    maxPerMinute: options.maxPerMinute ?? 8,
+    timeoutMs: options.timeoutMs ?? 12_000,
+  })
+  return { clock, fetchImpl, encode, locator }
 }
 
 describe('scaledSize', () => {
-  test('keeps small frames and shrinks big ones by their longer side', () => {
-    expect(scaledSize(640, 480, 768)).toEqual({ width: 640, height: 480 })
-    expect(scaledSize(1280, 720, 768)).toEqual({ width: 768, height: 432 })
-    expect(scaledSize(720, 1280, 768)).toEqual({ width: 432, height: 768 })
+  test('keeps narrow frames and shrinks wide ones to the target width', () => {
+    expect(scaledSize(480, 360, 640)).toEqual({ width: 480, height: 360 })
+    expect(scaledSize(1280, 720, 640)).toEqual({ width: 640, height: 360 })
+    expect(scaledSize(1920, 1080, 640)).toEqual({ width: 640, height: 360 })
   })
 
-  test('never returns a zero side', () => {
+  test('never returns a zero height', () => {
     expect(scaledSize(10000, 2, 100)).toEqual({ width: 100, height: 1 })
+  })
+
+  test('the default width is the owner\'s 640', () => {
+    expect(CONFIG.find.imageWidthPx).toBe(640)
+    expect(CONFIG.find.jpegQuality).toBe(0.7)
   })
 })
 
 describe('bytesToBase64', () => {
-  test('matches the known encoding, including for data longer than one chunk', () => {
-    expect(bytesToBase64(new Uint8Array([72, 105]))).toBe('SGk=')
+  test('matches the standard encoding, including for large inputs', () => {
+    expect(bytesToBase64(new Uint8Array([255, 216, 255]))).toBe('/9j/')
     const big = new Uint8Array(100_000).map((_, i) => i % 251)
-    expect(atob(bytesToBase64(big))).toHaveLength(100_000)
-    expect(Uint8Array.from(atob(bytesToBase64(big)), (c) => c.charCodeAt(0))).toEqual(big)
+    const decoded = Uint8Array.from(atob(bytesToBase64(big)), (c) => c.charCodeAt(0))
+    expect(decoded).toEqual(big)
   })
 })
 
-describe('locateTarget', () => {
-  test('posts JSON to /api/locate and returns a found result', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(json(found))
-    await expect(locateTarget(request, { fetchImpl })).resolves.toEqual(found)
-    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+describe('CallLimiter', () => {
+  test('allows the first call, then blocks until the minimum gap has passed', () => {
+    const limiter = new CallLimiter(6000, 8)
+    expect(limiter.check(0)).toEqual({ ok: true })
+    limiter.record(0)
+    expect(limiter.check(2000)).toEqual({ ok: false, error: 'too_soon', retryAfterMs: 4000 })
+    expect(limiter.check(6000)).toEqual({ ok: true })
+  })
+
+  test('blocks the ninth call inside one minute, and frees it when the oldest call ages out', () => {
+    const limiter = new CallLimiter(1000, 8)
+    for (let i = 0; i < 8; i++) limiter.record(i * 1000)
+    expect(limiter.check(8000)).toEqual({ ok: false, error: 'limit', retryAfterMs: 52_000 })
+    expect(limiter.check(60_000)).toEqual({ ok: true })
+  })
+
+  test('the defaults are 6 s and 8 per minute', () => {
+    expect(CONFIG.find.minGapMs).toBe(6000)
+    expect(CONFIG.find.maxPerMinute).toBe(8)
+  })
+})
+
+describe('isLocateResult', () => {
+  test('accepts found and not found results', () => {
+    expect(isLocateResult(found)).toBe(true)
+    expect(isLocateResult(notFound)).toBe(true)
+  })
+
+  test.each([
+    ['null', null],
+    ['no latency', { ...found, latencyMs: undefined }],
+    ['a found result with no box', { ...found, box: null }],
+    ['a box outside 0 to 1', { ...found, box: { x0: 0, y0: 0, x1: 2, y1: 1 } }],
+    ['a found result with a fractional frame index', { ...found, frameIndex: 0.5 }],
+    ['a not-found result that still has a box', { ...notFound, box: found.box }],
+    ['a distance that is a string', { ...found, distanceM: 'far' }],
+    ['a sign hint that is a number', { ...found, signHint: 5 }],
+  ])('rejects %s', (_name, value) => {
+    expect(isLocateResult(value)).toBe(false)
+  })
+})
+
+describe('Locator', () => {
+  test('encodes every frame and posts the target with each frame\'s heading and pitch', async () => {
+    const { locator, fetchImpl, encode } = setup()
+    const outcome = await locator.locate(' chair ', [capture(10, -2), capture(55, -3)])
+    expect(outcome).toEqual({ ok: true, result: found })
+    expect(encode).toHaveBeenCalledTimes(2)
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe('/api/locate')
-    expect(init.method).toBe('POST')
-    expect(JSON.parse(String(init.body))).toEqual(request)
+    expect(JSON.parse(init.body as string)).toEqual({
+      target: 'chair',
+      frames: [
+        { jpeg: '/9j/AAAA', heading: 10, pitch: -2 },
+        { jpeg: '/9j/AAAA', heading: 55, pitch: -3 },
+      ],
+    })
   })
 
-  test('not found is a result, not an error', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(json({ found: false }))
-    await expect(locateTarget(request, { fetchImpl })).resolves.toEqual({ found: false })
+  test('a not-found answer is a successful outcome', async () => {
+    const { locator } = setup({ reply: () => Promise.resolve(json(notFound)) })
+    expect(await locator.locate('chair', [capture()])).toEqual({ ok: true, result: notFound })
   })
 
-  test('refuses a bad request without calling the network', async () => {
-    const fetchImpl = vi.fn()
-    expect(await kindOf(locateTarget({ target: ' ', frames: ['/9j/AAAA'] }, { fetchImpl }))).toBe('bad-request')
-    expect(await kindOf(locateTarget({ target: 'keys', frames: [] }, { fetchImpl }))).toBe('bad-request')
-    const many = Array.from({ length: CONFIG.find.maxFrames + 1 }, () => '/9j/AAAA')
-    expect(await kindOf(locateTarget({ target: 'keys', frames: many }, { fetchImpl }))).toBe('bad-request')
-    expect(await kindOf(locateTarget({ target: 'k'.repeat(CONFIG.find.maxTargetChars + 1), frames: ['/9j/AAAA'] }, { fetchImpl }))).toBe('bad-request')
+  test('bad input comes back as bad_request without any call or any use of the allowance', async () => {
+    const { locator, fetchImpl, clock } = setup()
+    for (const [target, captures] of [
+      ['', [capture()]],
+      ['   ', [capture()]],
+      ['a'.repeat(61), [capture()]],
+      ['chair', []],
+      ['chair', Array.from({ length: 9 }, () => capture())],
+    ] as const) {
+      expect(await locator.locate(target, captures)).toMatchObject({ ok: false, error: 'bad_request' })
+    }
     expect(fetchImpl).not.toHaveBeenCalled()
+    expect(await locator.locate('chair', [capture()])).toMatchObject({ ok: true }) // clock never moved, yet allowed
+    expect(clock.nowMs).toBe(100_000)
   })
 
-  test('the function\'s error kinds come through', async () => {
-    for (const [status, kind] of [[429, 'rate-limited'], [500, 'not-configured'], [502, 'unavailable'], [400, 'bad-request']] as const) {
-      const fetchImpl = vi.fn().mockResolvedValue(json({ error: kind, message: 'x' }, status))
-      expect(await kindOf(locateTarget(request, { fetchImpl }))).toBe(kind)
+  test('a second call too soon is refused with the time to wait, and nothing is sent', async () => {
+    const { locator, fetchImpl, clock } = setup()
+    await locator.locate('chair', [capture()])
+    clock.nowMs += 2000
+    expect(await locator.locate('chair', [capture()])).toEqual({
+      ok: false,
+      error: 'too_soon',
+      message: 'Too many searches too fast.',
+      retryAfterMs: 4000,
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    clock.nowMs += 4000
+    expect(await locator.locate('chair', [capture()])).toMatchObject({ ok: true })
+  })
+
+  test('the per-minute cap refuses the ninth call', async () => {
+    const { locator, clock, fetchImpl } = setup({ minGapMs: 1000 })
+    for (let i = 0; i < 8; i++) {
+      clock.nowMs += 1000
+      expect(await locator.locate('chair', [capture()])).toMatchObject({ ok: true })
+    }
+    clock.nowMs += 1000
+    expect(await locator.locate('chair', [capture()])).toMatchObject({ ok: false, error: 'limit' })
+    expect(fetchImpl).toHaveBeenCalledTimes(8)
+  })
+
+  test('a failed call still counts against the allowance', async () => {
+    const { locator, clock } = setup({ reply: () => Promise.resolve(json({ error: 'quota', message: 'x' }, 429)) })
+    await locator.locate('chair', [capture()])
+    clock.nowMs += 1000
+    expect(await locator.locate('chair', [capture()])).toMatchObject({ error: 'too_soon' })
+  })
+
+  test('a call made while another is running is refused', async () => {
+    let finish: (r: Response) => void = () => {}
+    const { locator, fetchImpl, clock } = setup({
+      minGapMs: 0,
+      reply: () => new Promise<Response>((resolve) => (finish = resolve)),
+    })
+    const first = locator.locate('chair', [capture()])
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled())
+    clock.nowMs += 10
+    expect(await locator.locate('chair', [capture()])).toMatchObject({ ok: false, error: 'too_soon' })
+    finish(json(found))
+    expect(await first).toMatchObject({ ok: true })
+  })
+
+  test.each<[LocateErrorCode, number]>([
+    ['bad_request', 400],
+    ['timeout', 504],
+    ['quota', 429],
+    ['auth', 500],
+    ['bad_response', 502],
+    ['network', 502],
+  ])('the function\'s %s error (HTTP %i) is passed on', async (code, status) => {
+    const { locator } = setup({ reply: () => Promise.resolve(json({ error: code, message: 'x' }, status)) })
+    expect(await locator.locate('chair', [capture()])).toMatchObject({ ok: false, error: code })
+  })
+
+  test('an unknown error code or a non-JSON failure becomes network', async () => {
+    const odd = setup({ reply: () => Promise.resolve(json({ error: 'martian' }, 500)) })
+    expect(await odd.locator.locate('chair', [capture()])).toMatchObject({ error: 'network' })
+    const html = setup({ reply: () => Promise.resolve(new Response('<html>', { status: 502 })) })
+    expect(await html.locator.locate('chair', [capture()])).toMatchObject({ error: 'network' })
+  })
+
+  test('a 200 that is not JSON or has the wrong shape is bad_response', async () => {
+    const html = setup({ reply: () => Promise.resolve(new Response('<html>', { status: 200 })) })
+    expect(await html.locator.locate('chair', [capture()])).toMatchObject({ error: 'bad_response' })
+    const wrong = setup({ reply: () => Promise.resolve(json({ found: 'maybe' })) })
+    expect(await wrong.locator.locate('chair', [capture()])).toMatchObject({ error: 'bad_response' })
+  })
+
+  test('a fetch failure is network and never throws', async () => {
+    const { locator } = setup({ reply: () => Promise.reject(new TypeError('Failed to fetch')) })
+    expect(await locator.locate('chair', [capture()])).toMatchObject({ ok: false, error: 'network' })
+  })
+
+  test('a stalled call times out', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchImpl = vi.fn(
+        (_url: string, init: { signal: AbortSignal }) =>
+          new Promise<Response>((_resolve, reject) => {
+            init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
+          }),
+      )
+      const locator = new Locator({
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        encode: async () => '/9j/AAAA',
+        now: () => 0,
+        timeoutMs: 5000,
+      })
+      const pending = locator.locate('chair', [capture()])
+      await vi.advanceTimersByTimeAsync(5001)
+      expect(await pending).toMatchObject({ ok: false, error: 'timeout' })
+    } finally {
+      vi.useRealTimers()
     }
   })
 
-  test('an error reply we do not recognize is unavailable', async () => {
-    expect(await kindOf(locateTarget(request, { fetchImpl: vi.fn().mockResolvedValue(json({ error: 'weird' }, 500)) }))).toBe('unavailable')
-    expect(await kindOf(locateTarget(request, { fetchImpl: vi.fn().mockResolvedValue(new Response('<html>', { status: 502 })) }))).toBe('unavailable')
-  })
-
-  test('a reply of the wrong shape is bad-reply', async () => {
-    expect(await kindOf(locateTarget(request, { fetchImpl: vi.fn().mockResolvedValue(json({ found: true })) }))).toBe('bad-reply')
-    expect(await kindOf(locateTarget(request, { fetchImpl: vi.fn().mockResolvedValue(json({ hello: 1 })) }))).toBe('bad-reply')
-    expect(await kindOf(locateTarget(request, { fetchImpl: vi.fn().mockResolvedValue(new Response('nope')) }))).toBe('bad-reply')
-  })
-
-  test('no network is network', async () => {
-    const fetchImpl = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
-    expect(await kindOf(locateTarget(request, { fetchImpl }))).toBe('network')
-  })
-
-  test('waiting too long is timeout', async () => {
-    const fetchImpl = vi.fn((_url: string, init: RequestInit) =>
-      new Promise<Response>((_resolve, reject) => {
-        init.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
-      }),
-    )
-    expect(await kindOf(locateTarget(request, { fetchImpl: fetchImpl as unknown as typeof fetch, timeoutMs: 20 }))).toBe('timeout')
+  test('an encoding failure is reported as bad_request, not thrown', async () => {
+    const locator = new Locator({
+      fetchImpl: (() => Promise.resolve(json(found))) as unknown as typeof fetch,
+      encode: () => Promise.reject(new Error('canvas broke')),
+      now: () => 0,
+    })
+    expect(await locator.locate('chair', [capture()])).toMatchObject({ ok: false, error: 'bad_request' })
   })
 })
 
 describe('messages', () => {
-  test('every error kind and the not-found case have a sentence', () => {
-    for (const kind of ['network', 'timeout', 'rate-limited', 'unavailable', 'bad-reply', 'not-configured', 'bad-request'] as const) {
-      expect(describeLocateError(kind)).toBe(FIND_MESSAGES[kind])
-      expect(FIND_MESSAGES[kind].length).toBeGreaterThan(10)
-    }
+  const codes: LocateClientErrorCode[] = ['bad_request', 'timeout', 'quota', 'auth', 'bad_response', 'network', 'too_soon', 'limit']
+
+  test('every error code has a spoken sentence', () => {
+    for (const code of codes) expect(describeLocateError(code)).toBe(FIND_MESSAGES[code])
+    expect(Object.keys(FIND_MESSAGES).sort()).toEqual([...codes, 'notFound'].sort())
   })
 
-  test('not found is a limit of the search, never a claim about the room (SR-11)', () => {
+  test('not found says the search failed, never that the thing is absent', () => {
     expect(FIND_MESSAGES.notFound).toBe('I could not find it.')
-    expect(FIND_MESSAGES.notFound).not.toMatch(/not (here|there)|nothing|isn't|is not/i)
   })
 })

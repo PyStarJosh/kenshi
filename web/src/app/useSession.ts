@@ -10,14 +10,17 @@ export function useSession(): {
   session: Session
   snapshot: SessionSnapshot
   setVideo: (element: HTMLVideoElement | null) => void
+  /** The mounted <video> element, for tools (the ?debug locate button) that grab a frame themselves. */
+  getVideo: () => HTMLVideoElement | null
 } {
-  const [{ session, setVideo }] = useState(() => {
+  const [{ session, setVideo, getVideo }] = useState(() => {
     const holder: { video: HTMLVideoElement | null } = { video: null }
     return {
       session: createSession(() => holder.video),
       setVideo: (element: HTMLVideoElement | null) => {
         holder.video = element
       },
+      getVideo: () => holder.video,
     }
   })
 
@@ -36,5 +39,5 @@ export function useSession(): {
   }, [session])
 
   const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot)
-  return { session, snapshot, setVideo }
+  return { session, snapshot, setVideo, getVideo }
 }

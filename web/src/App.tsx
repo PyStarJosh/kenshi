@@ -7,6 +7,7 @@ import { useSession } from './app/useSession'
 
 const DebugOverlay = lazy(() => import('./app/screens/DebugOverlay.tsx'))
 const AudioTestPanel = lazy(() => import('./app/screens/AudioTestPanel.tsx'))
+const LocateDebugPanel = lazy(() => import('./app/screens/LocateDebugPanel.tsx'))
 const SettingsScreen = lazy(() => import('./app/screens/Settings.tsx'))
 const CalibrateScreen = lazy(() => import('./app/screens/Calibrate.tsx'))
 
@@ -16,7 +17,7 @@ const DEFAULT_ASPECT = 16 / 9
 type View = 'main' | 'settings' | 'calibrate'
 
 export default function App() {
-  const { session, snapshot, setVideo } = useSession()
+  const { session, snapshot, setVideo, getVideo } = useSession()
   const audio = useAudioLink(session)
   const pipeline = usePipeline(session, audio)
   const audioError = useSyncExternalStore(audio.subscribe, () => audio.getView().error)
@@ -76,6 +77,12 @@ export default function App() {
       {debugEnabled && (
         <Suspense fallback={null}>
           <AudioTestPanel link={audio} />
+        </Suspense>
+      )}
+
+      {debugEnabled && live && (
+        <Suspense fallback={null}>
+          <LocateDebugPanel session={session} getVideo={getVideo} />
         </Suspense>
       )}
 

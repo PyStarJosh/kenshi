@@ -40,7 +40,7 @@ web/                        Vite + React + TypeScript app
   src/audio/                unlock, tones, speech, heartbeat, engine; beacon (R5)
   src/health/               health monitor
   src/voice/                recognizer, commands, control, gesture
-  src/find/                 locate client, types, messages (R2); scan sweep, target memory, controller, guidance (R3-R5)
+  src/find/                 locate client and messages (R2; the Locate types are in core/types.ts); scan sweep, target memory, controller, guidance (R3-R5)
   src/app/                  session, audio link, pipeline, settings, calibration, screens (Find screen R6)
   scripts/copy-ort.mjs      copies onnxruntime-web WebAssembly files into public/ort (runs before dev and build)
   vercel.json               cross-origin isolation headers
@@ -115,7 +115,7 @@ Web (in web/):
 - Install: npm install
 - Dev: npm run dev (phone access: ngrok http 5173). With the function: vercel dev (needs GEMINI_API_KEY in web/.env.local, which is never printed or committed)
 - Checks: npm run lint, npm run typecheck, npm run test, npm run build
-- Try the function with a real key: node scripts/try-locate.mjs <image.jpg> "<target>" [base url]
+- Try the function with a real key: node scripts/try-locate.mjs <image.jpg> "<target>" [base url]. `vercel dev` reads Development variables from Vercel, not web/.env.local, so run `node --env-file=.env.local <vercel cli> dev --listen 3000` or set GEMINI_API_KEY for the Development environment.
 
 Deploy: push to main. Vercel builds web/ (root directory web, framework Vite).
 

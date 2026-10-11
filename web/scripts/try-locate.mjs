@@ -10,12 +10,12 @@ if (!file || !target) {
   console.error('Usage: node scripts/try-locate.mjs <image.jpg> "<target>" [base url]')
   process.exit(1)
 }
-const frame = readFileSync(file).toString('base64')
+const jpeg = readFileSync(file).toString('base64')
 const started = performance.now()
 const response = await fetch(`${base}/api/locate`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ target, frames: [frame] }),
+  body: JSON.stringify({ target, frames: [{ jpeg, heading: 0, pitch: 0 }] }),
 })
 console.log(`${response.status} in ${Math.round(performance.now() - started)} ms`)
 console.log(await response.text())
