@@ -272,7 +272,7 @@ There is **no repeat on a timer**: a stationary chair is announced once however 
 - Suffix only for `floor` and `head`.
 - Example: "Backpack, 1 o'clock, about 2 meters, on the floor."
 
-**"What's around me".** The nearest `summaryMaxItems` (5) confirmed tracks of announced classes within `summaryMaxDistanceM` (6 m), in or out of the path, each as the same short phrase, in clock order from left to right. With none: "I don't detect anything right now. I can miss things, so keep using your cane." Every sentence in `phrases.ts`, and the health, voice, status, and greeting texts, is tested against the SR-2 word list (no "clear", "safe", "free", "no obstacles").
+**"What's around me".** The nearest `summaryMaxItems` (5) confirmed tracks of announced classes within `summaryMaxDistanceM` (6 m), in or out of the path, each as the same short phrase, in clock order from left to right. With none: "I don't detect anything right now. I can miss things." Every sentence in `phrases.ts`, and the health, voice, status, and greeting texts, is tested against the SR-2 word list (no "clear", "safe", "free", "no obstacles").
 
 ## 8. Threading and scheduling
 - **Main thread:** UI, camera, scheduler, orchestrator, tracker, geometry, policy, audio scheduling, speech, voice.
@@ -458,7 +458,7 @@ flowchart TD
 | `scanning` | sweep started | 8 frames or a full turn goes to `locating-sweep`; cancel goes to `idle` |
 | `locating-sweep` | frames sent | found goes to `guiding`; not found goes to `not-found`; error goes to `failed` |
 | `guiding` | target direction stored | reached goes to `reached`; user says stop goes to `idle`; memory expired goes to `scan-offer`; error in refine stays in `guiding` and says so |
-| `reached` | estimated distance within the reached radius (config, to be measured), or the user says found | back to `idle` after "Check with your hands or your cane." |
+| `reached` | estimated distance within the reached radius (config, to be measured), or the user says found | back to `idle` after "Check with your hands." |
 | `not-found` | sweep found nothing | try again goes to `scanning`; new target goes to `consent` or `locating`; cancel goes to `idle` |
 | `failed` | network, timeout, rate limit, bad reply | retry goes back to the state that failed; cancel goes to `idle` |
 

@@ -44,7 +44,7 @@ export const HEALTH_PHRASES = {
   'audio-blocked': 'Sound is off. Tap the screen to restore it.',
   'no-orientation': 'Motion sensor unavailable. Distances will be less accurate.',
   recovered: 'Detection back.',
-  pausedReminder: 'Detection is paused. Keep using your cane.',
+  pausedReminder: 'Detection is paused.',
 } as const
 
 export class HealthMonitor {

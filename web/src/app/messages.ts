@@ -7,7 +7,7 @@ export const MESSAGES = {
   idle: 'Not started. Press Start to begin.',
   starting: 'Starting the camera and loading the detector.',
   resuming: 'Restarting the camera.',
-  running: 'Detection is running. Keep using your white cane.',
+  running: 'Detection is running.',
   paused: 'Paused. Press Resume to continue.',
   pausedHidden: 'Paused because the page was hidden.',
   cameraStopped: 'The camera stopped. Press Resume to try again.',
@@ -30,7 +30,7 @@ export function runningMessage(options: { wakeLockHeld: boolean; tiltAvailable: 
   if (!options.wakeLockHeld) problems.push(WAKE_LOCK_PROBLEM)
   if (!options.tiltAvailable) problems.push(TILT_PROBLEM)
   if (problems.length === 0) return MESSAGES.running
-  return `Detection is running, but ${problems.join(', and ')}. Keep using your white cane.`
+  return `Detection is running, but ${problems.join(', and ')}.`
 }
 
 /** The sentence to show when starting failed; the camera problem comes first if both failed. */
