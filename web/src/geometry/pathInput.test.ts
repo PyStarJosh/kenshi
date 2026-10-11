@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { detourDecision, pathOptionsFor, processSize, stableDecision, steadyColumn, targetColumn, verticalFovRad } from './pathInput'
+import { pathOptionsFor, processSize, targetColumn, verticalFovRad } from './pathInput'
 
 describe('processSize', () => {
   test('is processWidth wide with the aspect ratio kept', () => {
@@ -76,33 +76,5 @@ describe('pathOptionsFor', () => {
     expect(pathOptionsFor({ ...input, targetX: 0.7 }, 320, 180).targetX).toBe(0.7)
     expect(pathOptionsFor({ ...input, targetX: null }, 320, 180).targetX).toBeUndefined()
     expect(pathOptionsFor({ ...input, targetX: Number.NaN }, 320, 180).targetX).toBeUndefined()
-  })
-})
-
-describe('detourDecision', () => {
-  test('measured from the target\'s column, not from the middle of the picture', () => {
-    expect(detourDecision({ x: 0.7 }, 0.7, 0.08)).toBe('straight') // on the target's column: no detour, though right of middle
-    expect(detourDecision({ x: 0.45 }, 0.7, 0.08)).toBe('left') // the line leaves the column to the left
-    expect(detourDecision({ x: 0.85 }, 0.7, 0.08)).toBe('right')
-    expect(detourDecision({ x: 0.77 }, 0.7, 0.08)).toBe('straight') // inside the dead band
-    expect(detourDecision(null, 0.7, 0.08)).toBe('none')
-  })
-})
-
-describe('stableDecision', () => {
-  test('changes only on a clear majority; otherwise the previous one stands', () => {
-    expect(stableDecision(['left', 'left', 'left', 'right', 'none'], null, 3)).toBe('left')
-    expect(stableDecision(['left', 'left', 'right', 'right', 'straight'], 'straight', 3)).toBe('straight')
-    expect(stableDecision(['left', 'right'], null, 3)).toBeNull()
-    expect(stableDecision([], 'left', 3)).toBe('left')
-  })
-})
-
-describe('steadyColumn', () => {
-  test('follows the target but ignores moves within the dead band', () => {
-    expect(steadyColumn(null, 0.6, 0.03)).toBe(0.6)
-    expect(steadyColumn(0.6, 0.62, 0.03)).toBe(0.6)
-    expect(steadyColumn(0.6, 0.64, 0.03)).toBe(0.64)
-    expect(steadyColumn(0.6, null, 0.03)).toBeNull()
   })
 })

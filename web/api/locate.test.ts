@@ -119,17 +119,6 @@ describe('parseRequest', () => {
     expect(parseRequest(body('keys', [{ ...frame(), extra: 1 }])).ok).toBe(false)
   })
 
-  test('accepts where the followed thing should be (nearX, 0 to 1), and nothing else there', () => {
-    const withNear = (nearX: unknown) => parseRequest(JSON.stringify({ target: 'chair', frames: frames(1), nearX }))
-    const ok = withNear(0.42)
-    expect(ok.ok && ok.value.nearX).toBe(0.42)
-    expect(withNear(0).ok).toBe(true)
-    expect(withNear(1).ok).toBe(true)
-    for (const bad of [-0.1, 1.1, '0.5', null, Number.POSITIVE_INFINITY]) expect(withNear(bad).ok, String(bad)).toBe(false)
-    const without = parseRequest(body('chair'))
-    expect(without.ok && 'nearX' in without.value).toBe(false)
-  })
-
   test('rejects text that is not JSON, not an object, or too large', () => {
     expect(parseRequest('nope').ok).toBe(false)
     expect(parseRequest('[1,2]').ok).toBe(false)
@@ -172,28 +161,6 @@ describe('the Gemini request', () => {
     expect(level('gemini-3.6-flash')).toBe('minimal')
     expect(level('some-future-model')).toBeUndefined()
     expect(Object.keys(LOWEST_THINKING_LEVEL).length).toBeGreaterThan(5)
-  })
-
-  test('with nearX, Gemini is asked for the match nearest that spot; without it, nothing is said about it', () => {
-    expect(buildPrompt('chair', 1, 0.62)).toContain('nearest to 62 percent of the way across the frame from the left edge')
-    expect(buildPrompt('chair', 1)).not.toContain('percent of the way')
-    const geminiBody = buildGeminiBody({ target: 'chair', frames: frames(1), nearX: 0.25 }, 'gemini-3.1-flash-lite') as {
-      input: { type: string; text?: string }[]
-    }
-    expect(geminiBody.input[0].text).toContain('nearest to 25 percent')
-  })
-
-  test('a restroom is looked for by its door or sign, and a men\'s or women\'s one only by a sign for that group', () => {
-    expect(buildPrompt('chair', 1)).not.toContain('restroom')
-    const any = buildPrompt('bathroom', 1)
-    expect(any).toContain('look for its door or sign')
-    expect(any).not.toContain('Only a restroom marked')
-    const women = buildPrompt("women's restroom", 1)
-    expect(women).toContain('Only a restroom marked for women counts')
-    expect(women).not.toContain('marked for men counts')
-    const men = buildPrompt("men's restroom", 1)
-    expect(men).toContain('Only a restroom marked for men counts')
-    expect(men).not.toContain('marked for women counts')
   })
 
   test('the prompt names the target as a name, mentions the sign hint, and never says to guess', () => {

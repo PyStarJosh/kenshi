@@ -54,14 +54,9 @@ function centerDistance(a: BoundingBox, b: BoundingBox): number {
 
 const longSide = (b: BoundingBox) => Math.max(b.width, b.height)
 
-/** The tilt of a frame, and the camera heading when the phone gives one (so a turn between frames can be undone). */
-export type FrameOrientation = Tilt & { headingDeg?: number }
-
 export class Tracker {
   private tracks: TrackState[] = []
   private nextId = 1
-  /** The camera heading at the previous frame, or null. */
-  private lastHeadingDeg: number | null = null
 
   private locate: Locator
   private cfg: TrackingConfig
@@ -82,15 +77,10 @@ export class Tracker {
   }
 
   /** Feed one frame of detections; returns every live track (confirmed and tentative). */
-  update(
-    result: FrameResult,
-    tilt: FrameOrientation | null,
-    settings: Pick<Settings, 'eyeHeightM' | 'horizontalFovDeg'>,
-  ): Track[] {
+  update(result: FrameResult, tilt: Tilt | null, settings: Pick<Settings, 'eyeHeightM' | 'horizontalFovDeg'>): Track[] {
     const nowMs = result.captureTimeMs
     const frame = { width: result.frameWidth, height: result.frameHeight }
     const { detections } = result
-    this.followTurn(tilt?.headingDeg ?? null, settings.horizontalFovDeg)
     const matches = this.match(detections.map((d) => ({ classId: d.classId, box: d.box })))
 
     const matchedDetections = new Set<number>()
@@ -127,23 +117,6 @@ export class Tracker {
 
   reset(): void {
     this.tracks = []
-    this.lastHeadingDeg = null
-  }
-
-  /**
-   * The user turned between frames, so everything in view moved sideways by the turn. Each track is moved with it before
-   * matching (turning right moves things left in the picture), so a turn neither breaks a track nor swaps two of a kind.
-   */
-  private followTurn(headingDeg: number | null, hfovDeg: number): void {
-    const last = this.lastHeadingDeg
-    this.lastHeadingDeg = headingDeg
-    if (headingDeg === null || last === null || !(hfovDeg > 0)) return
-    const turnDeg = headingDeg - last // the heading is unwrapped, so a plain difference is the turn
-    if (turnDeg === 0) return
-    for (const t of this.tracks) {
-      t.box = { ...t.box, x: t.box.x - turnDeg / hfovDeg }
-      t.angleDeg -= turnDeg
-    }
   }
 
   /** Greedy matching: by IoU first, then by center distance for small boxes. Returns trackIndex -> detectionIndex. */

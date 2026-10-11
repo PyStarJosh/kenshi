@@ -143,29 +143,6 @@ describe('confirmation', () => {
 })
 
 describe('identity', () => {
-  test('turning the phone keeps a still object the same track, even when its box jumps further than its width', () => {
-    const at = (heading: number) => ({ pitchDeg: 0, rollDeg: 0, headingDeg: heading })
-    const tracker = newTracker()
-    const facing = personAt(4, 0.5)
-    tracker.update(frameResult(0, [person(facing)]), at(0), SETTINGS)
-    const [first] = tracker.update(frameResult(67, [person(facing)]), at(0), SETTINGS)
-    // turn 20 degrees right between frames: the person moves left by 20 / 65 of the picture
-    const shifted = { ...facing, x: facing.x - 20 / SETTINGS.horizontalFovDeg }
-    const [after] = tracker.update(frameResult(134, [person(shifted)]), at(20), SETTINGS)
-    expect(after.id).toBe(first.id)
-    expect(after.box.x).toBeCloseTo(shifted.x, 6)
-  })
-
-  test('without a heading nothing is shifted, and a jump that large starts a new track', () => {
-    const tracker = newTracker()
-    const facing = personAt(4, 0.5)
-    tracker.update(frameResult(0, [person(facing)]), noLevel, SETTINGS)
-    const [first] = tracker.update(frameResult(67, [person(facing)]), noLevel, SETTINGS)
-    const shifted = { ...facing, x: facing.x - 20 / SETTINGS.horizontalFovDeg }
-    const tracks = tracker.update(frameResult(134, [person(shifted)]), noLevel, SETTINGS)
-    expect(tracks.map((t) => t.id)).not.toEqual([first.id])
-  })
-
   test('two people crossing paths keep their ids', () => {
     const tracker = newTracker()
     let ids: number[] = []

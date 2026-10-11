@@ -362,28 +362,11 @@ describe('the free-space path (R7)', () => {
   test('no result yet, a stale one, or "none" gives no opinion', () => {
     const t = setup()
     expect(t.pipeline.getPathDecision(t.clock.nowMs)).toBeNull()
-    for (let i = 0; i < 3; i++) sendPath(t, 'straight')
+    sendPath(t, 'straight')
     expect(t.pipeline.getPathDecision(t.clock.nowMs)).toBe('straight')
     expect(t.pipeline.getPathDecision(t.clock.nowMs + CONFIG.freeSpace.maxAgeMs + 1)).toBeNull()
     for (let i = 0; i < 5; i++) sendPath(t, 'none')
     expect(t.pipeline.getPathDecision(t.clock.nowMs)).toBeNull()
-  })
-
-  test('a decision counts only once it has 3 of the last 5 results, and odd ones in between do not flip it', () => {
-    const t = setup()
-    sendPath(t, 'left')
-    sendPath(t, 'left')
-    expect(t.pipeline.getPathDecision(t.clock.nowMs)).toBeNull() // two are not enough yet
-    sendPath(t, 'left')
-    expect(t.pipeline.getPathDecision(t.clock.nowMs)).toBe('left')
-    // left, left, left, right, straight, then right: left 2, right 2, straight 1 - no clear majority, so left stands
-    sendPath(t, 'right')
-    sendPath(t, 'straight')
-    sendPath(t, 'right')
-    expect(t.pipeline.getPathDecision(t.clock.nowMs)).toBe('left')
-    sendPath(t, 'right') // now right has 3 of the last 5
-    expect(t.pipeline.getPathDecision(t.clock.nowMs)).toBe('right')
-    expect(CONFIG.freeSpace.decisionMinVotes).toBe(3)
   })
 
   test('a pause forgets the old decisions', () => {

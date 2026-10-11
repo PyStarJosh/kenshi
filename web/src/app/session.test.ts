@@ -40,24 +40,13 @@ function setup(
     orientationStatus = status
     for (const listener of statusListeners) listener(status)
   }
-  const camera = { live: false }
   const session = new Session({
     camera: {
-      start: async () => {
+      start: () => {
         log.push('camera.start')
-        const info = await (options.camera ?? (async () => cameraInfo))()
-        camera.live = true
-        return info
+        return (options.camera ?? (async () => cameraInfo))()
       },
-      stop: () => {
-        log.push('camera.stop')
-        camera.live = false
-      },
-      isLive: () => camera.live,
-      resumePlayback: async () => {
-        log.push('camera.resume')
-        return cameraInfo
-      },
+      stop: () => log.push('camera.stop'),
       onFrameSize: (listener) => {
         sizeListener = listener
         return () => {}
@@ -118,10 +107,6 @@ function setup(
     ended: () => endedListener!(),
     resized: (size: FrameSize) => sizeListener!(size),
     setOrientation,
-    /** iOS ended the stream while the app was paused. */
-    cameraGone: () => {
-      camera.live = false
-    },
   }
 }
 
@@ -273,40 +258,24 @@ describe('start', () => {
 })
 
 describe('pause and resume', () => {
-  test('pause stops the loop and the wake lock but keeps the camera stream and the detector', async () => {
+  test('pause stops the loop, the camera, and the wake lock but keeps the detector', async () => {
     const t = setup()
     await t.session.start()
     t.log.length = 0
     t.session.pause()
     expect(t.session.getSnapshot().state).toBe('paused')
     expect(t.session.getSnapshot().message).toBe(MESSAGES.paused)
-    expect(t.log).toEqual(['scheduler.stop', 'orientation.stop', 'wake.release'])
+    expect(t.log).toEqual(['scheduler.stop', 'camera.stop', 'orientation.stop', 'wake.release'])
   })
 
-  test('resume plays the kept stream again, so iOS does not ask for the camera a second time', async () => {
+  test('resume restarts the camera and the loop without reloading the detector', async () => {
     const t = setup()
     await t.session.start()
     t.session.pause()
-    t.log.length = 0
-    await t.session.resume()
-    expect(t.session.getSnapshot().state).toBe('running')
-    expect(t.log).toEqual(['wake.acquire', 'camera.resume', 'scheduler.start', 'orientation.start'])
-  })
-
-  test('a stream that ended while paused is opened again on resume', async () => {
-    const t = setup()
-    await t.session.start()
-    t.session.pause()
-    t.cameraGone()
     t.log.length = 0
     await t.session.resume()
     expect(t.session.getSnapshot().state).toBe('running')
     expect(t.log).toEqual(['wake.acquire', 'camera.start', 'scheduler.start', 'orientation.start'])
-  })
-
-  test('the pause sentence says how to continue: there is no Resume button', () => {
-    expect(MESSAGES.paused).not.toMatch(/press resume/i)
-    expect(MESSAGES.cameraStopped).not.toMatch(/press resume/i)
   })
 
   test('a failed resume stays paused with the reason, and can be tried again', async () => {
@@ -319,7 +288,6 @@ describe('pause and resume', () => {
     })
     await t.session.start()
     t.session.pause()
-    t.cameraGone()
     fail = true
     await t.session.resume()
     expect(t.session.getSnapshot().state).toBe('paused')
