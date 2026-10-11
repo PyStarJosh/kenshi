@@ -98,9 +98,9 @@ export class Recognizer {
       session.maxAlternatives = 1
       session.onresult = (event) => {
         const last = event.results[event.results.length - 1]
-        if (!last?.isFinal) return
-        text = last[0]?.transcript?.trim() ?? ''
-        session.stop()
+        const heard = last?.[0]?.transcript?.trim() ?? ''
+        if (heard) text = heard // kept even if not final: Safari may end without ever marking a result final
+        if (last?.isFinal) session.stop()
       }
       session.onerror = (event) => {
         if (event.error === 'no-speech' || event.error === 'aborted') return

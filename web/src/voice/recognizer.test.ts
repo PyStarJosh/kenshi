@@ -63,12 +63,12 @@ describe('Recognizer', () => {
     expect(recognizer.isListening()).toBe(false)
   })
 
-  test('ignores a result that is not final', async () => {
+  test('a result that is not final is kept and used when listening ends', async () => {
     const { recognizer, recognition, result } = setup()
     const promise = recognizer.listen()
-    recognition.onresult?.(result('pau', false))
+    recognition.onresult?.(result('pause', false))
     recognition.onend?.()
-    expect(await promise).toEqual({ kind: 'silence' })
+    expect(await promise).toEqual({ kind: 'text', text: 'pause' })
   })
 
   test('the listen timeout stops listening and reports silence', async () => {

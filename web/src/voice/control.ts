@@ -15,6 +15,8 @@ export interface VoiceControlDeps {
   /** Pause or resume speech output around the microphone, so the app does not hear itself. */
   holdSpeech: (held: boolean) => void
   earcon: (phase: 'start' | 'stop') => void
+  /** The microphone is about to be opened (true) or is closed again (false): the audio session must allow recording. */
+  setCapture?: (capturing: boolean) => void
   /** Start looking for a target (a voice command). */
   startFind: (target: string) => void
   /** Cancel a Find that is running. */
@@ -76,9 +78,12 @@ export class VoiceControl {
 
   private async listen(): Promise<void> {
     const { deps } = this
+    // Before anything else, and inside the tap: the session must allow recording or the microphone hears nothing.
+    deps.setCapture?.(true)
     deps.holdSpeech(true)
     deps.earcon('start')
     const result = await deps.recognizer.listen()
+    deps.setCapture?.(false)
     deps.holdSpeech(false)
     deps.earcon('stop')
     switch (result.kind) {

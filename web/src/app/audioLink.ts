@@ -9,7 +9,7 @@ import { AudioEngine } from '../audio/engine'
 import type { AlertTiming, TrackLookup } from '../audio/engine'
 import { createBrowserSpeaker } from '../audio/speech'
 import { listeningTone, TonePlayer } from '../audio/tones'
-import { GREETING, unlockAudioContext, setMediaAudioSession } from '../audio/unlock'
+import { GREETING, setAudioSessionMode, setMediaAudioSession, unlockAudioContext } from '../audio/unlock'
 import { CONFIG } from '../core/config'
 import type { AlertEvent, AlertOutcome, AlertPriority, FindRequest, FrameResult, HealthState, VoiceIntent } from '../core/types'
 import { HealthMonitor } from '../health/monitor'
@@ -61,6 +61,7 @@ export class AudioLink {
     say: (text) => this.say(text),
     holdSpeech: (held) => this.speech.speaker.setHeld(held),
     earcon: (phase) => this.tones?.play(listeningTone(phase), settingsStore.getSnapshot().toneVolume),
+    setCapture: (capturing) => setAudioSessionMode(capturing ? 'play-and-record' : 'playback'),
     startFind: (target) => {
       for (const listener of this.findRequestListeners) listener({ target, source: 'voice' })
     },

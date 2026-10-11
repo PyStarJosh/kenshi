@@ -20,6 +20,21 @@ export function setMediaAudioSession(): void {
   }
 }
 
+/**
+ * Switch the Safari audio session between playing (the tones, the beacon and speech) and playing while recording. A
+ * "playback" session does not give the page the microphone: speech recognition then starts (you hear the system chime)
+ * but hears only silence. So it is "play-and-record" while listening, and "playback" otherwise, so the ringer switch does
+ * not mute the tones. Does nothing where the browser has no such API.
+ */
+export function setAudioSessionMode(mode: 'playback' | 'play-and-record'): void {
+  try {
+    const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession
+    if (session) session.type = mode
+  } catch {
+    // Not supported or refused: the browser's default is used.
+  }
+}
+
 /** Create (once) and resume the AudioContext. Returns null if this browser has no Web Audio. */
 export function unlockAudioContext(
   existing: AudioContext | null,
