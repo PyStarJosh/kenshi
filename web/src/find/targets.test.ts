@@ -51,6 +51,17 @@ describe('cleanTarget', () => {
     ['an elevator please', 'elevator'],
     ['Restroom sign', 'restroom sign'],
     ["it's here", "it's here"],
+    ["the women's restroom", "women's restroom"],
+    ['womens bathroom', "women's restroom"],
+    ['ladies room', "women's restroom"],
+    ['female toilets', "women's restroom"],
+    ["men's room", "men's restroom"],
+    ['mens restroom', "men's restroom"],
+    ['male bathroom', "men's restroom"],
+    ['the gents', "men's restroom"],
+    ['bathroom', 'bathroom'],
+    ['man', 'man'],
+    ['living room', 'living room'],
   ])('%s -> %s', (text, expected) => {
     expect(cleanTarget(text)).toBe(expected)
   })
@@ -110,10 +121,11 @@ describe('detectorLabelsFor', () => {
     expect(detectorLabelsFor('armchair')).toEqual(['chair', 'couch'])
   })
 
-  test('a bathroom is found by what is in it, but a restroom sign is not a toilet', () => {
-    expect(detectorLabelsFor('bathroom')).toEqual(['toilet', 'sink'])
-    expect(detectorLabelsFor('restroom')).toEqual(['toilet', 'sink'])
-    expect(detectorLabelsFor('restroom sign')).toEqual([])
+  test('a bathroom or restroom, men\'s or women\'s or not, goes to Gemini (it is found by its door or sign)', () => {
+    for (const name of ['bathroom', 'restroom', 'washroom', 'loo', 'restroom sign', "women's restroom", "men's restroom", 'ladies room']) {
+      expect(detectorLabelsFor(name), name).toEqual([])
+    }
+    expect(detectorLabelsFor('toilet')).toEqual(['toilet']) // the fixture on its own is still a detector class
   })
 
   test('whole names only: a modified name goes to Gemini, and odd words never match', () => {
@@ -169,7 +181,8 @@ describe('findYoloSighting', () => {
     expect(findYoloSighting('sofa', [track({ label: 'couch', clock: { position: 1, angleDeg: 15 } })])?.angleDeg).toBe(15)
     const sink = track({ label: 'sink', distanceM: 2, clock: { position: 12, angleDeg: -8 } })
     const toilet = track({ id: 2, label: 'toilet', distanceM: 3, clock: { position: 12, angleDeg: 20 } })
-    expect(findYoloSighting('bathroom', [toilet, sink])?.angleDeg).toBe(-8) // the nearer of the two fixtures
+    expect(findYoloSighting('bathroom', [toilet, sink])).toBeNull() // a bathroom is Gemini's to find
+    expect(findYoloSighting('toilet', [toilet, sink])?.angleDeg).toBe(20)
     expect(findYoloSighting('bag', [track({ label: 'backpack', clock: { position: 12, angleDeg: 3 } })])?.angleDeg).toBe(3)
   })
 

@@ -25,7 +25,24 @@ export function arrivalDistanceFor(target: string, clipped: boolean, cfg = CONFI
 /** The quick-pick buttons, in order. */
 export const QUICK_PICKS = ['Exit', 'Door', 'Elevator', 'Stairs', 'Restroom sign', 'Chair', 'Trash can', 'Person'] as const
 
-/** "find my keys" and "the Keys." both become "keys". Empty text gives ''. */
+// Restrooms go to Gemini, which reads their doors and signs (owner request), and a men's or women's one is asked for by
+// one clear name however it was said: "mens room", "ladies bathroom", "female toilets", "the gents".
+const RESTROOM_WORDS = /\b(rest ?rooms?|bath ?rooms?|wash ?rooms?|toilets?|lavatory|lavatories|loos?|wcs?)\b/
+const WOMEN_WORDS = /\b(women|womens|woman|womans|female|females|ladies|lady|girls|girl)\b/
+const MEN_WORDS = /\b(men|mens|man|mans|male|males|gents|gent|gentlemen|gentlemens|boys|boy)\b/
+
+/** "men's restroom" or "women's restroom" for a name that asks for one, else null. */
+export function genderedRestroom(name: string): "men's restroom" | "women's restroom" | null {
+  const plain = name.replace(/'/g, '')
+  // A restroom word, or just "<who> room" ("ladies room", "mens room"), or "gents" on its own.
+  const asksForRestroom = RESTROOM_WORDS.test(plain) || /^\S+ rooms?$/.test(plain) || plain === 'gents'
+  if (!asksForRestroom) return null
+  if (WOMEN_WORDS.test(plain)) return "women's restroom"
+  if (MEN_WORDS.test(plain)) return "men's restroom"
+  return null
+}
+
+/** "find my keys" and "the Keys." both become "keys"; "the ladies room" becomes "women's restroom". Empty text gives ''. */
 export function cleanTarget(text: string): string {
   const cleaned = text
     .toLowerCase()
@@ -35,13 +52,13 @@ export function cleanTarget(text: string): string {
     .replace(/^(?:the|a|an|my|some|any)(?:\s+|$)/, '')
     .replace(/\s+(?:please|now|for me)$/, '')
     .trim()
-  return cleaned.slice(0, CONFIG.find.maxTargetChars)
+  return (genderedRestroom(cleaned) ?? cleaned).slice(0, CONFIG.find.maxTargetChars)
 }
 
 // The detector knows 80 everyday classes (COCO). A target that is one of their names, or its plural, already maps to
 // it ("chair", "chairs", "traffic light", "bowl"). These are the other words people use for the same things, and a
-// few names that stand for several classes at once (a bathroom has a toilet or a sink in it). Exit, door, elevator,
-// stairs, a restroom sign and a trash can are not among the 80 classes, so they always go to Gemini.
+// few names that stand for several classes at once. Exit, door, elevator, stairs, a restroom (and a restroom sign) and a
+// trash can are not among the 80 classes, so they always go to Gemini; a toilet or a sink on its own is a class.
 export const DETECTOR_SYNONYMS: Record<string, readonly string[]> = {
   // People
   people: ['person'],
@@ -117,12 +134,6 @@ export const DETECTOR_SYNONYMS: Record<string, readonly string[]> = {
   'blow dryer': ['hair drier'],
   teddy: ['teddy bear'],
   brolly: ['umbrella'],
-  // A bathroom is found by the fixtures in it
-  bathroom: ['toilet', 'sink'],
-  restroom: ['toilet', 'sink'],
-  washroom: ['toilet', 'sink'],
-  lavatory: ['toilet', 'sink'],
-  loo: ['toilet', 'sink'],
   // Sport
   ball: ['sports ball'],
   football: ['sports ball'],

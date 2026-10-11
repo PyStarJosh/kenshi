@@ -163,6 +163,19 @@ describe('the Gemini request', () => {
     expect(Object.keys(LOWEST_THINKING_LEVEL).length).toBeGreaterThan(5)
   })
 
+  test('a restroom is looked for by its door or sign, and a men\'s or women\'s one only by a sign for that group', () => {
+    expect(buildPrompt('chair', 1)).not.toContain('restroom')
+    const any = buildPrompt('bathroom', 1)
+    expect(any).toContain('look for its door or sign')
+    expect(any).not.toContain('Only a restroom marked')
+    const women = buildPrompt("women's restroom", 1)
+    expect(women).toContain('Only a restroom marked for women counts')
+    expect(women).not.toContain('marked for men counts')
+    const men = buildPrompt("men's restroom", 1)
+    expect(men).toContain('Only a restroom marked for men counts')
+    expect(men).not.toContain('marked for women counts')
+  })
+
   test('the prompt names the target as a name, mentions the sign hint, and never says to guess', () => {
     const prompt = buildPrompt('red chair', 3)
     expect(prompt).toContain('"red chair"')
