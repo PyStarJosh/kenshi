@@ -5,7 +5,7 @@ import { parseCommand, stepSpeechRate } from './commands'
 describe('parseCommand', () => {
   test.each([
     ['Pause', 'pause'],
-    ['please stop', 'pause'],
+    ['hold on', 'pause'],
     ['Resume.', 'resume'],
     ['continue', 'resume'],
     ['slower', 'slower'],
@@ -22,6 +22,11 @@ describe('parseCommand', () => {
     expect(parseCommand('banana')).toBe('unknown')
     expect(parseCommand('')).toBe('unknown')
     expect(parseCommand('   ')).toBe('unknown')
+  })
+
+  test('"stop" is not pause: it is kept free for cancelling Find (R4)', () => {
+    expect(parseCommand('stop')).toBe('unknown')
+    expect(parseCommand('please stop')).toBe('unknown')
   })
 
   test('asking what is around is not a command: objects are never read out', () => {

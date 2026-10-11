@@ -17,7 +17,7 @@ Kenshi: a real-time guide for blind and low-vision people that runs on an iPhone
 - Install: web manifest and icons so it can be added to the Home Screen. No service worker.
 - Spoken phrases: only Find guidance ("Turn right a little", "Straight ahead, about 3 meters"), voice replies, status, and health warnings. No object phrases.
 - Audio: Find speech and the beacon through AirPods in transparency mode. A quiet heartbeat tick while healthy; a distinct warning the moment detection degrades.
-- Controls: tap anywhere to talk (find <target>, stop, pause, resume, slower, faster, help). A tap that hears nothing does nothing. Long press pauses or resumes. Note: "stop" currently means pause (voice/commands.ts); R4 decides how Find's "stop" coexists.
+- Controls: tap anywhere to talk (find <target>, stop, pause, resume, slower, faster, help). A tap that hears nothing does nothing. Long press pauses or resumes. "Stop" is not a pause word: it is reserved for cancelling Find (R4). Pause is "pause", "hold on", or "wait".
 - Geometry: device orientation (pitch and roll), a calibrated horizontal field of view, and the user's eye height give ground-plane distance; box-size distance is the fallback.
 
 ## Structure

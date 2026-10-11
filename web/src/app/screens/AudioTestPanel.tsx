@@ -1,5 +1,5 @@
-// Audio test panel (?debug): fires sample alerts and health announcements, and shows the measured tone and
-// speech delays, including p50 and p95 from capture over the real alerts (NFR-3, NFR-4).
+// Audio test panel (?debug): fires sample alerts (tones and a neutral phrase, never an object) and health
+// announcements, and shows the measured tone and speech delays.
 import { useSyncExternalStore } from 'react'
 import type { AlertPriority } from '../../core/types'
 import { HEALTH_PHRASES } from '../../health/monitor'
@@ -21,12 +21,12 @@ interface SampleAlert {
 }
 
 const ALERTS: SampleAlert[] = [
-  { label: 'Urgent far left', priority: 'urgent', pan: -1, distanceM: 1.4, phrase: 'Pole, far left, about 1.5 meters.' },
-  { label: 'Urgent 12, near', priority: 'urgent', pan: 0, distanceM: 0.6, phrase: 'Person, 12 o\'clock, about 0.5 meters.' },
-  { label: 'Urgent far right', priority: 'urgent', pan: 1, distanceM: 1.4, phrase: 'Chair, far right, about 1.5 meters.' },
-  { label: 'Normal 11', priority: 'normal', pan: -0.5, distanceM: 3, phrase: 'Backpack, 11 o\'clock, about 3 meters, on the floor.' },
-  { label: 'Normal 12', priority: 'normal', pan: 0, distanceM: 2.5, phrase: 'Bench, 12 o\'clock, about 2.5 meters.' },
-  { label: 'Normal 1', priority: 'normal', pan: 0.5, distanceM: 2, phrase: 'Bicycle, 1 o\'clock, about 2 meters.' },
+  { label: 'Urgent left', priority: 'urgent', pan: -1, distanceM: 1.4, phrase: 'Test, urgent, left.' },
+  { label: 'Urgent near', priority: 'urgent', pan: 0, distanceM: 0.6, phrase: 'Test, urgent, center.' },
+  { label: 'Urgent right', priority: 'urgent', pan: 1, distanceM: 1.4, phrase: 'Test, urgent, right.' },
+  { label: 'Normal left', priority: 'normal', pan: -0.5, distanceM: 3, phrase: 'Test, normal, left.' },
+  { label: 'Normal center', priority: 'normal', pan: 0, distanceM: 2.5, phrase: 'Test, normal, center.' },
+  { label: 'Normal right', priority: 'normal', pan: 0.5, distanceM: 2, phrase: 'Test, normal, right.' },
   { label: 'Info', priority: 'info', pan: 0, distanceM: 0, phrase: 'This is an information message.' },
 ]
 

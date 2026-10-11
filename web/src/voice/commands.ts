@@ -8,7 +8,7 @@ const RULES: { intent: VoiceIntent; pattern: RegExp }[] = [
   { intent: 'slower', pattern: /\b(slower|slow down|too fast|speak slower)\b/ },
   { intent: 'faster', pattern: /\b(faster|speed up|too slow|speak faster)\b/ },
   { intent: 'resume', pattern: /\b(resume|continue|start|restart|go on|unpause)\b/ },
-  { intent: 'pause', pattern: /\b(pause|stop|hold on|wait)\b/ },
+  { intent: 'pause', pattern: /\b(pause|hold on|wait)\b/ },
 ]
 
 /** Map recognized text to an intent; anything not matched is 'unknown'. */
