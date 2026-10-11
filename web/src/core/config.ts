@@ -12,10 +12,12 @@ export const CONFIG = {
   detection: {
     // Square model input size in pixels, 320 or 416; Gate A chose 416. Selects models/yolo26n-<size>.onnx. NFR-1, NFR-2
     inputSize: 416,
-    // Cap on the detection rate to protect battery and heat; the scheduler never queues frames. FR-1, NFR-10
-    maxFps: 15,
+    // Cap on the detection rate to protect battery and heat; the scheduler never queues frames. Lowered from 15 (owner
+    // report: the camera picture lags): it leaves the phone room to draw the picture, and stays above NFR-1's 8.
+    // FR-1, NFR-1, NFR-10
+    maxFps: 10,
     // A frame is accepted once this fraction of the minimum gap has passed, so camera timing jitter
-    // does not cost a whole frame (30 fps camera, 15 fps cap). FR-1, NFR-1
+    // does not cost a whole frame (30 fps camera, 10 fps cap). FR-1, NFR-1
     frameGapTolerance: 0.9,
     // Confidence needed to keep a detection, per class label; "default" covers the rest. NFR-5, NFR-6
     confidenceThreshold: {
@@ -43,8 +45,13 @@ export const CONFIG = {
     processWidth: 320,
     // The path is computed on one frame in this many. If detection p95 goes past the SDS budget, raise this to 5.
     everyNthFrame: 3,
-    // The decision handed to guidance is the most common one in this many recent results, so it does not flap.
+    // The decision handed to guidance changes only when a new one has at least decisionMinVotes of the last
+    // decisionHistory results; otherwise the last one stands, so it does not flap.
     decisionHistory: 5,
+    decisionMinVotes: 3,
+    // The target's column, which steers the line, moves only when the target has moved by more than this share of the
+    // picture width (about 2 degrees), so a steady hand does not make the line wander.
+    targetColumnDeadband: 0.03,
     // A path result older than this is not shown or used.
     maxAgeMs: 1_500,
     // The overlay: free floor tinted green at this opacity, the line drawn this many pixels wide.
@@ -289,10 +296,12 @@ export const CONFIG = {
     maxTargetChars: 60,
     maxHeadingDeg: 3600,
     maxPitchDeg: 180,
-    // The function gives up on Gemini after this long (owner spec), and the app gives up on the function a little
-    // later, so the function's own error arrives first. FR-22, NFR-14
-    geminiTimeoutMs: 8_000,
-    requestTimeoutMs: 14_000,
+    // The function gives up on Gemini after this long, and the app gives up on the function a little later, so the
+    // function's own error arrives first. Raised from 8 s (owner request, 2026-10-11): the free tier sometimes answers
+    // in 6 to 10 s, and real calls timed out at 8 s. A quick retry only happens within the first 4 s, so the function
+    // takes at most about 16 s (vercel.json allows 20). FR-22, NFR-14
+    geminiTimeoutMs: 12_000,
+    requestTimeoutMs: 18_000,
     // An answer below this confidence counts as not found. Starting value; to be measured. SR-11
     minConfidence: 0.6,
     // A remembered target direction is dropped after this long: a gyroscope heading drifts and has no north
@@ -304,8 +313,11 @@ export const CONFIG = {
     // skip it (they are the point of a sweep) but still count toward the per-minute cap and the concurrency cap.
     minGapMs: 6_000,
     maxPerMinute: 12,
-    // Looks allowed in flight at once (a sweep frame every ~1.5 s with answers taking 2 to 4 s).
+    // Looks allowed in flight at once (a sweep frame every ~1.5 s with answers taking 2 to 4 s). A sweep frame taken
+    // while that many are out waits up to lookSlotWaitMs for one to come back instead of being dropped (its direction
+    // would go unchecked).
     maxConcurrentCalls: 4,
+    lookSlotWaitMs: 8_000,
 
     // ---- Find controller (R4). Every value below is a starting value; to be measured on the phone. FR-23, FR-25 ----
     // The sweep takes a frame each time the heading has turned this far, up to maxFrames frames or this much turn.
@@ -320,13 +332,21 @@ export const CONFIG = {
     // takes one fresh look at once instead of waiting for the full turn: this is what staring at a target does.
     sweepDwellMs: 1_500,
     sweepDwellMinTurnDeg: 20,
-    // Arrived: the target is this near and within this angle of straight ahead.
+    // Arrived: the target is this near and within this angle of straight ahead. Things you should not walk into get it
+    // earlier (owner request): stairs (and steps, escalators) at arrivalStairsM, doors, exits, elevators and restrooms at
+    // arrivalDoorM. FR-25
     arrivalDistanceM: 1.0,
+    arrivalStairsM: 2.0,
+    arrivalDoorM: 1.5,
     arrivalAngleDeg: 20,
     // While guiding, ask Gemini again no sooner than this when the target should be in view, and call it lost after
     // this many answers that do not find it.
     recheckIntervalMs: 6_000,
     lostAfterFailedRechecks: 2,
+    // Within nearRecheckM of the target the re-check comes every nearRecheckIntervalMs instead (a look that skips the
+    // minimum gap but still counts toward the per-minute cap), so "within reach" works from a fresher distance. FR-25
+    nearRecheckM: 3,
+    nearRecheckIntervalMs: 3_000,
     // Arrived, not found, and error go back to idle after this long.
     resultHoldMs: 3_000,
     // While waiting on a search the user hears something at least this often.
@@ -363,9 +383,19 @@ export const CONFIG = {
     sameObjectNearM: 2.5,
     // The detector must lose a followed target for this long before it counts as lost or another object is followed.
     yoloLostMs: 1_000,
+    // Another detector track is taken for a lost one only if it lies within reacquireDeg of where the object was and,
+    // when both distances are known, within reacquireDistanceFrac of its distance (at least reacquireDistanceMinM); and
+    // never while the object has probably just slipped below the view. Stick to the closest one (owner request).
+    reacquireDeg: 20,
+    reacquireDistanceFrac: 0.4,
+    reacquireDistanceMinM: 1,
+    // A target Gemini found is handed to the detector when a detector track of its kind lies within handoffDeg of it,
+    // so from then on it is followed frame by frame.
+    handoffDeg: 10,
     // A direction word changes only when the bearing is this far past its boundary, so it does not flap.
     directionHysteresisDeg: 5,
-    // Automatic retries of the first check after a transient failure (network, timeout, unusable reply).
+    // Automatic retries of the first check after a transient failure (a network error or an unusable reply; a timeout is
+    // not retried, since a second slow try would double the wait).
     checkRetryMax: 1,
 
     // The path line (R7) is used for "around the obstacle" only while the target is within this many degrees of straight ahead.
@@ -382,10 +412,12 @@ export const CONFIG = {
     // ---- Guidance (R5). Starting values; to be measured on the phone. FR-25 ----
     // An instruction that asks the user to do something (turn, bear, go around) is said again this often until they do.
     guidanceRepeatMs: 5_000,
-    // The distance is counted down as the target is crossed at these distances (meters), while roughly facing it. A
-    // level is announced again only if the user has moved back out beyond it by countdownResetM.
-    countdownM: [10, 5, 3, 2] as readonly number[],
-    countdownResetM: 0.5,
+    // Distance in words (owner request): close within distanceCloseM, near within distanceNearM, far beyond. The word is
+    // spoken when the target comes into a nearer one while roughly facing it, and shown on the Find screen instead of
+    // meters. A word is said again only after the user has moved back out beyond it by bandResetM. FR-25, FR-27
+    distanceCloseM: 2,
+    distanceNearM: 5,
+    bandResetM: 0.5,
   },
 
   // The beacon (R5, FR-26): short pulses while guiding. All starting values; to be measured on the phone with AirPods.

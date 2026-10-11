@@ -98,12 +98,14 @@ describe('isAligned', () => {
   })
 })
 
-describe('distance text', () => {
-  test('whole and half meters read like "6 m" and "2.5 m"', () => {
-    expect(distanceText(6, false)).toBe('6 m')
-    expect(distanceText(2.5, false)).toBe('2.5 m')
-    expect(distanceText(0.5, false)).toBe('0.5 m')
-    expect(distanceText(10, false)).toBe('10 m')
+describe('distance in words', () => {
+  test('close within 2 m, near within 5 m, far beyond', () => {
+    expect(distanceText(0.5, false)).toBe('Close')
+    expect(distanceText(2, false)).toBe('Close')
+    expect(distanceText(2.5, false)).toBe('Near')
+    expect(distanceText(5, false)).toBe('Near')
+    expect(distanceText(6, false)).toBe('Far')
+    expect(distanceText(10, false)).toBe('Far')
   })
 
   test('unknown is "--"', () => {
@@ -113,15 +115,16 @@ describe('distance text', () => {
     expect(distanceText(-1, false)).toBe('--')
   })
 
-  test('an upper bound is shown as one, never as a measurement', () => {
-    expect(distanceText(2.5, true)).toBe('< 2.5 m')
-    expect(distanceText(4, true)).toBe('< 4 m')
+  test('an upper bound (the target may be closer) is never "far": past 5 m it is unknown', () => {
+    expect(distanceText(1.5, true)).toBe('Close')
+    expect(distanceText(4, true)).toBe('Near')
+    expect(distanceText(8, true)).toBe('--')
   })
 
-  test('for a screen reader: "6 meters", "under 2.5 meters", "distance unknown"', () => {
-    expect(distanceSpeech(6, false)).toBe('6 meters')
-    expect(distanceSpeech(1, false)).toBe('1 meter')
-    expect(distanceSpeech(2.5, true)).toBe('under 2.5 meters')
+  test('for a screen reader: the word, or "distance unknown"', () => {
+    expect(distanceSpeech(6, false)).toBe('far')
+    expect(distanceSpeech(1, false)).toBe('close')
+    expect(distanceSpeech(4, true)).toBe('near')
     expect(distanceSpeech(null, false)).toBe('distance unknown')
   })
 })
@@ -186,7 +189,8 @@ describe('which screen', () => {
       rotationDeg: 40,
       arrowKnown: true,
       aligned: false,
-      distanceText: '6 m',
+      distanceText: 'Far',
+      distanceLabel: 'far',
       directionText: 'slightly to your right',
       check: false,
     })
@@ -215,9 +219,10 @@ describe('which screen', () => {
     expect(v.directionText).toBe('behind you')
   })
 
-  test('an unknown distance is "--", and an upper bound is shown as "<"', () => {
+  test('an unknown distance is "--", and an upper bound shows the word it is within', () => {
     expect(view({ state: 'guiding', target: 'chair', bearingDeg: 0, distanceM: null }).view.distanceText).toBe('--')
-    expect(view({ state: 'guiding', target: 'chair', bearingDeg: 0, distanceM: 2.5, distanceIsBound: true }).view.distanceText).toBe('< 2.5 m')
+    expect(view({ state: 'guiding', target: 'chair', bearingDeg: 0, distanceM: 1.5, distanceIsBound: true }).view.distanceText).toBe('Close')
+    expect(view({ state: 'guiding', target: 'chair', bearingDeg: 0, distanceM: 7, distanceIsBound: true }).view.distanceText).toBe('--')
   })
 
   test('with no heading the arrow is drawn but unknown, and it says so', () => {

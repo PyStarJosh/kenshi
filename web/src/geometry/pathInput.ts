@@ -39,6 +39,51 @@ export function targetColumn(bearingDeg: number | null, hfovDeg: number): number
   return 0.5 + bearingDeg / hfovDeg
 }
 
+export type PathDecision = 'left' | 'right' | 'straight' | 'none'
+
+/**
+ * Which way the line goes around something on the way to the target: left or right when the point the decision is read
+ * at lies more than the dead band to that side of the target's column, straight when it is within it, none with no line.
+ * With a target the line keeps to the target's column wherever the floor is open, so it leaves that column only to get
+ * around an obstacle; measured from the middle of the picture instead, a target a little to one side would read as a
+ * detour.
+ */
+export function detourDecision(lookahead: { x: number } | null, targetX: number, deadbandFrac: number): PathDecision {
+  if (lookahead === null) return 'none'
+  const dx = lookahead.x - targetX
+  if (dx < -deadbandFrac) return 'left'
+  if (dx > deadbandFrac) return 'right'
+  return 'straight'
+}
+
+/**
+ * The decision to act on: it changes only when a new decision has at least minVotes of the recent results; otherwise
+ * the previous one stands (null before there is one). So one or two odd frames never flip it.
+ */
+export function stableDecision(history: readonly PathDecision[], previous: PathDecision | null, minVotes: number): PathDecision | null {
+  const votes = new Map<PathDecision, number>()
+  for (const decision of history) votes.set(decision, (votes.get(decision) ?? 0) + 1)
+  let best: PathDecision | null = null
+  let bestVotes = 0
+  for (const [decision, count] of votes) {
+    if (count > bestVotes) {
+      best = decision
+      bestVotes = count
+    }
+  }
+  return best !== null && bestVotes >= minVotes ? best : previous
+}
+
+/**
+ * The target's column to steer by: it follows the target, but moves only when the target has moved by more than the
+ * dead band, so the line does not wander with every small sway of the hand.
+ */
+export function steadyColumn(previous: number | null, next: number | null, deadband: number): number | null {
+  if (next === null) return null
+  if (previous === null || Math.abs(next - previous) > deadband) return next
+  return previous
+}
+
 /** The options for computeFreeSpacePath: the horizon row from the tilt, and the target column. */
 export function pathOptionsFor(input: PathInput, width: number, height: number): PathOptions {
   const options: PathOptions = {}

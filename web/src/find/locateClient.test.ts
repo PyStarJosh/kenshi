@@ -32,7 +32,9 @@ const notFound: LocateResult = {
   latencyMs: 900,
 }
 
-function setup(options: { reply?: () => Promise<Response>; minGapMs?: number; maxPerMinute?: number; timeoutMs?: number } = {}) {
+function setup(
+  options: { reply?: () => Promise<Response>; minGapMs?: number; maxPerMinute?: number; timeoutMs?: number; slotWaitMs?: number } = {},
+) {
   const clock = { nowMs: 100_000 }
   const fetchImpl = vi.fn(options.reply ?? (() => Promise.resolve(json(found))))
   const encode = vi.fn(async () => '/9j/AAAA')
@@ -43,6 +45,7 @@ function setup(options: { reply?: () => Promise<Response>; minGapMs?: number; ma
     minGapMs: options.minGapMs ?? 6000,
     maxPerMinute: options.maxPerMinute ?? 8,
     timeoutMs: options.timeoutMs ?? 12_000,
+    slotWaitMs: options.slotWaitMs ?? 8000,
   })
   return { clock, fetchImpl, encode, locator }
 }
@@ -212,10 +215,51 @@ describe('Locator', () => {
     }
     clock.nowMs += 100
     expect(locator.canLocate(false)).toBe(false)
-    expect(await locator.locate('chair', [capture()], { paced: false })).toMatchObject({ ok: false, error: 'too_soon' })
-    for (const release of releases) release(json(found))
-    expect((await Promise.all(looks)).every((o) => o.ok)).toBe(true)
+    // a fifth look waits for one to come back instead of being dropped
+    const fifth = locator.locate('chair', [capture()], { paced: false })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(fetchImpl).toHaveBeenCalledTimes(4)
+    releases[0](json(found))
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(5))
+    for (const release of releases.slice(1)) release(json(found))
+    expect((await Promise.all([...looks, fifth])).every((o) => o.ok)).toBe(true)
     expect(locator.canLocate(false)).toBe(true)
+  })
+
+  test('a look that cannot get a slot in time is refused, and nothing is sent for it', async () => {
+    const releases: ((r: Response) => void)[] = []
+    const { locator, fetchImpl, clock } = setup({
+      maxPerMinute: 20,
+      slotWaitMs: 30,
+      reply: () => new Promise<Response>((resolve) => releases.push(resolve)),
+    })
+    const looks = []
+    for (let i = 0; i < 4; i++) {
+      clock.nowMs += 100
+      looks.push(locator.locate('chair', [capture()], { paced: false }))
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(i + 1))
+    }
+    expect(await locator.locate('chair', [capture()], { paced: false })).toMatchObject({ ok: false, error: 'too_soon' })
+    expect(fetchImpl).toHaveBeenCalledTimes(4)
+    for (const release of releases) release(json(found))
+    await Promise.all(looks)
+  })
+
+  test('a re-check sends where the target should be, so Gemini picks the same one of several', async () => {
+    const { locator, fetchImpl } = setup()
+    await locator.locate('chair', [capture()], { nearX: 0.62 })
+    const sent = (calls: unknown[][]) => JSON.parse((calls[0] as [string, RequestInit])[1].body as string)
+    expect(sent(fetchImpl.mock.calls).nearX).toBe(0.62)
+    const { locator: plain, fetchImpl: plainFetch } = setup()
+    await plain.locate('chair', [capture()])
+    expect(sent(plainFetch.mock.calls)).not.toHaveProperty('nearX')
+  })
+
+  test('asks for JSON back', async () => {
+    const { locator, fetchImpl } = setup()
+    await locator.locate('chair', [capture()])
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+    expect(init.headers).toMatchObject({ accept: 'application/json' })
   })
 
   test('a paced call still waits for the gap and for any look in flight', async () => {
@@ -274,6 +318,21 @@ describe('Locator', () => {
       const outcome = await locator.locate('chair', [capture()])
       expect(outcome).toMatchObject({ ok: false, error: 'auth' })
       expect(outcome.ok ? '' : outcome.message).toMatch(/No locate function at \/api\/locate/)
+    }
+  })
+
+  test('the platform\'s own errors, which are not our JSON, are told by their status: a timeout is a timeout', async () => {
+    const cases: [Response, LocateClientErrorCode][] = [
+      [new Response('An error occurred with your deployment\n\nFUNCTION_INVOCATION_TIMEOUT', { status: 504 }), 'timeout'],
+      [new Response('<html>Gateway Timeout</html>', { status: 504, headers: { 'content-type': 'text/html' } }), 'timeout'],
+      [new Response('Too Many Requests', { status: 429 }), 'quota'],
+      [new Response('<html>Bad Gateway</html>', { status: 502, headers: { 'content-type': 'text/html' } }), 'network'],
+      [new Response(null, { status: 304 }), 'network'],
+      [json({ error: { code: 'FUNCTION_INVOCATION_TIMEOUT' } }, 504), 'timeout'],
+    ]
+    for (const [reply, code] of cases) {
+      const { locator } = setup({ reply: () => Promise.resolve(reply) })
+      expect(await locator.locate('chair', [capture()]), String(reply.status)).toMatchObject({ ok: false, error: code })
     }
   })
 

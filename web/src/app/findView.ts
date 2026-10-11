@@ -1,10 +1,10 @@
 // The Find screen's view model (R6, FR-27): what to show for a Find snapshot, as plain data. Pure, so the rules (which
 // screen, how the arrow turns, when the background goes green, how the distance reads) are tested without a browser.
-// The numbers shown are the ones the rest of the app already uses; a distance that is only an upper bound is shown as
-// such ("< 2.5 m") and never as if it were measured.
+// The distance is shown as a word (close, near, far; owner request) from the same numbers the rest of the app uses; a
+// distance that is only an upper bound is never shown as "far".
 import { CONFIG } from '../core/config'
 import type { FindSnapshot, FindStateName } from '../core/types'
-import { stableDirection } from '../find/phrases'
+import { distanceBand, stableDirection } from '../find/phrases'
 import type { Direction } from '../find/phrases'
 import { wrap180 } from '../sensors/heading'
 
@@ -22,9 +22,9 @@ export interface FindView {
   arrowKnown: boolean
   /** Facing the target (inside 15 degrees, held to 20 once there): the whole background turns green. */
   aligned: boolean
-  /** "6 m", "< 2.5 m" (an upper bound), or "--" (unknown); empty when no distance belongs on this screen. */
+  /** "Close", "Near", "Far", or "--" (unknown); empty when no distance belongs on this screen. */
   distanceText: string
-  /** The same distance worded for a screen reader ("6 meters"); empty when distanceText is. */
+  /** The same distance for a screen reader ("near", "distance unknown"); empty when distanceText is. */
   distanceLabel: string
   /** "ahead", "to your right", "behind you"; empty when there is no bearing. */
   directionText: string
@@ -65,20 +65,15 @@ export function isAligned(bearingDeg: number | null, wasAligned: boolean, cfg = 
   return wasAligned && size <= cfg.alignedExitDeg
 }
 
-const meters = (value: number) => (Number.isInteger(value) ? String(value) : value.toFixed(1))
-
-/** "6 m", "2.5 m", "< 2.5 m" when the distance is only an upper bound, "--" when unknown. */
-export function distanceText(distanceM: number | null, isBound: boolean): string {
-  if (distanceM === null || !Number.isFinite(distanceM) || distanceM < 0) return '--'
-  return isBound ? `< ${meters(distanceM)} m` : `${meters(distanceM)} m`
+/** "Close", "Near", "Far", or "--" when unknown (an upper bound beyond the near distance counts as unknown). */
+export function distanceText(distanceM: number | null, isBound: boolean, cfg = CONFIG.find): string {
+  const band = distanceBand(distanceM, isBound, cfg)
+  return band === null ? '--' : capitalize(band)
 }
 
-/** The same, for a screen reader: "6 meters", "under 2.5 meters", "distance unknown". */
-export function distanceSpeech(distanceM: number | null, isBound: boolean): string {
-  if (distanceM === null || !Number.isFinite(distanceM) || distanceM < 0) return 'distance unknown'
-  const value = meters(distanceM)
-  const unit = distanceM === 1 ? 'meter' : 'meters'
-  return isBound ? `under ${value} ${unit}` : `${value} ${unit}`
+/** The same, for a screen reader: "close", "near", "far", or "distance unknown". */
+export function distanceSpeech(distanceM: number | null, isBound: boolean, cfg = CONFIG.find): string {
+  return distanceBand(distanceM, isBound, cfg) ?? 'distance unknown'
 }
 
 const DIRECTION_TEXT: Record<Direction, string> = {
@@ -213,8 +208,8 @@ export function makeView(
           rotationDeg,
           arrowKnown: bearing !== null,
           aligned,
-          distanceText: distanceText(snapshot.distanceM, snapshot.distanceIsBound),
-          distanceLabel: distanceSpeech(snapshot.distanceM, snapshot.distanceIsBound),
+          distanceText: distanceText(snapshot.distanceM, snapshot.distanceIsBound, cfg),
+          distanceLabel: distanceSpeech(snapshot.distanceM, snapshot.distanceIsBound, cfg),
           directionText: direction === null ? '' : directionText(direction),
           liveText: `Guiding to ${target}.`,
         },

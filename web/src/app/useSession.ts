@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
+import { noteRunning, sessionFlagStorage } from './restartNotice'
 import { createSession } from './session'
 import type { Session, SessionSnapshot } from './session'
 
@@ -39,5 +40,8 @@ export function useSession(): {
   }, [session])
 
   const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot)
+  // Noted so that a reload of the page while running (iOS frees memory that way) is told on the next load.
+  const running = snapshot.state === 'running' || snapshot.state === 'paused'
+  useEffect(() => noteRunning(sessionFlagStorage(), running), [running])
   return { session, snapshot, setVideo, getVideo }
 }

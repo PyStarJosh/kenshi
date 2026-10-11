@@ -26,7 +26,7 @@ import type {
   Track,
   VoiceIntent,
 } from '../core/types'
-import { majorityDecision } from '../geometry/freeSpacePath'
+import { stableDecision } from '../geometry/pathInput'
 import type { SessionState } from './session'
 
 export interface PipelineSession {
@@ -51,6 +51,7 @@ export interface PipelineLink {
 }
 
 export interface PipelineTracker {
+  /** The orientation carries the heading, so the tracker can follow a turn between frames. */
   update(result: FrameResult, tilt: OrientationSample | null, settings: Pick<Settings, 'eyeHeightM' | 'horizontalFovDeg'>): Track[]
   reset(): void
 }
@@ -71,6 +72,7 @@ export class Pipeline {
   private byId = new Map<number, Track>()
   private lastState: SessionState | null = null
   private pathDecisions: FreeSpaceResult['decision'][] = []
+  private pathDecision: FreeSpaceResult['decision'] | null = null
   private pathAtMs = -Infinity
 
   constructor(deps: PipelineDeps) {
@@ -84,13 +86,12 @@ export class Pipeline {
   }
 
   /**
-   * What the path line says about the way ahead, or null when it has no opinion: the most common of the last few
-   * decisions, if the newest is recent. "None" (no open path found) is no opinion.
+   * What the path line says about the way ahead, or null when it has no opinion: a decision that has held a clear
+   * majority of the last few results, if the newest is recent. "None" (no open path found) is no opinion.
    */
   getPathDecision(nowMs: number): 'left' | 'right' | 'straight' | null {
-    if (this.pathDecisions.length === 0 || nowMs - this.pathAtMs > CONFIG.freeSpace.maxAgeMs) return null
-    const decision = majorityDecision(this.pathDecisions)
-    return decision === 'none' ? null : decision
+    if (this.pathDecision === null || nowMs - this.pathAtMs > CONFIG.freeSpace.maxAgeMs) return null
+    return this.pathDecision === 'none' ? null : this.pathDecision
   }
 
   /** Start listening to the session and connect the audio link. Returns a function that undoes it. */
@@ -142,6 +143,7 @@ export class Pipeline {
   private recordPath(path: FreeSpaceResult): void {
     this.pathDecisions.push(path.decision)
     if (this.pathDecisions.length > CONFIG.freeSpace.decisionHistory) this.pathDecisions.shift()
+    this.pathDecision = stableDecision(this.pathDecisions, this.pathDecision, CONFIG.freeSpace.decisionMinVotes)
     this.pathAtMs = this.deps.now()
     this.bus.publish('path', path)
   }
@@ -151,5 +153,6 @@ export class Pipeline {
     this.tracks = []
     this.byId.clear()
     this.pathDecisions = []
+    this.pathDecision = null
   }
 }

@@ -75,10 +75,12 @@ function setup() {
     /** The phone turns this many degrees while a frame is being grabbed. */
     turnDuringGrab: 0,
     bitmaps: [] as { close: ReturnType<typeof vi.fn> }[],
+    /** The next grabs that find no frame (a camera just started). */
+    emptyGrabs: 0,
     /** What the path line says about the way ahead (R7). */
     pathDecision: null as 'left' | 'right' | 'straight' | null,
   }
-  const calls: { target: string; captures: Capture[]; paced: boolean }[] = []
+  const calls: { target: string; captures: Capture[]; paced: boolean; nearX?: number }[] = []
   const sample = (): OrientationSample => ({
     pitchDeg: state.pitch,
     rollDeg: 0,
@@ -95,6 +97,10 @@ function setup() {
     getPathDecision: () => state.pathDecision,
     getSettings: () => ({ eyeHeightM: 1.6, horizontalFovDeg: 65 }),
     grab: async () => {
+      if (state.emptyGrabs > 0) {
+        state.emptyGrabs -= 1
+        return null
+      }
       const bitmap = { width: 1280, height: 720, close: vi.fn() }
       state.bitmaps.push(bitmap)
       if (state.heading !== null) state.heading += state.turnDuringGrab
@@ -102,7 +108,7 @@ function setup() {
     },
     locator: {
       locate: async (target, captures, options) => {
-        calls.push({ target, captures: [...captures], paced: options?.paced ?? true })
+        calls.push({ target, captures: [...captures], paced: options?.paced ?? true, nearX: options?.nearX })
         const scripted = state.script.shift()
         return scripted ?? state.outcome
       },
@@ -142,7 +148,7 @@ describe('a search from the quick-pick list or a voice command', () => {
       priority: 'normal',
       pan: null,
       trackId: null,
-      phrase: `${FIND_PHRASES.privacy} Looking for a chair.`,
+      phrase: 'Looking for a chair.',
     })
     expect(t.calls).toHaveLength(1)
     expect(t.calls[0].target).toBe('chair')
@@ -154,7 +160,7 @@ describe('a search from the quick-pick list or a voice command', () => {
     const t = setup()
     t.bus.publish('findRequest', { target: 'chair', source: 'list' })
     await t.flush()
-    expect(t.alerts.at(-1)?.phrase).toBe('Chair found, ahead.')
+    expect(t.alerts.at(-1)?.phrase).toBe('Chair found, ahead. It is near.')
     expect(t.runner.getSnapshot()).toMatchObject({ state: 'guiding', target: 'chair', source: 'gemini' })
     expect(t.snapshots.map((s) => s.state)).toEqual(['checking', 'guiding'])
     expect(t.runner.isActive()).toBe(true)
@@ -175,15 +181,15 @@ describe('a search from the quick-pick list or a voice command', () => {
     await t.flush()
     expect(t.calls).toHaveLength(0)
     expect(t.runner.getSnapshot()).toMatchObject({ state: 'guiding', source: 'yolo' })
-    expect(t.alerts.at(-1)?.phrase).toBe('Chair found, ahead.')
+    expect(t.alerts.at(-1)?.phrase).toBe('Chair found, ahead. It is near.')
   })
 
-  test('offline: says Find is not available, then goes idle', async () => {
+  test('offline: says it cannot reach the internet, then goes idle', async () => {
     const t = setup()
     t.state.outcome = { ok: false, error: 'network', message: 'x', retryAfterMs: null }
     t.runner.request('chair')
     await t.flush()
-    expect(t.alerts.at(-1)?.phrase).toBe(FIND_PHRASES.unavailable)
+    expect(t.alerts.at(-1)?.phrase).toBe("I can't reach the internet, so I can't search.")
     expect(t.runner.getSnapshot().state).toBe('error')
     await t.frame(CONFIG.find.resultHoldMs + 100)
     expect(t.runner.getSnapshot().state).toBe('idle')
@@ -241,7 +247,7 @@ describe('the sweep', () => {
       await t.frame()
     }
     expect(t.runner.getSnapshot().state).toBe('guiding')
-    expect(t.alerts.at(-1)?.phrase).toBe('Exit found, ahead.')
+    expect(t.alerts.at(-1)?.phrase).toBe('Exit found, ahead. It is near.')
     const sent = t.calls.length
     t.state.heading = 135
     await t.frame()
@@ -325,11 +331,29 @@ describe('reliability', () => {
     expect(t.calls[0].paced).toBe(true)
     expect(t.calls[1].paced).toBe(false)
     expect(t.runner.getSnapshot().state).toBe('guiding')
-    expect(t.alerts.map((a) => a.phrase)).not.toContain(FIND_PHRASES.unavailable)
+    expect(t.alerts.map((a) => a.phrase).join(' ')).not.toMatch(/internet|too long|not set up/)
   })
 })
 
 describe('guiding', () => {
+  test('a re-check tells the locate call where the target should be', async () => {
+    const t = setup()
+    t.runner.request('chair')
+    await t.flush()
+    expect(t.calls[0].nearX).toBeUndefined()
+    await t.frame(CONFIG.find.recheckIntervalMs + 100)
+    expect(t.calls).toHaveLength(2)
+    expect(t.calls[1].nearX).toBeCloseTo(0.5, 2)
+  })
+
+  test('a camera with no frame yet gets one more moment before the look gives up', async () => {
+    const t = setup()
+    t.state.emptyGrabs = 1
+    t.runner.request('chair')
+    await vi.waitFor(() => expect(t.calls).toHaveLength(1), { timeout: 2000 })
+    expect(t.runner.getSnapshot().state).toBe('guiding')
+  })
+
   test('re-checks only when the limiter allows', async () => {
     const t = setup()
     t.runner.request('chair')
@@ -462,5 +486,16 @@ describe('the path line (R7)', () => {
     t.state.heading = 0
     t.runner.cancel()
     expect(t.runner.getTargetColumn()).toBeNull()
+  })
+
+  test('the column holds still for a small sway of the hand, and follows a real turn', async () => {
+    const t = setup()
+    await guide(t, 0.75)
+    expect(t.runner.getTargetColumn()).toBeCloseTo(0.75, 6)
+    t.state.heading = 1 // about 0.015 of the picture: inside the dead band
+    expect(t.runner.getTargetColumn()).toBeCloseTo(0.75, 6)
+    t.state.heading = 4 // about 0.06: a real turn
+    expect(t.runner.getTargetColumn()).toBeCloseTo(0.75 - 4 / 65, 6)
+    expect(t.runner.isGuiding()).toBe(true)
   })
 })

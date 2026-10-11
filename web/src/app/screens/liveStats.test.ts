@@ -3,12 +3,12 @@ import { CONFIG } from '../../core/config'
 import type { FrameResult } from '../../core/types'
 import { LiveStats } from './liveStats'
 
-const result = (receivedTimeMs: number, inferenceMs: number) =>
-  ({ receivedTimeMs, timings: { preprocessMs: 0, inferenceMs, postprocessMs: 0 } }) as FrameResult
+const result = (receivedTimeMs: number, inferenceMs: number, captureTimeMs = receivedTimeMs) =>
+  ({ receivedTimeMs, captureTimeMs, timings: { preprocessMs: 0, inferenceMs, postprocessMs: 0 } }) as FrameResult
 
 describe('LiveStats', () => {
   test('is all zeros before any result', () => {
-    expect(new LiveStats().view(1000)).toEqual({ fps: 0, inferenceP50: 0, inferenceP95: 0 })
+    expect(new LiveStats().view(1000)).toEqual({ fps: 0, inferenceP50: 0, inferenceP95: 0, latencyP50: 0, latencyP95: 0 })
   })
 
   test('computes the frame rate from result arrival times', () => {
@@ -38,4 +38,14 @@ describe('LiveStats', () => {
     for (let i = 0; i < CONFIG.debug.statsSamples; i++) stats.push(result(10_000 + i, 10)) // recent and fast
     expect(stats.view(10_100).inferenceP95).toBe(10)
   })
+})
+
+test('reports how far behind the picture the results arrive (capture to result)', () => {
+  const stats = new LiveStats()
+  for (let i = 1; i <= 20; i++) stats.push(result(i * 100, 30, i * 100 - (i <= 19 ? 120 : 400)))
+  const view = stats.view(2000)
+  expect(view.latencyP50).toBe(120)
+  expect(view.latencyP95).toBe(120)
+  stats.push(result(2100, 30, 2100 - 400))
+  expect(stats.view(2100).latencyP95).toBe(400)
 })

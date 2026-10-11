@@ -40,6 +40,10 @@ export interface OrientationLike {
 export interface CameraLike {
   start(): Promise<CameraInfo>
   stop(): void
+  /** The stream is still open and live (it is kept through a pause). */
+  isLive(): boolean
+  /** Play the kept stream again after a pause. */
+  resumePlayback(): Promise<CameraInfo>
   onFrameSize(listener: (size: FrameSize) => void): () => void
   onEnded(listener: () => void): () => void
 }
@@ -188,7 +192,8 @@ export class Session {
   pause(reason: 'user' | 'hidden' = 'user'): void {
     if (this.snapshot.state !== 'running') return
     this.resumeWhenVisible = reason === 'hidden'
-    this.stopLoop()
+    // The camera stream is kept: opening it again on resume would ask for camera permission again on iOS.
+    this.stopLoop(true)
     this.update({ state: 'paused', message: reason === 'hidden' ? MESSAGES.pausedHidden : MESSAGES.paused })
   }
 
@@ -199,7 +204,9 @@ export class Session {
     this.update({ state: 'starting', message: MESSAGES.resuming })
     const lock = this.deps.wakeLock.acquire()
     try {
-      const info = await this.deps.camera.start()
+      // The stream kept through the pause is played again; only one that has ended (iOS took the camera) is reopened.
+      const camera = this.deps.camera
+      const info = camera.isLive() ? await camera.resumePlayback() : await camera.start()
       const wakeLockHeld = await lock
       if (this.engine !== engine) {
         this.deps.camera.stop()
@@ -273,11 +280,11 @@ export class Session {
     this.update({ state: 'paused', message: MESSAGES.cameraStopped })
   }
 
-  /** Stop the frame loop, the camera, the tilt sensor, and the wake lock; keep the loaded detector. */
-  private stopLoop(): void {
+  /** Stop the frame loop, the camera (unless keepCamera), the tilt sensor, and the wake lock; keep the loaded detector. */
+  private stopLoop(keepCamera = false): void {
     this.scheduler?.stop()
     this.scheduler = null
-    this.deps.camera.stop()
+    if (!keepCamera) this.deps.camera.stop()
     this.deps.orientation.stop()
     void this.deps.wakeLock.release()
   }

@@ -6,13 +6,13 @@
 import { CONFIG } from '../core/config'
 import type { EventMap, FindRequest, FindSnapshot, OrientationSample, Settings, Track } from '../core/types'
 import type { EventBus } from '../alerts/bus'
-import { initialContext, reduce, sameObjectGateDeg, snapshotOf } from '../find/findController'
+import { initialContext, reduce, snapshotOf } from '../find/findController'
 import type { FindContext, FindEffect, FindEvent, FrameMeta } from '../find/findController'
 import type { Capture, LocateOptions, LocateOutcome } from '../find/locateClient'
 import { bearing } from '../find/targetMemory'
 import { cleanTarget, findYoloSighting } from '../find/targets'
 import type { FrameDims } from '../geometry/geometry'
-import { targetColumn } from '../geometry/pathInput'
+import { steadyColumn, targetColumn } from '../geometry/pathInput'
 
 export interface FindRunnerDeps {
   bus: EventBus<EventMap>
@@ -46,6 +46,8 @@ interface Grabbed extends Capture {
 
 /** How often the controller is ticked besides once per detected frame, so timers run on a still camera. */
 const TICK_MS = 250
+/** A grab that finds no frame is tried once more after this long. */
+const GRAB_RETRY_MS = 250
 
 export class FindRunner {
   private readonly deps: FindRunnerDeps
@@ -54,6 +56,8 @@ export class FindRunner {
   private alertCount = 0
   private snapshot: FindSnapshot = snapshotOf(initialContext(), null)
   private listeners = new Set<() => void>()
+  /** The target column last handed to the path line, held steady against small sways. */
+  private pathColumn: number | null = null
 
   constructor(deps: FindRunnerDeps) {
     this.deps = deps
@@ -85,11 +89,18 @@ export class FindRunner {
    */
   getTargetColumn(): number | null {
     const { memory } = this.ctx
-    if (this.ctx.state !== 'guiding' || memory === null) return null
     const heading = this.deps.orientationLatest(this.deps.now())?.headingDeg
-    if (heading === undefined) return null
-    const hfovDeg = this.deps.getSettings().horizontalFovDeg
-    return targetColumn(bearing(memory, heading), hfovDeg)
+    const column =
+      this.ctx.state === 'guiding' && memory !== null && heading !== undefined
+        ? targetColumn(bearing(memory, heading), this.deps.getSettings().horizontalFovDeg)
+        : null
+    this.pathColumn = steadyColumn(this.pathColumn, column, CONFIG.freeSpace.targetColumnDeadband)
+    return this.pathColumn
+  }
+
+  /** True while guiding to a target: the only time the path line is needed outside ?debug. */
+  isGuiding(): boolean {
+    return this.ctx.state === 'guiding'
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -130,11 +141,14 @@ export class FindRunner {
       Math.abs(bearing(this.ctx.memory, heading)) <= CONFIG.find.pathAlignedDeg
         ? this.deps.getPathDecision?.(now) ?? null
         : null
-    // While guiding, a track other than the followed one counts only if it is where the remembered object is.
+    // While guiding, a track other than the followed one counts only if it is where the remembered object is: for a
+    // detector target close in bearing and distance; for a Gemini target, right on its bearing (the hand-off).
     const { memory } = this.ctx
     const near =
       this.ctx.state === 'guiding' && memory !== null && heading !== null
-        ? { angleDeg: bearing(memory, heading), maxDeg: sameObjectGateDeg(memory, CONFIG.find) }
+        ? memory.source === 'yolo'
+          ? { angleDeg: bearing(memory, heading), maxDeg: CONFIG.find.reacquireDeg, distanceM: memory.distanceM }
+          : { angleDeg: bearing(memory, heading), maxDeg: CONFIG.find.handoffDeg }
         : null
     this.dispatch({
       type: 'tick',
@@ -188,7 +202,7 @@ export class FindRunner {
     if (text) this.speak(text)
     for (const effect of effects) {
       if (effect.type === 'capture') this.capture(effect.id)
-      else if (effect.type === 'locate') void this.look(effect.id, effect.paced)
+      else if (effect.type === 'locate') void this.look(effect.id, effect.paced, effect.nearX)
     }
   }
 
@@ -227,17 +241,26 @@ export class FindRunner {
   }
 
   /** The first check, a re-check, or a pause look: a fresh frame, sent on its own. */
-  private look(id: number, paced: boolean): Promise<void> {
-    return this.sendFrame(id, paced)
+  private look(id: number, paced: boolean, nearX?: number): Promise<void> {
+    return this.sendFrame(id, paced, nearX)
   }
 
-  private async sendFrame(id: number, paced: boolean): Promise<void> {
-    let frame: Grabbed | null = null
-    try {
-      frame = await this.grabFrame()
-    } catch {
-      frame = null
+  /** A frame, or null; a camera with no frame yet (just started, or busy) is given one more moment. */
+  private async grabWithRetry(): Promise<Grabbed | null> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const frame = await this.grabFrame()
+        if (frame !== null) return frame
+      } catch {
+        // tried again below
+      }
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, GRAB_RETRY_MS))
     }
+    return null
+  }
+
+  private async sendFrame(id: number, paced: boolean, nearX?: number): Promise<void> {
+    const frame = await this.grabWithRetry()
     if (frame === null) {
       this.dispatch({ type: 'failed', id, nowMs: this.deps.now(), code: 'bad_request' })
       return
@@ -247,7 +270,7 @@ export class FindRunner {
       frame.bitmap.close()
       return
     }
-    const outcome = await this.deps.locator.locate(this.ctx.target, [frame], { paced })
+    const outcome = await this.deps.locator.locate(this.ctx.target, [frame], nearX === undefined ? { paced } : { paced, nearX })
     frame.bitmap.close()
     const nowMs = this.deps.now()
     if (!outcome.ok) {
