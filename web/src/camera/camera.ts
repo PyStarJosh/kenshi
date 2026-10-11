@@ -72,29 +72,6 @@ export function chooseBackCamera(devices: readonly DeviceSummary[]): string | nu
   return single ? single.deviceId : null
 }
 
-/** The part of localStorage the camera needs, to remember which lens it used. */
-export interface LensStorage {
-  getItem(key: string): string | null
-  setItem(key: string, value: string): void
-  removeItem(key: string): void
-}
-
-const LENS_KEY = 'kenshi.camera.lens.v1'
-
-function browserStorage(): LensStorage | null {
-  try {
-    return window.localStorage
-  } catch {
-    return null
-  }
-}
-
-/** A refusal is final; anything else when opening a remembered lens means it is gone and the lens is chosen again. */
-function isRefusal(error: unknown): boolean {
-  const name = error instanceof Error ? error.name : ''
-  return name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError'
-}
-
 export interface FrameSize {
   width: number
   height: number
@@ -107,7 +84,6 @@ export interface CameraInfo {
 
 export class Camera {
   private getVideo: () => HTMLVideoElement | null
-  private storage: LensStorage | null
   private stream: MediaStream | null = null
   private endedListeners = new Set<() => void>()
   private sizeListeners = new Set<(size: FrameSize) => void>()
@@ -115,28 +91,8 @@ export class Camera {
   private removeTrackListener: (() => void) | null = null
 
   /** getVideo may return null once the element is gone (a screen was closed); stop() then has nothing to detach. */
-  constructor(getVideo: () => HTMLVideoElement | null, storage: LensStorage | null = browserStorage()) {
+  constructor(getVideo: () => HTMLVideoElement | null) {
     this.getVideo = getVideo
-    this.storage = storage
-  }
-
-  /** The stream is open and its picture still live (a pause keeps it, so resuming needs no new permission prompt). */
-  isLive(): boolean {
-    return this.stream?.getVideoTracks().some((track) => track.readyState === 'live') ?? false
-  }
-
-  /** Play the kept stream again after a pause (iOS pauses the video element while the page is hidden). */
-  async resumePlayback(): Promise<CameraInfo> {
-    const video = this.getVideo()
-    const track = this.stream?.getVideoTracks()[0]
-    if (!video || !track) throw new CameraError('unknown', 'There is no stream to resume.')
-    try {
-      if (video.paused) await video.play()
-    } catch (error) {
-      throw mapCameraError(error)
-    }
-    const settings = track.getSettings()
-    return { label: track.label, frameSize: this.frameSize ?? { width: settings.width ?? 0, height: settings.height ?? 0 } }
   }
 
   /** Current frame size, or null before the first frame. */
@@ -164,13 +120,8 @@ export class Camera {
       throw new CameraError('insecure-page')
     }
     try {
-      // The lens chosen last time is opened straight away: one stream, so one permission prompt, instead of opening the
-      // default camera and then switching lenses.
-      let stream = await this.openRememberedLens()
-      if (!stream) {
-        stream = await open({ facingMode: { ideal: 'environment' } })
-        stream = await this.preferPlainBackCamera(stream)
-      }
+      let stream = await open({ facingMode: { ideal: 'environment' } })
+      stream = await this.preferPlainBackCamera(stream)
       this.stream = stream
       const video = this.getVideo()
       if (!video) throw new Error('The video element is not mounted')
@@ -191,7 +142,6 @@ export class Camera {
       track.addEventListener('ended', onEnded)
       this.removeTrackListener = () => track.removeEventListener('ended', onEnded)
       await video.play()
-      this.rememberLens(track.getSettings().deviceId)
       const label = track.label
       // Deliberate: the chosen lens must be visible in the console during phone testing.
       console.info(`[camera] using "${label}"`)
@@ -216,33 +166,6 @@ export class Camera {
     this.stream = null
     const video = this.getVideo()
     if (video) video.srcObject = null
-  }
-
-  /** The remembered lens, opened directly, or null when there is none or it cannot be opened any more. */
-  private async openRememberedLens(): Promise<MediaStream | null> {
-    let deviceId: string | null = null
-    try {
-      deviceId = this.storage?.getItem(LENS_KEY) ?? null
-    } catch {
-      deviceId = null
-    }
-    if (!deviceId) return null
-    try {
-      return await open({ deviceId: { exact: deviceId } })
-    } catch (error) {
-      if (isRefusal(error)) throw error
-      this.rememberLens(undefined)
-      return null
-    }
-  }
-
-  private rememberLens(deviceId: string | undefined): void {
-    try {
-      if (deviceId) this.storage?.setItem(LENS_KEY, deviceId)
-      else this.storage?.removeItem(LENS_KEY)
-    } catch {
-      // Storage blocked: the lens is chosen again next time, which costs one more stream at start.
-    }
   }
 
   /** Labels only appear after permission, so the lens is chosen after the first stream opens. */

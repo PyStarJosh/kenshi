@@ -1,6 +1,5 @@
 import type { CSSProperties } from 'react'
 import { lazy, Suspense, useState, useSyncExternalStore } from 'react'
-import { sessionFlagStorage, takeRestartNotice } from './app/restartNotice'
 import { useAudioLink } from './app/useAudioLink'
 import { useFind } from './app/useFind'
 import { usePipeline } from './app/usePipeline'
@@ -16,8 +15,6 @@ const SettingsScreen = lazy(() => import('./app/screens/Settings.tsx'))
 const CalibrateScreen = lazy(() => import('./app/screens/Calibrate.tsx'))
 
 const debugEnabled = new URLSearchParams(window.location.search).has('debug')
-// Read once when the page loads: did it reload by itself while Kenshi was running?
-const restartNotice = takeRestartNotice(sessionFlagStorage())
 const DEFAULT_ASPECT = 16 / 9
 
 type View = 'main' | 'settings' | 'calibrate'
@@ -33,8 +30,6 @@ export default function App() {
   const [view, setView] = useState<View>('main')
   // The camera picture is a small inset in the corner; a tap makes it fill the screen behind the Find screen.
   const [enlarged, setEnlarged] = useState(false)
-  // The restart notice shows until the first Start of this page.
-  const [startedOnce, setStartedOnce] = useState(false)
   const { state, message, frameSize } = snapshot
   const live = state === 'running' || state === 'paused'
   const aspect = frameSize ? frameSize.width / frameSize.height : DEFAULT_ASPECT
@@ -64,7 +59,6 @@ export default function App() {
             onClick={() => {
               // Audio and speech must be unlocked inside this tap, before anything is awaited.
               audio.unlock(true)
-              setStartedOnce(true)
               void session.start()
             }}
           >
@@ -118,7 +112,7 @@ export default function App() {
       )}
 
       <p role="status" aria-live="polite" className="status">
-        {[state === 'idle' && !startedOnce ? restartNotice : null, message, audioError, voiceMessage].filter(Boolean).join(' ')}
+        {[message, audioError, voiceMessage].filter(Boolean).join(' ')}
       </p>
 
       {view !== 'main' && (

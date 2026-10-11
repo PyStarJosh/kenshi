@@ -298,11 +298,6 @@ export interface LocateFrame {
 export interface LocateRequest {
   target: string
   frames: LocateFrame[]
-  /**
-   * Where the thing being followed should be (a re-check while guiding): its center as a fraction of the frame width,
-   * 0 at the left edge and 1 at the right. When several things match, Gemini is asked for the one nearest it.
-   */
-  nearX?: number
 }
 
 /** A box in a frame, as fractions of the frame (0 to 1) from the top-left corner. */

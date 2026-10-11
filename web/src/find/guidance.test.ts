@@ -1,11 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import { CONFIG } from '../core/config'
-import { GUIDANCE_PHRASES, initialGuidance, instructionFor, nextGuidance, seedGuidance } from './guidance'
-import { bandPhrase } from './phrases'
+import { countdownPhrase, GUIDANCE_PHRASES, initialGuidance, instructionFor, nextGuidance, seedGuidance } from './guidance'
 import type { GuidanceInput, GuidanceState } from './guidance'
 
 const CFG = CONFIG.find
-/** Config with the repeat switched off, for tests about hysteresis and the distance words alone. */
+/** Config with the repeat switched off, for tests about hysteresis and the countdown alone. */
 const NO_REPEAT = { ...CFG, guidanceRepeatMs: 1e9 }
 
 const input = (patch: Partial<GuidanceInput> = {}): GuidanceInput => ({
@@ -162,94 +161,85 @@ describe('while something is being said', () => {
     expect(free.say).toBe('Turn right.')
   })
 
-  test('the distance word waits as well, and the bookkeeping carries on', () => {
+  test('the countdown waits as well, and the bookkeeping carries on', () => {
     const first = nextGuidance(initialGuidance(), input({ bearing: 2, distanceM: 12, nowMs: 0 }))
     const busy = nextGuidance(first.state, input({ bearing: 2, distanceM: 4.9, nowMs: 10_000, speaking: true }))
     expect(busy.say).toBeNull()
     const free = nextGuidance(busy.state, input({ bearing: 2, distanceM: 4.9, nowMs: 10_200 }))
-    expect(free.say).toBe('Chair is near.')
+    expect(free.say).toBe('chair, about 5 meters.')
   })
 })
 
-describe('distance in words (far, near, close)', () => {
+describe('the distance countdown', () => {
   const ahead = (distanceM: number | null, patch: Partial<GuidanceInput> = {}): Partial<GuidanceInput> => ({
     bearing: 2,
     distanceM,
     ...patch,
   })
 
-  test('says far, then near, then close as the target gets nearer, once each', () => {
-    const out = run([ahead(12), ahead(11), ahead(7), ahead(4.9), ahead(3), ahead(1.9), ahead(1.2)])
-    // The first step is the instruction ("Straight ahead."); the rest are the distance words.
-    expect(out.said).toEqual(['Straight ahead.', 'Chair is far.', null, 'Chair is near.', null, 'Chair is close.', null])
+  test('says the label and about N meters on crossing 10, 5, 3 and 2, once each', () => {
+    const out = run([ahead(12), ahead(10.4), ahead(9.8), ahead(7), ahead(5.2), ahead(4.9), ahead(3.5), ahead(2.9), ahead(2.5), ahead(1.9), ahead(1.2)])
+    // The first step is the instruction ("Straight ahead."); the rest are the countdown.
+    expect(out.said).toEqual([
+      'Straight ahead.',
+      null,
+      'chair, about 10 meters.',
+      null,
+      null,
+      'chair, about 5 meters.',
+      null,
+      'chair, about 3 meters.',
+      null,
+      'chair, about 2 meters.',
+      null,
+    ])
   })
 
-  test('close is within 2 m, near within 5 m, far beyond', () => {
-    expect([CFG.distanceCloseM, CFG.distanceNearM]).toEqual([2, 5])
-    expect(run([ahead(12), ahead(2)]).said[1]).toBe('Chair is close.')
-    expect(run([ahead(12), ahead(2.1)]).said[1]).toBe('Chair is near.')
-    expect(run([ahead(12), ahead(5)]).said[1]).toBe('Chair is near.')
-    expect(run([ahead(12), ahead(5.1)]).said[1]).toBe('Chair is far.')
+  test('the levels are 10, 5, 3 and 2 meters', () => {
+    expect([...CFG.countdownM]).toEqual([10, 5, 3, 2])
+    expect(countdownPhrase('exit', 3)).toBe('exit, about 3 meters.')
   })
 
-  test('the words read naturally for one thing or several', () => {
-    expect(bandPhrase('exit', 'near')).toBe('Exit is near.')
-    expect(bandPhrase('stairs', 'close')).toBe('Stairs are close.')
-    expect(bandPhrase('bus', 'far')).toBe('Bus is far.')
-    expect(bandPhrase("men's restroom", 'near')).toBe("Men's restroom is near.")
+  test('jumping over several levels says only the nearest, and counts them all as done', () => {
+    const out = run([ahead(12), ahead(2.6), ahead(2.4), ahead(2.0)])
+    expect(out.said).toEqual(['Straight ahead.', 'chair, about 3 meters.', null, 'chair, about 2 meters.'])
+    expect(out.state.announced.sort()).toEqual([10, 2, 3, 5])
   })
 
-  test('jumping straight from far to close says only close', () => {
-    const out = run([ahead(12), ahead(11), ahead(1.5), ahead(1.4)])
-    expect(out.said).toEqual(['Straight ahead.', 'Chair is far.', 'Chair is close.', null])
-    expect(out.state.band).toBe('close')
-  })
-
-  test('a word is said again if the user moves back out past it and comes in again', () => {
+  test('a level is announced again if the user moves back out past it and comes in again', () => {
     const out = run([ahead(12), ahead(4.9), ahead(4.0), ahead(5.6), ahead(4.8)])
-    expect(out.said).toEqual(['Straight ahead.', 'Chair is near.', null, null, 'Chair is near.'])
-  })
-
-  test('a little way back out (under half a meter) does not repeat it', () => {
-    const out = run([ahead(12), ahead(1.9), ahead(2.3), ahead(1.8)])
-    expect(out.said).toEqual(['Straight ahead.', 'Chair is close.', null, null])
+    expect(out.said).toEqual(['Straight ahead.', 'chair, about 5 meters.', null, null, 'chair, about 5 meters.'])
   })
 
   test('only while roughly facing the target', () => {
     const out = run([ahead(4.9, { bearing: 40 }), ahead(4.9, { bearing: 60 })])
     expect(out.said[0]).toBe('Bear right.')
-    expect(out.said[1]).toBe('Turn right.') // not facing it: the instruction, and no distance word
+    expect(out.said[1]).toBe('Turn right.') // not facing it: the instruction, and no countdown
     const turned = run([{ bearing: 0, distanceM: 12 }, { bearing: 80, distanceM: 4.9 }, { bearing: 80, distanceM: 4.9 }])
     expect(turned.said.slice(2)).toEqual([null])
   })
 
-  test('an upper bound only ever says "close" (the target is at most that far); an unknown distance says nothing', () => {
+  test('not from a distance that is only an upper bound, or an unknown one', () => {
     const bound = run([ahead(12, { distanceIsBound: true }), ahead(4.9, { distanceIsBound: true }), ahead(1.9, { distanceIsBound: true })])
-    expect(bound.said).toEqual(['Straight ahead.', null, 'Chair is close.'])
+    expect(bound.said).toEqual(['Straight ahead.', null, null])
     const unknown = run([ahead(null), ahead(null)])
     expect(unknown.said).toEqual(['Straight ahead.', null])
   })
 
-  test('an instruction that is due comes before the distance word, and the word follows when it can', () => {
+  test('an instruction that is due comes before the countdown, and the countdown follows when it can', () => {
     const state = nextGuidance(initialGuidance(), input({ bearing: 2, distanceM: 12, nowMs: 0 }), NO_REPEAT).state
     const both = nextGuidance(state, input({ bearing: 25, distanceM: 4.9, nowMs: CFG.guideSpeechCooldownMs }), NO_REPEAT)
     expect(both.say).toBe('Bear right.')
     const next = nextGuidance(both.state, input({ bearing: 25, distanceM: 4.9, nowMs: 2 * CFG.guideSpeechCooldownMs }), NO_REPEAT)
-    expect(next.say).toBe('Chair is near.')
+    expect(next.say).toBe('chair, about 5 meters.')
   })
 
-  test('the distance word waits for the minimum gap too', () => {
+  test('the countdown waits for the minimum gap too', () => {
     const state = nextGuidance(initialGuidance(), input({ bearing: 2, distanceM: 12, nowMs: 0 }), NO_REPEAT).state
     expect(nextGuidance(state, input({ bearing: 2, distanceM: 4.9, nowMs: 1000 }), NO_REPEAT).say).toBeNull()
     expect(nextGuidance(state, input({ bearing: 2, distanceM: 4.9, nowMs: CFG.guideSpeechCooldownMs }), NO_REPEAT).say).toBe(
-      'Chair is near.',
+      'chair, about 5 meters.',
     )
-  })
-
-  test('a word already said with "<label> found" is not said again', () => {
-    const seeded = seedGuidance('ahead', 0, 'near')
-    expect(nextGuidance(seeded, input({ bearing: 2, distanceM: 4.5, nowMs: 3000 }), NO_REPEAT).say).toBeNull()
-    expect(nextGuidance(seeded, input({ bearing: 2, distanceM: 1.5, nowMs: 3000 }), NO_REPEAT).say).toBe('Chair is close.')
   })
 })
 

@@ -29,17 +29,15 @@ import {
   lookingFor,
   lostPhrase,
   notFoundPhrase,
-  spokenBand,
 } from './phrases'
 import { initialGuidance, nextGuidance, seedGuidance } from './guidance'
 import type { GuidanceState, PathDecision } from './guidance'
 import { FIND_MESSAGES } from './messages'
 import type { LocateClientErrorCode } from './locateClient'
-import { targetColumn } from '../geometry/pathInput'
 import { wrap180 } from '../sensors/heading'
 import { bearing, boxCenterX, estimateTargetDistance, inView, isStale, observe, remember } from './targetMemory'
 import type { TargetMemory } from './targetMemory'
-import { arrivalDistanceFor, cleanTarget, sameDistanceToleranceM } from './targets'
+import { cleanTarget } from './targets'
 
 type FindConfig = typeof CONFIG.find
 
@@ -49,6 +47,8 @@ export interface FindContext {
   target: string
   /** The phone gave no heading when the search began: single-frame search only, no sweep and no guiding. */
   noHeading: boolean
+  /** The privacy notice was spoken in this session; it is never spoken twice. */
+  privacyAnnounced: boolean
   memory: TargetMemory | null
   /** Sign text Gemini read that may point toward the target. */
   signHint: string | null
@@ -80,7 +80,7 @@ export interface FindContext {
   rechecking: boolean
   failedRechecks: number
   lastRecheckAt: number
-  /** What guidance last said and when, the direction zone it is in, and the distance word said. */
+  /** What guidance last said and when, the direction zone it is in, and the countdown levels announced. */
   guidance: GuidanceState
   /** The detector's track being followed, so a second object of the same kind is not swapped in. */
   followId: number | null
@@ -100,6 +100,7 @@ export function initialContext(): FindContext {
     state: 'idle',
     target: '',
     noHeading: false,
+    privacyAnnounced: false,
     memory: null,
     signHint: null,
     enteredAt: 0,
@@ -171,11 +172,8 @@ export type FindEvent =
 
 export type FindEffect =
   | { type: 'speak'; text: string }
-  /**
-   * Look for the target in the current frame. A paced call waits for the gap since the last call; a pause look does not.
-   * nearX (a re-check while guiding) is where the target should be in the frame, 0 left edge to 1 right edge.
-   */
-  | { type: 'locate'; id: number; paced: boolean; nearX?: number }
+  /** Look for the target in the current frame. A paced call waits for the gap since the last call; a pause look does not. */
+  | { type: 'locate'; id: number; paced: boolean }
   /** Capture one sweep frame now, with a soft tick, and send it on its own as a look with this id (no gap). */
   | { type: 'capture'; id: number }
 
@@ -206,19 +204,24 @@ function say(d: Draft, nowMs: number, ...parts: string[]): void {
 }
 
 function toIdle(d: Draft): void {
-  const { nextId } = d.c
-  Object.assign(d.c, initialContext(), { nextId })
+  const { privacyAnnounced, nextId } = d.c
+  Object.assign(d.c, initialContext(), { privacyAnnounced, nextId })
 }
 
-function issueLocate(d: Draft, paced: boolean, nearX: number | null = null): void {
+function issueLocate(d: Draft, paced: boolean): void {
   d.c.nextId += 1
   d.c.pending = d.c.nextId
-  d.effects.push(nearX === null ? { type: 'locate', id: d.c.nextId, paced } : { type: 'locate', id: d.c.nextId, paced, nearX })
+  d.effects.push({ type: 'locate', id: d.c.nextId, paced })
 }
 
 function startChecking(d: Draft, nowMs: number): void {
   const { c } = d
-  const parts: string[] = [lookingFor(c.target)]
+  const parts: string[] = []
+  if (!c.privacyAnnounced) {
+    parts.push(FIND_PHRASES.privacy)
+    c.privacyAnnounced = true
+  }
+  parts.push(lookingFor(c.target))
   if (c.noHeading) parts.push(FIND_PHRASES.noHeading)
   say(d, nowMs, ...parts)
   c.state = 'checking'
@@ -248,7 +251,6 @@ function beginSweep(d: Draft, heading: number | null, nowMs: number): void {
 function enterGuiding(d: Draft, memory: TargetMemory, bearingDeg: number, nowMs: number): void {
   const { c } = d
   const direction = classifyDirection(bearingDeg, d.cfg)
-  const band = spokenBand(memory.distanceM, memory.clipped === true, d.cfg)
   c.state = 'guiding'
   c.enteredAt = nowMs
   c.memory = memory
@@ -256,13 +258,13 @@ function enterGuiding(d: Draft, memory: TargetMemory, bearingDeg: number, nowMs:
   c.failedRechecks = 0
   c.rechecking = false
   c.lastRecheckAt = nowMs
-  c.guidance = seedGuidance(direction, nowMs, band)
+  c.guidance = seedGuidance(direction, nowMs)
   c.pending = null
   c.sweepPending = []
   c.arrivalSince = null
   c.tiltPrompts = 0
   c.lastTiltAt = -Infinity
-  say(d, nowMs, foundPhrase(c.target, direction, band))
+  say(d, nowMs, foundPhrase(c.target, direction))
 }
 
 function toNotFound(d: Draft, nowMs: number): void {
@@ -276,8 +278,8 @@ function toNotFound(d: Draft, nowMs: number): void {
 
 function toError(d: Draft, code: LocateClientErrorCode, nowMs: number): void {
   const { c } = d
-  // Each failure says what went wrong and what to do ("The search took too long. Try again."), not just that Find failed.
-  say(d, nowMs, FIND_MESSAGES[code])
+  // The two local rate-limit codes have a more helpful sentence; every real failure is just "not available".
+  say(d, nowMs, code === 'too_soon' || code === 'limit' ? FIND_MESSAGES[code] : FIND_PHRASES.unavailable)
   c.state = 'error'
   c.enteredAt = nowMs
   c.pending = null
@@ -437,13 +439,6 @@ export function isSameObject(memory: TargetMemory, headingDeg: number, angleDeg:
   return Math.abs(wrap180(angleDeg - bearing(memory, headingDeg))) <= sameObjectGateDeg(memory, cfg)
 }
 
-/** A detector sighting lies where the followed object is remembered: close in bearing and, if both are known, in distance. */
-function isOnSameSpot(memory: TargetMemory, headingDeg: number, sighting: YoloSighting, cfg: FindConfig): boolean {
-  if (Math.abs(wrap180(sighting.angleDeg - bearing(memory, headingDeg))) > cfg.reacquireDeg) return false
-  if (memory.distanceM === null || sighting.distanceM === null) return true
-  return Math.abs(sighting.distanceM - memory.distanceM) <= sameDistanceToleranceM(memory.distanceM, cfg)
-}
-
 /** The target was last seen with its base out of the bottom of the frame, is roughly ahead, and that was recent. */
 function belowView(c: FindContext, bearingDeg: number, nowMs: number, cfg: FindConfig): boolean {
   return (
@@ -466,9 +461,8 @@ function onFailed(d: Draft, e: Extract<FindEvent, { type: 'failed' }>): void {
   if (sweepFrame) c.sweepPending = c.sweepPending.filter((id) => id !== e.id)
   else c.pending = null
   if (c.state === 'checking') {
-    // A hiccup (a network error, an unusable reply) gets one more try, quietly, before Find gives up. A timeout does not:
-    // a second slow try would only double the wait.
-    const transient = e.code === 'network' || e.code === 'bad_response'
+    // A hiccup (network, timeout, an unusable reply) gets one more try, quietly, before Find gives up.
+    const transient = e.code === 'network' || e.code === 'timeout' || e.code === 'bad_response'
     if (transient && c.checkRetries < d.cfg.checkRetryMax) {
       c.checkRetries += 1
       issueLocate(d, false)
@@ -570,33 +564,16 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
   const now = e.nowMs
   if (c.memory === null || e.heading === null) return
 
-  // A target Gemini found is handed to the detector as soon as a detector track of its kind sits on the same spot, so
-  // from then on it is followed frame by frame (and Gemini is not asked again while the detector holds it).
-  if (
-    c.memory.source === 'gemini' &&
-    e.yolo !== null &&
-    e.yolo.trackId !== undefined &&
-    Math.abs(wrap180(e.yolo.angleDeg - bearing(c.memory, e.heading))) <= cfg.handoffDeg
-  ) {
-    c.memory = { ...c.memory, source: 'yolo' }
-    c.followId = e.yolo.trackId
-  }
-
   // The detector follows a target it can see, frame by frame, so bearing and distance stay smooth. It keeps to the
-  // object it started with: a track with the followed id is the same object. Another is taken up only after the first
-  // has been gone for a moment (a new id for the same object after a flicker), only if it lies on the same spot (close
-  // in bearing and distance), and never while the first has probably just slipped below the view.
+  // object it started with: another of the same kind is taken up only after the first has been gone for a moment.
+  // A track with the followed id is the same object. Any other is taken up only after the first has been gone for a
+  // moment (a new id for the same object after a flicker), and only if it is where the first was.
   const yolo = c.memory.source === 'yolo' ? e.yolo : null
   const sameTrack = yolo !== null && yolo.trackId !== undefined && yolo.trackId === c.followId
-  let reacquired = false
-  if (yolo !== null && !sameTrack) {
-    reacquired =
-      yolo.trackId === undefined
-        ? isSameObject(c.memory, e.heading, yolo.angleDeg, cfg) // a sighting with no id cannot be told apart: its spot only
-        : (c.followId === null || now - c.yoloSeenAt >= cfg.yoloLostMs) &&
-          !belowView(c, bearing(c.memory, e.heading), now, cfg) &&
-          isOnSameSpot(c.memory, e.heading, yolo, cfg)
-  }
+  const reacquired =
+    yolo !== null &&
+    (c.followId === null || yolo.trackId === undefined || now - c.yoloSeenAt >= cfg.yoloLostMs) &&
+    isSameObject(c.memory, e.heading, yolo.angleDeg, cfg)
   const sighting = sameTrack || reacquired ? yolo : null
   if (sighting !== null) {
     c.memory = {
@@ -618,11 +595,10 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
 
   const bearingDeg = bearing(c.memory, e.heading)
 
-  // Arrived: near enough and straight ahead, and it has stayed that way for a moment. Stairs and doors count from
-  // further away. When the target's base is out of the frame its distance is only an upper bound (the nearest floor in
-  // view), so it is judged against a larger distance; tilting the phone down brings the floor, and so a real distance,
-  // into view.
-  const limitM = arrivalDistanceFor(c.target, c.memory.clipped === true, cfg)
+  // Arrived: near enough and straight ahead, and it has stayed that way for a moment. When the target's base is out
+  // of the frame its distance is only an upper bound (the nearest floor in view), so it is judged against a larger
+  // distance; tilting the phone down brings the floor, and so a real distance, into view.
+  const limitM = c.memory.clipped === true ? cfg.arrivalClippedM : cfg.arrivalDistanceM
   if (c.memory.distanceM !== null && c.memory.distanceM <= limitM && Math.abs(bearingDeg) < cfg.arrivalAngleDeg) {
     c.arrivalSince ??= now
     if (now - c.arrivalSince >= cfg.arrivalHoldMs) {
@@ -672,23 +648,20 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
   }
 
   // Ask Gemini again when the target should be in view and the detector is not holding it. The detector gets a moment
-  // to find it again after a flicker, and a target that has probably slipped below the view is not looked for. Close to
-  // the target the re-checks come faster (a look that skips the minimum gap), so "within reach" uses a fresh distance.
+  // to find it again after a flicker, and a target that has probably slipped below the view is not looked for.
   const detectorHolds = c.memory.source === 'yolo' && now - c.yoloSeenAt < cfg.yoloLostMs
   const slippedBelow = c.memory.source === 'yolo' && below
-  const nearTarget = c.memory.distanceM !== null && c.memory.distanceM <= cfg.nearRecheckM
   if (
     inView(bearingDeg, env.hfovDeg) &&
     !detectorHolds &&
     !slippedBelow &&
     !c.rechecking &&
-    (nearTarget ? e.canLook : e.canLocate) &&
-    now - c.lastRecheckAt >= (nearTarget ? cfg.nearRecheckIntervalMs : cfg.recheckIntervalMs)
+    e.canLocate &&
+    now - c.lastRecheckAt >= cfg.recheckIntervalMs
   ) {
     c.rechecking = true
     c.lastRecheckAt = now
-    // Gemini is told where the target should be, so with several of a kind in view it names the same one.
-    issueLocate(d, !nearTarget, targetColumn(bearingDeg, env.hfovDeg))
+    issueLocate(d, true)
   }
 }
 

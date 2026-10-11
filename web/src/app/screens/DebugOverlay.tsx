@@ -91,10 +91,6 @@ export default function DebugOverlay({ session, snapshot, pipeline }: Props) {
         <dd>
           {ms(view.inferenceP50)} / {ms(view.inferenceP95)} ms
         </dd>
-        <dt>capture to result p50 / p95</dt>
-        <dd>
-          {ms(view.latencyP50)} / {ms(view.latencyP95)} ms
-        </dd>
         <dt>heading / pitch / roll</dt>
         <dd>
           {tilt

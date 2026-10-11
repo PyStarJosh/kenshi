@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { describe, expect, test } from 'vitest'
 import { Camera, CameraError, chooseBackCamera, mapCameraError } from './camera'
 
 const device = (deviceId: string, label: string, kind: MediaDeviceKind = 'videoinput') => ({
@@ -86,103 +86,5 @@ describe('mapCameraError', () => {
     const original = new CameraError('insecure-page')
     expect(mapCameraError(original)).toBe(original)
     expect(mapCameraError('text').kind).toBe('unknown')
-  })
-})
-
-describe('one stream at start: the lens used last time is opened directly', () => {
-  function fakeMedia(options: { failId?: string; failWith?: string } = {}) {
-    const opened: MediaTrackConstraints[] = []
-    const storage = new Map<string, string>()
-    const track = (deviceId: string) => ({
-      label: deviceId === 'plain' ? 'Back Camera' : 'Back Triple Camera',
-      readyState: 'live',
-      getSettings: () => ({ deviceId, width: 1280, height: 720 }),
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      stop: () => {},
-    })
-    const stream = (deviceId: string) => {
-      const t = track(deviceId)
-      return { getVideoTracks: () => [t], getTracks: () => [t] }
-    }
-    vi.stubGlobal('window', { isSecureContext: true })
-    vi.stubGlobal('navigator', {
-      mediaDevices: {
-        getUserMedia: async ({ video }: { video: MediaTrackConstraints }) => {
-          opened.push(video)
-          const exact = (video.deviceId as { exact?: string } | undefined)?.exact
-          if (exact !== undefined && exact === options.failId) throw Object.assign(new Error('no'), { name: options.failWith })
-          return stream(exact ?? 'triple')
-        },
-        enumerateDevices: async () => [
-          { deviceId: 'triple', label: 'Back Triple Camera', kind: 'videoinput' },
-          { deviceId: 'plain', label: 'Back Camera', kind: 'videoinput' },
-        ],
-      },
-    })
-    const video = {
-      muted: false,
-      playsInline: false,
-      autoplay: false,
-      srcObject: null as unknown,
-      videoWidth: 1280,
-      videoHeight: 720,
-      paused: true,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      play: async () => {
-        video.paused = false
-      },
-    }
-    const lensStore = {
-      getItem: (key: string) => storage.get(key) ?? null,
-      setItem: (key: string, value: string) => void storage.set(key, value),
-      removeItem: (key: string) => void storage.delete(key),
-    }
-    const camera = new Camera(() => video as unknown as HTMLVideoElement, lensStore)
-    return { camera, opened, storage, video }
-  }
-
-  afterEach(() => vi.unstubAllGlobals())
-
-  test('the first start finds the plain lens (two streams), and the next start opens it at once (one)', async () => {
-    const t = fakeMedia()
-    const first = await t.camera.start()
-    expect(first.label).toBe('Back Camera')
-    expect(t.opened).toHaveLength(2) // the default camera, then the plain lens
-    t.camera.stop()
-    t.opened.length = 0
-    const second = await t.camera.start()
-    expect(second.label).toBe('Back Camera')
-    expect(t.opened).toEqual([expect.objectContaining({ deviceId: { exact: 'plain' } })])
-  })
-
-  test('a remembered lens that is gone is forgotten and the lens is chosen again', async () => {
-    const t = fakeMedia({ failId: 'old', failWith: 'OverconstrainedError' })
-    t.storage.set('kenshi.camera.lens.v1', 'old')
-    await t.camera.start()
-    expect(t.opened[0]).toMatchObject({ deviceId: { exact: 'old' } })
-    expect(t.storage.get('kenshi.camera.lens.v1')).toBe('plain')
-  })
-
-  test('a refusal is not asked again with another camera: it is the error', async () => {
-    const t = fakeMedia({ failId: 'plain', failWith: 'NotAllowedError' })
-    t.storage.set('kenshi.camera.lens.v1', 'plain')
-    await expect(t.camera.start()).rejects.toMatchObject({ kind: 'permission-denied' })
-    expect(t.opened).toHaveLength(1)
-  })
-
-  test('the stream is live until stopped, and a kept stream plays again without opening a new one', async () => {
-    const t = fakeMedia()
-    await t.camera.start()
-    expect(t.camera.isLive()).toBe(true)
-    t.video.paused = true
-    t.opened.length = 0
-    const info = await t.camera.resumePlayback()
-    expect(info.label).toBe('Back Camera')
-    expect(t.video.paused).toBe(false)
-    expect(t.opened).toEqual([])
-    t.camera.stop()
-    expect(t.camera.isLive()).toBe(false)
   })
 })

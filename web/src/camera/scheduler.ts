@@ -131,11 +131,8 @@ export function createBitmapGrabber(
         canvas = deps.createCanvas()
       }
     }
-    // Setting a canvas's size reallocates it, so only when the picture size changed (not on every frame).
-    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-      canvas.width = video.videoWidth
-      canvas.height = video.videoHeight
-    }
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('Could not draw the video frame to a canvas')
     ctx.drawImage(video, 0, 0)

@@ -2,15 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { CONFIG } from '../core/config'
 import type { Track } from '../core/types'
 import { CLASSES } from '../detection/classes'
-import {
-  arrivalDistanceFor,
-  cleanTarget,
-  DETECTOR_SYNONYMS,
-  detectorLabelsFor,
-  findYoloSighting,
-  isDetectorLabel,
-  QUICK_PICKS,
-} from './targets'
+import { cleanTarget, DETECTOR_SYNONYMS, detectorLabelsFor, findYoloSighting, isDetectorLabel, QUICK_PICKS } from './targets'
 
 function track(overrides: Partial<Track> = {}): Track {
   return {
@@ -51,17 +43,6 @@ describe('cleanTarget', () => {
     ['an elevator please', 'elevator'],
     ['Restroom sign', 'restroom sign'],
     ["it's here", "it's here"],
-    ["the women's restroom", "women's restroom"],
-    ['womens bathroom', "women's restroom"],
-    ['ladies room', "women's restroom"],
-    ['female toilets', "women's restroom"],
-    ["men's room", "men's restroom"],
-    ['mens restroom', "men's restroom"],
-    ['male bathroom', "men's restroom"],
-    ['the gents', "men's restroom"],
-    ['bathroom', 'bathroom'],
-    ['man', 'man'],
-    ['living room', 'living room'],
   ])('%s -> %s', (text, expected) => {
     expect(cleanTarget(text)).toBe(expected)
   })
@@ -121,11 +102,10 @@ describe('detectorLabelsFor', () => {
     expect(detectorLabelsFor('armchair')).toEqual(['chair', 'couch'])
   })
 
-  test('a bathroom or restroom, men\'s or women\'s or not, goes to Gemini (it is found by its door or sign)', () => {
-    for (const name of ['bathroom', 'restroom', 'washroom', 'loo', 'restroom sign', "women's restroom", "men's restroom", 'ladies room']) {
-      expect(detectorLabelsFor(name), name).toEqual([])
-    }
-    expect(detectorLabelsFor('toilet')).toEqual(['toilet']) // the fixture on its own is still a detector class
+  test('a bathroom is found by what is in it, but a restroom sign is not a toilet', () => {
+    expect(detectorLabelsFor('bathroom')).toEqual(['toilet', 'sink'])
+    expect(detectorLabelsFor('restroom')).toEqual(['toilet', 'sink'])
+    expect(detectorLabelsFor('restroom sign')).toEqual([])
   })
 
   test('whole names only: a modified name goes to Gemini, and odd words never match', () => {
@@ -181,8 +161,7 @@ describe('findYoloSighting', () => {
     expect(findYoloSighting('sofa', [track({ label: 'couch', clock: { position: 1, angleDeg: 15 } })])?.angleDeg).toBe(15)
     const sink = track({ label: 'sink', distanceM: 2, clock: { position: 12, angleDeg: -8 } })
     const toilet = track({ id: 2, label: 'toilet', distanceM: 3, clock: { position: 12, angleDeg: 20 } })
-    expect(findYoloSighting('bathroom', [toilet, sink])).toBeNull() // a bathroom is Gemini's to find
-    expect(findYoloSighting('toilet', [toilet, sink])?.angleDeg).toBe(20)
+    expect(findYoloSighting('bathroom', [toilet, sink])?.angleDeg).toBe(-8) // the nearer of the two fixtures
     expect(findYoloSighting('bag', [track({ label: 'backpack', clock: { position: 12, angleDeg: 3 } })])?.angleDeg).toBe(3)
   })
 
@@ -201,37 +180,5 @@ describe('findYoloSighting', () => {
     const sure = track({ id: 4, distanceM: 2, confidence: 0.95, clock: { position: 12, angleDeg: 1 } })
     const unsure = track({ id: 5, distanceM: 2, confidence: 0.6, clock: { position: 12, angleDeg: 2 } })
     expect(findYoloSighting('chair', [unsure, sure])?.angleDeg).toBe(1)
-  })
-
-  test('a track with no distance (reported as the farthest valid one) comes last, and its distance is unknown', () => {
-    const unknown = track({ id: 1, distanceM: CONFIG.geometry.maxValidDistanceM, clock: { position: 12, angleDeg: 0 } })
-    const known = track({ id: 2, distanceM: 6, clock: { position: 12, angleDeg: 10 } })
-    expect(findYoloSighting('chair', [unknown, known])).toMatchObject({ trackId: 2, distanceM: 6 })
-    expect(findYoloSighting('chair', [unknown])).toMatchObject({ trackId: 1, distanceM: null })
-  })
-
-  test('given where the object was and how far, a track at a clearly different distance is another object', () => {
-    const spot = { angleDeg: 0, maxDeg: 20, distanceM: 2 }
-    const behind = track({ id: 3, distanceM: 4.5, clock: { position: 12, angleDeg: 2 } }) // same bearing, 2.5 m further
-    const same = track({ id: 4, distanceM: 2.4, clock: { position: 12, angleDeg: 6 } })
-    expect(findYoloSighting('chair', [behind], 99, spot)).toBeNull()
-    expect(findYoloSighting('chair', [behind, same], 99, spot)).toMatchObject({ trackId: 4 })
-    // with no distance to compare, the bearing alone decides
-    expect(findYoloSighting('chair', [behind], 99, { angleDeg: 0, maxDeg: 20 })).toMatchObject({ trackId: 3 })
-  })
-})
-
-describe('arrivalDistanceFor', () => {
-  test('stairs count as within reach from 2 m, doors, exits, elevators and restrooms from 1.5 m, anything else from 1 m', () => {
-    for (const stairs of ['stairs', 'staircase', 'steps', 'escalator']) expect(arrivalDistanceFor(stairs, false), stairs).toBe(2)
-    for (const door of ['door', 'exit', 'elevator', 'lift', "women's restroom", 'restroom sign', 'bathroom', 'front entrance']) {
-      expect(arrivalDistanceFor(door, false), door).toBe(1.5)
-    }
-    for (const other of ['chair', 'trash can', 'person', 'keys', 'doormat']) expect(arrivalDistanceFor(other, false), other).toBe(1)
-  })
-
-  test('a box cut off at the bottom (an upper bound) is judged against at least the clipped limit', () => {
-    expect(arrivalDistanceFor('chair', true)).toBe(CONFIG.find.arrivalClippedM)
-    expect(arrivalDistanceFor('stairs', true)).toBe(2)
   })
 })

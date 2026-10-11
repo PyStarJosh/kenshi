@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'vitest'
 import { CONFIG } from '../core/config'
-import { computeFreeSpacePath, rgbaToGray } from '../geometry/freeSpacePath'
 import { PathStage } from './pathStage'
 
 /** A hallway as the canvas would give it: gray floor with a brighter wall above 45 percent of the height. */
@@ -15,22 +14,13 @@ function hallwayRgba(width: number, height: number): Uint8ClampedArray {
   return rgba
 }
 
-/** The hallway with a dark box standing on the floor from column x0 to x1, from row y0 to the bottom of the picture. */
-function withBox(width: number, height: number, x0: number, x1: number, y0: number): Uint8ClampedArray {
-  const rgba = hallwayRgba(width, height)
-  for (let y = y0; y < height; y++) {
-    for (let x = x0; x <= x1; x++) rgba.fill(40, (y * width + x) * 4, (y * width + x) * 4 + 3)
-  }
-  return rgba
-}
-
-function setup(everyNthFrame = 3, picture: (w: number, h: number) => Uint8ClampedArray = hallwayRgba) {
+function setup(everyNthFrame = 3) {
   const reads: [number, number][] = []
   let clock = 0
   const stage = new PathStage({
     readRgba: (w, h) => {
       reads.push([w, h])
-      return picture(w, h)
+      return hallwayRgba(w, h)
     },
     now: () => (clock += 2),
     everyNthFrame,
@@ -122,30 +112,5 @@ describe('the picture it analyses', () => {
     const down = stage.run(1280, 720, { ...input, pitchDeg: -25 })!.result
     expect(down.roiStartRow).toBeLessThan(level.roiStartRow)
     expect(down.freeMask).toHaveLength(320 * (180 - down.roiStartRow))
-  })
-})
-
-describe('the decision, steering to a target', () => {
-  const input = { pitchDeg: null, hfovDeg: 65 }
-
-  test('on open floor the line keeps to the target\'s column, so a target a little to the right is not a detour', () => {
-    const { stage } = setup(1)
-    const { result } = stage.run(1280, 720, { ...input, targetX: 0.7 })!
-    expect(result.decision).toBe('straight')
-    // the line's own decision, measured from the middle of the picture, would have said right
-    const gray = rgbaToGray(hallwayRgba(320, 180), 320, 180)
-    const raw = computeFreeSpacePath({ data: gray, width: 320, height: 180 }, CONFIG.freeSpace.path, { targetX: 0.7 })
-    expect(raw.decision).toBe('right')
-  })
-
-  test('with something standing in the way the line goes around it, and the decision says which side', () => {
-    const { stage } = setup(1, (w, h) => withBox(w, h, 190, 260, 110))
-    const { result } = stage.run(1280, 720, { ...input, targetX: 0.7 })!
-    expect(result.decision).toBe('left')
-  })
-
-  test('with no target the line\'s own decision is kept', () => {
-    const { stage } = setup(1)
-    expect(stage.run(1280, 720, { ...input, targetX: null })!.result.decision).toBe('straight')
   })
 })

@@ -4,7 +4,7 @@
 import { CONFIG } from '../core/config'
 import type { FreeSpaceResult } from '../core/types'
 import { computeFreeSpacePath, rgbaToGray } from '../geometry/freeSpacePath'
-import { detourDecision, pathOptionsFor, processSize } from '../geometry/pathInput'
+import { pathOptionsFor, processSize } from '../geometry/pathInput'
 import type { PathInput } from '../geometry/pathInput'
 
 export interface PathStageDeps {
@@ -41,19 +41,12 @@ export class PathStage {
     const rgba = this.deps.readRgba(width, height)
     if (this.gray.length < width * height) this.gray = new Uint8Array(width * height)
     rgbaToGray(rgba, width, height, this.gray)
-    const options = pathOptionsFor(input, width, height)
-    const path = computeFreeSpacePath({ data: this.gray, width, height }, CONFIG.freeSpace.path, options)
-    // Steering to a target, the decision is whether the line leaves the target's column (goes around something), not
-    // whether it is left or right of the middle of the picture.
-    const decision =
-      options.targetX === undefined
-        ? path.decision
-        : detourDecision(path.lookahead, options.targetX, CONFIG.freeSpace.path.turnDeadbandFrac)
+    const path = computeFreeSpacePath({ data: this.gray, width, height }, CONFIG.freeSpace.path, pathOptionsFor(input, width, height))
     return {
       result: {
         points: path.points,
         lookahead: path.lookahead,
-        decision,
+        decision: path.decision,
         processWidth: width,
         processHeight: height,
         roiStartRow: path.roiStartRow,

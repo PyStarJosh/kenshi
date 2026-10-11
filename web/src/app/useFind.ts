@@ -43,10 +43,9 @@ export function useFind(
   })
   useEffect(() => {
     link.setFindActive(() => runner.isActive())
-    // The detector also finds the free-space path (R7) while guiding to a target (it is not used while searching, so it
-    // costs nothing then), steering toward the target when it is in view.
+    // The detector also finds the free-space path (R7) while Find is running, steering toward the target when it is in view.
     session.setPathSource(() =>
-      runner.isGuiding() || pathAlways
+      runner.isActive() || pathAlways
         ? { targetX: runner.getTargetColumn(), hfovDeg: settingsStore.getSnapshot().horizontalFovDeg }
         : null,
     )

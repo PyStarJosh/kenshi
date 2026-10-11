@@ -7,42 +7,10 @@ import { CLASSES } from '../detection/classes'
 import { wrap180 } from '../sensors/heading'
 import type { YoloSighting } from './findController'
 
-// Things a person should not walk into get "within reach" earlier (owner request): stairs first, then doors and the
-// like (a restroom is found by its door or sign).
-const STAIRS = /\b(stairs?|staircases?|stairways?|steps?|escalators?)\b/
-const DOORWAY = /\b(doors?|doorways?|exits?|entrances?|elevators?|lifts?|gates?|restrooms?|bathrooms?|washrooms?)\b/
-
-/**
- * How near the target must be to count as within reach: CONFIG.find.arrivalStairsM for stairs, arrivalDoorM for doors,
- * exits, elevators and restrooms, arrivalDistanceM for anything else. A box cut off at the bottom gives only an upper
- * bound, so it is judged against at least arrivalClippedM.
- */
-export function arrivalDistanceFor(target: string, clipped: boolean, cfg = CONFIG.find): number {
-  const base = STAIRS.test(target) ? cfg.arrivalStairsM : DOORWAY.test(target) ? cfg.arrivalDoorM : cfg.arrivalDistanceM
-  return clipped ? Math.max(base, cfg.arrivalClippedM) : base
-}
-
 /** The quick-pick buttons, in order. */
 export const QUICK_PICKS = ['Exit', 'Door', 'Elevator', 'Stairs', 'Restroom sign', 'Chair', 'Trash can', 'Person'] as const
 
-// Restrooms go to Gemini, which reads their doors and signs (owner request), and a men's or women's one is asked for by
-// one clear name however it was said: "mens room", "ladies bathroom", "female toilets", "the gents".
-const RESTROOM_WORDS = /\b(rest ?rooms?|bath ?rooms?|wash ?rooms?|toilets?|lavatory|lavatories|loos?|wcs?)\b/
-const WOMEN_WORDS = /\b(women|womens|woman|womans|female|females|ladies|lady|girls|girl)\b/
-const MEN_WORDS = /\b(men|mens|man|mans|male|males|gents|gent|gentlemen|gentlemens|boys|boy)\b/
-
-/** "men's restroom" or "women's restroom" for a name that asks for one, else null. */
-export function genderedRestroom(name: string): "men's restroom" | "women's restroom" | null {
-  const plain = name.replace(/'/g, '')
-  // A restroom word, or just "<who> room" ("ladies room", "mens room"), or "gents" on its own.
-  const asksForRestroom = RESTROOM_WORDS.test(plain) || /^\S+ rooms?$/.test(plain) || plain === 'gents'
-  if (!asksForRestroom) return null
-  if (WOMEN_WORDS.test(plain)) return "women's restroom"
-  if (MEN_WORDS.test(plain)) return "men's restroom"
-  return null
-}
-
-/** "find my keys" and "the Keys." both become "keys"; "the ladies room" becomes "women's restroom". Empty text gives ''. */
+/** "find my keys" and "the Keys." both become "keys". Empty text gives ''. */
 export function cleanTarget(text: string): string {
   const cleaned = text
     .toLowerCase()
@@ -52,13 +20,13 @@ export function cleanTarget(text: string): string {
     .replace(/^(?:the|a|an|my|some|any)(?:\s+|$)/, '')
     .replace(/\s+(?:please|now|for me)$/, '')
     .trim()
-  return (genderedRestroom(cleaned) ?? cleaned).slice(0, CONFIG.find.maxTargetChars)
+  return cleaned.slice(0, CONFIG.find.maxTargetChars)
 }
 
 // The detector knows 80 everyday classes (COCO). A target that is one of their names, or its plural, already maps to
 // it ("chair", "chairs", "traffic light", "bowl"). These are the other words people use for the same things, and a
-// few names that stand for several classes at once. Exit, door, elevator, stairs, a restroom (and a restroom sign) and a
-// trash can are not among the 80 classes, so they always go to Gemini; a toilet or a sink on its own is a class.
+// few names that stand for several classes at once (a bathroom has a toilet or a sink in it). Exit, door, elevator,
+// stairs, a restroom sign and a trash can are not among the 80 classes, so they always go to Gemini.
 export const DETECTOR_SYNONYMS: Record<string, readonly string[]> = {
   // People
   people: ['person'],
@@ -134,6 +102,12 @@ export const DETECTOR_SYNONYMS: Record<string, readonly string[]> = {
   'blow dryer': ['hair drier'],
   teddy: ['teddy bear'],
   brolly: ['umbrella'],
+  // A bathroom is found by the fixtures in it
+  bathroom: ['toilet', 'sink'],
+  restroom: ['toilet', 'sink'],
+  washroom: ['toilet', 'sink'],
+  lavatory: ['toilet', 'sink'],
+  loo: ['toilet', 'sink'],
   // Sport
   ball: ['sports ball'],
   football: ['sports ball'],
@@ -178,63 +152,31 @@ export function isDetectorLabel(label: string, classes: readonly ClassInfo[]): b
   return classes.some((c) => c.label === label)
 }
 
-/** Where the object being followed was, so a lost track is replaced only by one on that spot. */
-export interface SightingSpot {
-  /** Its bearing now, degrees from straight ahead. */
-  angleDeg: number
-  /** How far off another track may be and still count. */
-  maxDeg: number
-  /** Its distance, when known: a track at a clearly different distance is another object. */
-  distanceM?: number | null
-}
-
-/** A track's distance, or null when geometry had none (the tracker then reports the farthest valid distance). */
-function knownDistance(track: Track): number | null {
-  return track.distanceM < CONFIG.geometry.maxValidDistanceM ? track.distanceM : null
-}
-
-/** How far apart two distances may be and still be the same object. */
-export function sameDistanceToleranceM(distanceM: number, cfg = CONFIG.find): number {
-  return Math.max(cfg.reacquireDistanceMinM, cfg.reacquireDistanceFrac * distanceM)
-}
-
 /**
- * The best confirmed track of the target's class in view, as a bearing and distance, or null. The closest first, then
- * the most confident; a track with no distance comes last. A target the detector does not know never matches.
+ * The best confirmed track of the target's class in view, as a bearing and distance, or null. Nearest first, then
+ * the most confident. A target the detector does not know never matches.
  */
 export function findYoloSighting(
   target: string,
   tracks: readonly Track[],
   preferTrackId: number | null = null,
-  near: SightingSpot | null = null,
+  near: { angleDeg: number; maxDeg: number } | null = null,
 ): YoloSighting | null {
   const labels = detectorLabelsFor(target)
   if (labels.length === 0) return null
   const matches = tracks.filter((t) => labels.includes(t.label) && t.status === 'confirmed')
   if (matches.length === 0) return null
-  matches.sort((a, b) => (knownDistance(a) ?? Infinity) - (knownDistance(b) ?? Infinity) || b.confidence - a.confidence)
+  matches.sort((a, b) => a.distanceM - b.distanceM || b.confidence - a.confidence)
   // Keep following the object already being followed, so two chairs in view do not swap places as their
-  // estimated distances wobble. If it is gone, only one where it was is taken for it (the same object under a new id):
-  // close in bearing and, when both distances are known, in distance; the best fit of those.
-  const fit = (t: Track): number | null => {
-    if (near === null) return 0
-    const angleOff = Math.abs(wrap180(t.clock.angleDeg - near.angleDeg))
-    if (angleOff > near.maxDeg) return null
-    const d = knownDistance(t)
-    if (near.distanceM == null || d === null) return angleOff / near.maxDeg
-    const tolerance = sameDistanceToleranceM(near.distanceM)
-    const distanceOff = Math.abs(d - near.distanceM)
-    return distanceOff > tolerance ? null : angleOff / near.maxDeg + distanceOff / tolerance
-  }
-  const onSpot = matches
-    .map((t) => ({ t, score: fit(t) }))
-    .filter((m): m is { t: Track; score: number } => m.score !== null)
-    .sort((a, b) => a.score - b.score)
-  const best = matches.find((t) => t.id === preferTrackId) ?? onSpot[0]?.t
+  // estimated distances wobble.
+  // If it is gone, only one where it was is taken for it (the same object under a new id), not another of the kind.
+  const onSpot = near === null ? matches : matches.filter((t) => Math.abs(wrap180(t.clock.angleDeg - near.angleDeg)) <= near.maxDeg)
+  if (near !== null) onSpot.sort((a, b) => Math.abs(wrap180(a.clock.angleDeg - near.angleDeg)) - Math.abs(wrap180(b.clock.angleDeg - near.angleDeg)))
+  const best = matches.find((t) => t.id === preferTrackId) ?? onSpot[0]
   if (best === undefined) return null
   return {
     angleDeg: best.clock.angleDeg,
-    distanceM: knownDistance(best),
+    distanceM: best.distanceM,
     trackId: best.id,
     clipped: best.box.y + best.box.height >= 1 - CONFIG.geometry.edgeTouchMargin,
   }
