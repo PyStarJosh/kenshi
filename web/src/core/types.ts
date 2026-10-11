@@ -213,3 +213,61 @@ export interface EventMap {
   voice: VoiceIntent
   settings: Settings
 }
+
+// Find: the contract of POST /api/locate (web/api/locate.ts), shared by the function and the client (FR-22).
+// The function imports these as types only, so nothing from src/ is bundled into it.
+
+/** One camera frame for a locate request: base64 JPEG (no "data:" prefix), and the phone's heading and pitch when it was taken. */
+export interface LocateFrame {
+  jpeg: string
+  /** Gyroscope yaw in degrees, relative to where Find started (R3). */
+  heading: number
+  /** Pitch in degrees, as the orientation sensor reports it. */
+  pitch: number
+}
+
+/** What the app sends: the target's name and one to eight frames, in capture order. */
+export interface LocateRequest {
+  target: string
+  frames: LocateFrame[]
+}
+
+/** A box in a frame, as fractions of the frame (0 to 1) from the top-left corner. */
+export interface LocateBox {
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+}
+
+/** What comes back when the request worked. Not found is a normal answer (found false), not an error. */
+export interface LocateResult {
+  found: boolean
+  /** The frame that shows the target best; null when not found. */
+  frameIndex: number | null
+  box: LocateBox | null
+  label: string
+  /** True when the target's bottom edge rests on the floor, so its distance can be trusted more. */
+  onFloor: boolean
+  /** Gemini's rough guess in meters, or null. A hint, never a measurement. */
+  distanceM: number | null
+  confidence: number
+  /** Sign text pointing toward the target, for example "EXIT ->", or null. */
+  signHint: string | null
+  /** How long the function took, in milliseconds. */
+  latencyMs: number
+}
+
+export type LocateErrorCode =
+  | 'bad_request' // the request was malformed or over the limits
+  | 'timeout' // Gemini (or the app waiting for the function) took too long
+  | 'quota' // the free tier is out of requests for now (HTTP 429)
+  | 'auth' // no key, a refused key, or a model that is not available
+  | 'bad_response' // Gemini answered with something we cannot use
+  | 'network' // a connection failed, or Gemini was unavailable
+
+/** The JSON body of a failed request. The message is for the developer; the app speaks its own sentence. */
+export interface LocateErrorBody {
+  error: LocateErrorCode
+  message: string
+}

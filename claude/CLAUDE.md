@@ -40,7 +40,7 @@ web/                        Vite + React + TypeScript app
   src/audio/                unlock, tones, speech, heartbeat, engine; beacon (R5)
   src/health/               health monitor
   src/voice/                recognizer, commands, control, gesture
-  src/find/                 locate client, types, messages (R2); scan sweep, target memory, controller, guidance (R3-R5)
+  src/find/                 locate client and messages (R2; the Locate types are in core/types.ts); scan sweep, target memory, controller, guidance (R3-R5)
   src/app/                  session, audio link, pipeline, settings, calibration, screens (Find screen R6)
   scripts/copy-ort.mjs      copies onnxruntime-web WebAssembly files into public/ort (runs before dev and build)
   vercel.json               cross-origin isolation headers
@@ -113,7 +113,7 @@ Python (repo root): sync with uv sync --all-groups. Export the model: uv run --g
 
 Web (in web/):
 - Install: npm install
-- Dev: npm run dev (phone access: ngrok http 5173). With the function: vercel dev (needs GEMINI_API_KEY in web/.env.local, which is never printed or committed)
+- Dev: npm run dev (phone access: ngrok http 5173). With the function: npm run dev:api (vercel dev on port 3000 with web/.env.local loaded; the file is never printed or committed)
 - Checks: npm run lint, npm run typecheck, npm run test, npm run build
 - Try the function with a real key: node scripts/try-locate.mjs <image.jpg> "<target>" [base url]
 

@@ -235,21 +235,27 @@ export const CONFIG = {
   find: {
     // Frames per request: one for a look, up to eight for a scan sweep. FR-22, FR-23
     maxFrames: 8,
-    // Longest side of a frame sent to Gemini, in pixels. Starting value; to be measured. FR-22, NFR-14
-    maxImageSidePx: 768,
+    // Width of a frame sent to Gemini, in pixels (height keeps the aspect). Starting value; to be measured. FR-22, NFR-14
+    imageWidthPx: 640,
     // JPEG quality (0 to 1) for those frames. Starting value; to be measured. NFR-14
     jpegQuality: 0.7,
     // Limits web/api/locate.ts enforces (a test keeps them equal to these): one base64 frame, the whole body
-    // (Vercel allows 4.5 MB), and the target name. FR-22
+    // (Vercel allows 4.5 MB), the target name, and the largest heading and pitch magnitudes in degrees. FR-22
     maxFrameChars: 600_000,
     maxBodyChars: 4_000_000,
     maxTargetChars: 60,
-    // The app gives up on /api/locate after this long. Starting value; to be measured. NFR-14
-    requestTimeoutMs: 20_000,
-    // The function gives up on Gemini after this long, so it answers before the app stops waiting. To be measured.
-    geminiTimeoutMs: 15_000,
+    maxHeadingDeg: 3600,
+    maxPitchDeg: 180,
+    // The function gives up on Gemini after this long (owner spec), and the app gives up on the function a little
+    // later, so the function's own error arrives first. FR-22, NFR-14
+    geminiTimeoutMs: 8_000,
+    requestTimeoutMs: 12_000,
     // An answer below this confidence counts as not found. Starting value; to be measured. SR-11
     minConfidence: 0.5,
+    // The free tier is small: at least this long between two requests, and at most this many in any 60 seconds.
+    // Owner defaults; to be measured against the real limits. FR-22
+    minGapMs: 6_000,
+    maxPerMinute: 8,
   },
 }
 

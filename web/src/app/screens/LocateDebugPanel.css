@@ -1,0 +1,37 @@
+.locate-debug {
+  position: absolute;
+  /* Top right, clear of the debug stats panel on the left and the audio panel at the bottom. */
+  right: max(0.5rem, env(safe-area-inset-right));
+  top: max(0.5rem, env(safe-area-inset-top));
+  max-width: min(24rem, 45vw);
+  z-index: 2;
+  padding: 0.35rem 0.5rem;
+  background: #000c;
+  color: #fff;
+  font: 0.75rem/1.35 ui-monospace, monospace;
+}
+
+.locate-debug-row {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.locate-debug input {
+  min-width: 0;
+  flex: 1;
+  padding: 0.3rem 0.4rem;
+  font: inherit;
+}
+
+.locate-debug button {
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+}
+
+.locate-debug pre {
+  max-height: 40vh;
+  margin: 0.35rem 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
