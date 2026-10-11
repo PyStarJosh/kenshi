@@ -2,6 +2,7 @@
 // This reads the wording of every module (read only), so a new sentence anywhere is checked too.
 import { describe, expect, test } from 'vitest'
 import { MESSAGES } from '../app/messages'
+import { RESTART_NOTICE } from '../app/restartNotice'
 import { GREETING } from '../audio/unlock'
 import { FIND_MESSAGES } from '../find/messages'
 import {
@@ -49,6 +50,7 @@ const sources: [string, Record<string, string> | string][] = [
   ['health phrases', HEALTH_PHRASES],
   ['status messages', MESSAGES],
   ['greeting', { greeting: GREETING }],
+  ['restart notice', { restart: RESTART_NOTICE }],
   ['find messages', FIND_MESSAGES],
   ['find phrases', FIND_PHRASES],
   ['guidance instructions', GUIDANCE_PHRASES],
