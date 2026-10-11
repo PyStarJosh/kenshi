@@ -296,10 +296,12 @@ export const CONFIG = {
     maxTargetChars: 60,
     maxHeadingDeg: 3600,
     maxPitchDeg: 180,
-    // The function gives up on Gemini after this long (owner spec), and the app gives up on the function a little
-    // later, so the function's own error arrives first. FR-22, NFR-14
-    geminiTimeoutMs: 8_000,
-    requestTimeoutMs: 14_000,
+    // The function gives up on Gemini after this long, and the app gives up on the function a little later, so the
+    // function's own error arrives first. Raised from 8 s (owner request, 2026-10-11): the free tier sometimes answers
+    // in 6 to 10 s, and real calls timed out at 8 s. A quick retry only happens within the first 4 s, so the function
+    // takes at most about 16 s (vercel.json allows 20). FR-22, NFR-14
+    geminiTimeoutMs: 12_000,
+    requestTimeoutMs: 18_000,
     // An answer below this confidence counts as not found. Starting value; to be measured. SR-11
     minConfidence: 0.6,
     // A remembered target direction is dropped after this long: a gyroscope heading drifts and has no north

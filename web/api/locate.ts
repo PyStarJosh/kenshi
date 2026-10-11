@@ -19,7 +19,7 @@ const LIMITS = {
   maxTargetChars: 60,
   maxHeadingDeg: 3600,
   maxPitchDeg: 180,
-  geminiTimeoutMs: 8_000,
+  geminiTimeoutMs: 12_000,
   minConfidence: 0.6,
   // Two tries at most, and a retry only if the first failed within this long.
   geminiAttempts: 2,
