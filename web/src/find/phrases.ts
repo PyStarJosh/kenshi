@@ -6,7 +6,6 @@ import { CONFIG } from '../core/config'
 export type Direction = 'ahead' | 'slightly-left' | 'slightly-right' | 'left' | 'right' | 'behind'
 
 export const FIND_PHRASES = {
-  privacy: 'Find sends camera photos to Google Gemini to locate things.',
   notInView: 'Not in view. Turn slowly to your right.',
   keepTurning: 'Keep turning slowly to your right.',
   stillSearching: 'Still searching.',

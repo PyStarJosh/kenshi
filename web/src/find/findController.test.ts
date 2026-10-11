@@ -143,29 +143,24 @@ class Sim {
 }
 
 describe('starting a search', () => {
-  test('speaks the privacy notice once, confirms the target, and makes one locate call with the current frame', () => {
+  test('confirms the target and makes one locate call with the current frame', () => {
     const sim = new Sim()
     const effects = sim.request('Chair')
     expect(sim.state).toBe('checking')
-    expect(sim.said(effects)).toEqual([`${FIND_PHRASES.privacy} Looking for a chair.`])
+    expect(sim.said(effects)).toEqual(['Looking for a chair.'])
     expect(sim.locateEffects(effects)).toEqual([{ type: 'locate', id: 1, paced: true }])
   })
 
-  test('the privacy notice is never spoken a second time in the same session', () => {
+  test('no search ever says anything about Gemini (owner decision: there is no privacy notice)', () => {
     const sim = new Sim()
-    sim.request('chair')
+    sim.request('chair', { angleDeg: 0, distanceM: 3 })
     sim.cancel()
-    const effects = sim.request('exit')
-    expect(sim.said(effects)).toEqual(['Looking for an exit.'])
-  })
-
-  test('the notice comes before the first locate call, not before a YOLO shortcut that makes no call', () => {
-    const sim = new Sim()
-    const shortcut = sim.request('chair', { angleDeg: 0, distanceM: 3 })
-    expect(sim.said(shortcut).join(' ')).not.toContain('Gemini')
+    sim.request('exit')
     sim.cancel()
-    const later = sim.request('exit')
-    expect(sim.said(later)[0]).toContain(FIND_PHRASES.privacy)
+    sim.request('door')
+    expect(sim.said().join(' ')).not.toMatch(/gemini|google|photo/i)
+    expect(sim.said()).toContain('Looking for an exit.')
+    expect(sim.said()).toContain('Looking for a door.')
   })
 
   test('an empty or article-only target does nothing', () => {

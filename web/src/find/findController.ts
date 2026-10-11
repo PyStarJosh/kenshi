@@ -47,8 +47,6 @@ export interface FindContext {
   target: string
   /** The phone gave no heading when the search began: single-frame search only, no sweep and no guiding. */
   noHeading: boolean
-  /** The privacy notice was spoken in this session; it is never spoken twice. */
-  privacyAnnounced: boolean
   memory: TargetMemory | null
   /** Sign text Gemini read that may point toward the target. */
   signHint: string | null
@@ -100,7 +98,6 @@ export function initialContext(): FindContext {
     state: 'idle',
     target: '',
     noHeading: false,
-    privacyAnnounced: false,
     memory: null,
     signHint: null,
     enteredAt: 0,
@@ -204,8 +201,8 @@ function say(d: Draft, nowMs: number, ...parts: string[]): void {
 }
 
 function toIdle(d: Draft): void {
-  const { privacyAnnounced, nextId } = d.c
-  Object.assign(d.c, initialContext(), { privacyAnnounced, nextId })
+  const { nextId } = d.c
+  Object.assign(d.c, initialContext(), { nextId })
 }
 
 function issueLocate(d: Draft, paced: boolean): void {
@@ -216,12 +213,7 @@ function issueLocate(d: Draft, paced: boolean): void {
 
 function startChecking(d: Draft, nowMs: number): void {
   const { c } = d
-  const parts: string[] = []
-  if (!c.privacyAnnounced) {
-    parts.push(FIND_PHRASES.privacy)
-    c.privacyAnnounced = true
-  }
-  parts.push(lookingFor(c.target))
+  const parts: string[] = [lookingFor(c.target)]
   if (c.noHeading) parts.push(FIND_PHRASES.noHeading)
   say(d, nowMs, ...parts)
   c.state = 'checking'

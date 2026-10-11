@@ -142,7 +142,7 @@ describe('a search from the quick-pick list or a voice command', () => {
       priority: 'normal',
       pan: null,
       trackId: null,
-      phrase: `${FIND_PHRASES.privacy} Looking for a chair.`,
+      phrase: 'Looking for a chair.',
     })
     expect(t.calls).toHaveLength(1)
     expect(t.calls[0].target).toBe('chair')
