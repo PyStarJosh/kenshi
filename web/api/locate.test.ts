@@ -337,6 +337,19 @@ describe('the handler', () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).model).toBe(internals.DEFAULT_MODEL)
   })
 
+  test('an exception inside is our own JSON error, never the platform 500 page', async () => {
+    const broken = {
+      method: 'POST',
+      url: 'https://kenshi.example/api/locate',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: () => Promise.reject(new Error('stream aborted')),
+    } as unknown as Request
+    const response = await POST(broken)
+    expect(response.status).toBe(502)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    expect(await response.json()).toMatchObject({ error: 'network' })
+  })
+
   test('a not-found answer is a normal 200', async () => {
     fetchMock.mockResolvedValue(geminiOk(notFoundAnswer))
     const response = await post(body('chair'))

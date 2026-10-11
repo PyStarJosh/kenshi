@@ -275,7 +275,19 @@ async function callGemini(key: string, body: string): Promise<GeminiCall> {
   }
 }
 
+/**
+ * Whatever goes wrong inside, the answer is our own JSON error and never the platform's bare 500 page (an uncaught
+ * exception makes Vercel answer FUNCTION_INVOCATION_FAILED as text, which the app could only call a network problem).
+ */
 export async function POST(request: Request): Promise<Response> {
+  try {
+    return await handle(request)
+  } catch {
+    return fail('network', 'The search function failed.', STATUS.network)
+  }
+}
+
+async function handle(request: Request): Promise<Response> {
   const started = performance.now()
   const key = process.env.GEMINI_API_KEY
   if (!key) return fail('auth', 'GEMINI_API_KEY is not set.')
