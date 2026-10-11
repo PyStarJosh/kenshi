@@ -44,5 +44,5 @@ export const VOICE_PHRASES = {
   fastestReached: 'Fastest speed.',
   nothingToRepeat: 'Nothing to repeat yet.',
   aroundSoon: 'What\'s around me is not available yet.',
-  help: 'Tap, then say: what\'s around me, pause, resume, repeat, slower, faster, or help. If I hear nothing, tapping alone tells you what\'s around. Hold for one second to pause or resume. This does not replace your cane.',
+  help: 'Tap, then say: what\'s around me, pause, resume, repeat, slower, faster, or help. If I hear nothing, tapping alone tells you what\'s around. Hold for one second to pause or resume.',
 } as const

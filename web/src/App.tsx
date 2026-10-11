@@ -43,7 +43,6 @@ export default function App() {
       {!live && (
         <div className="start-screen">
           <h1>Kenshi</h1>
-          <p className="cane-note">Kenshi complements your white cane. It does not replace it.</p>
           <button
             type="button"
             className="start"

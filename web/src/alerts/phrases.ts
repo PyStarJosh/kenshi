@@ -6,7 +6,7 @@ import type { ClockPosition, Elevation } from '../core/types'
 import { roundDistance } from '../geometry/geometry'
 
 /** What "what's around me" says when nothing is detected: a limit, never an all-clear (SR-2). */
-export const SUMMARY_NONE = "I don't detect anything right now. I can miss things, so keep using your cane."
+export const SUMMARY_NONE = "I don't detect anything right now. I can miss things."
 
 export interface PhraseInput {
   /** The class's spoken name, for example "backpack". */

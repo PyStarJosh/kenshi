@@ -136,7 +136,7 @@ describe('safety wording (SR-2)', () => {
     for (const text of everything) expect(text).not.toMatch(banned)
   })
 
-  test('the none-detected sentence points back to the cane', () => {
-    expect(SUMMARY_NONE).toMatch(/cane/)
+  test('the none-detected sentence states a limit', () => {
+    expect(SUMMARY_NONE).toMatch(/miss things/)
   })
 })

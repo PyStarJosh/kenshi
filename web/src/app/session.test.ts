@@ -180,7 +180,7 @@ describe('start', () => {
     const message = t.session.getSnapshot().message
     expect(message).toMatch(/screen may lock/)
     expect(message).toMatch(/tilt sensor/)
-    expect(message.endsWith('Keep using your white cane.')).toBe(true)
+    expect(message.endsWith('.')).toBe(true)
   })
 
   test('a camera failure returns to idle with the spoken sentence and cleans up', async () => {

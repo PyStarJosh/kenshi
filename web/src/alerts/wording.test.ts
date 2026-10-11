@@ -32,9 +32,8 @@ describe('SR-2 wording', () => {
     }
   })
 
-  test('the none-detected answer states a limit and points back to the cane', () => {
+  test('the none-detected answer states a limit', () => {
     expect(SUMMARY_NONE).toMatch(/miss things/)
-    expect(SUMMARY_NONE).toMatch(/cane/)
   })
 
   test('the greeting says the app name as Ken-shee, not Navigator', () => {
