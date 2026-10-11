@@ -1,4 +1,7 @@
 {
+  "functions": {
+    "api/locate.ts": { "maxDuration": 30 }
+  },
   "headers": [
     {
       "source": "/(.*)",

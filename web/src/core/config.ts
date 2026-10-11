@@ -252,6 +252,26 @@ export const CONFIG = {
     earconHz: [523, 784],
     earconNoteMs: 70,
   },
+
+  find: {
+    // Frames per request: one for a look, up to eight for a scan sweep. FR-22, FR-23
+    maxFrames: 8,
+    // Longest side of a frame sent to Gemini, in pixels. Starting value; to be measured. FR-22, NFR-14
+    maxImageSidePx: 768,
+    // JPEG quality (0 to 1) for those frames. Starting value; to be measured. NFR-14
+    jpegQuality: 0.7,
+    // Limits web/api/locate.ts enforces (a test keeps them equal to these): one base64 frame, the whole body
+    // (Vercel allows 4.5 MB), and the target name. FR-22
+    maxFrameChars: 600_000,
+    maxBodyChars: 4_000_000,
+    maxTargetChars: 60,
+    // The app gives up on /api/locate after this long. Starting value; to be measured. NFR-14
+    requestTimeoutMs: 20_000,
+    // The function gives up on Gemini after this long, so it answers before the app stops waiting. To be measured.
+    geminiTimeoutMs: 15_000,
+    // An answer below this confidence counts as not found. Starting value; to be measured. SR-11
+    minConfidence: 0.5,
+  },
 }
 
 export type Config = typeof CONFIG

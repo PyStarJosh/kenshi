@@ -25,7 +25,7 @@ Kenshi: a real-time guide for blind and low-vision people that runs on an iPhone
 pyproject.toml, uv.lock     Python tooling (uv); one dependency group: ml
 ml/                         export_onnx.py, class_map.json, gen_classes.py (writes detection/classes.ts), check_onnx.py, make_icons.py
 web/                        Vite + React + TypeScript app
-  api/locate.ts             (R2) the Vercel function that calls Gemini
+  api/locate.ts             the Vercel function that calls Gemini (R2); .env.example lists GEMINI_API_KEY and GEMINI_MODEL
   public/models/            ONNX models (each under 15 MB)
   public/ort/               onnxruntime-web WebAssembly files, copied by scripts/copy-ort.mjs (gitignored)
   public/samples/           bus.jpg for the benchmark screen (?bench)
@@ -40,7 +40,7 @@ web/                        Vite + React + TypeScript app
   src/audio/                unlock, tones, speech, heartbeat, engine; beacon (R5)
   src/health/               health monitor
   src/voice/                recognizer, commands, control, gesture
-  src/find/                 (R2-R5) locate client, scan sweep, target memory, controller, guidance
+  src/find/                 locate client, types, messages (R2); scan sweep, target memory, controller, guidance (R3-R5)
   src/app/                  session, audio link, pipeline, settings, calibration, screens (Find screen R6)
   scripts/copy-ort.mjs      copies onnxruntime-web WebAssembly files into public/ort (runs before dev and build)
   vercel.json               cross-origin isolation headers
@@ -115,6 +115,7 @@ Web (in web/):
 - Install: npm install
 - Dev: npm run dev (phone access: ngrok http 5173). With the function: vercel dev (needs GEMINI_API_KEY in web/.env.local, which is never printed or committed)
 - Checks: npm run lint, npm run typecheck, npm run test, npm run build
+- Try the function with a real key: node scripts/try-locate.mjs <image.jpg> "<target>" [base url]
 
 Deploy: push to main. Vercel builds web/ (root directory web, framework Vite).
 
