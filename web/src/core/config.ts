@@ -144,40 +144,19 @@ export const CONFIG = {
     heartbeatVolume: 0.3,
   },
 
+  // What the audio engine and the tracker still read from the old alert policy. The detector no longer
+  // announces objects, so the band, cooldown, queue, and summary settings were removed.
   alerts: {
-    // Distance bands in meters (upper edges); entering a closer band can trigger a new announcement. FR-10
-    distanceBandsM: [1.5, 3, 4],
-    // Distances are spoken rounded to this step. FR-11
+    // Distances are rounded to this step. FR-11
     roundToM: 0.5,
-    // Urgent when an in-path object is this close, or closer. FR-10, SR-4
+    // Urgent tone pulses are spaced by distance, from this far (slowest) inward. FR-12, SR-4
     urgentDistanceM: 1.5,
-    // Urgent when time-to-contact is at or below this. FR-5, FR-10, SR-4
-    urgentTtcS: 2,
     // Closing speed needed to count as approaching. FR-5
     approachMinSpeedMps: 0.5,
-    // Time-to-contact limit for announcing an approaching object. FR-5, FR-10
+    // Time-to-contact limit for flagging an approaching object. FR-5
     approachMaxTtcS: 4,
-    // Minimum time between urgent alerts about the same track. FR-10
-    urgentCooldownMs: 2000,
-    // Minimum time before re-announcing a track that entered a closer band. FR-10
-    closerBandCooldownMs: 1500,
-    // Minimum time before re-announcing a track whose clock position changed. An unchanged object is
-    // announced once, never repeated on a timer. FR-10
-    clockChangeCooldownMs: 3000,
-    // Minimum silence between two spoken alerts (urgent alerts ignore it). FR-10
-    minGapMs: 800,
-    // Normal alerts waiting behind the current one; extra ones are held back or dropped. FR-10
-    maxQueuedAlerts: 2,
-    // An alert counts as finished this long after it was sent even if the audio engine never reports
-    // back, so a missing report cannot silence every later alert. FR-10, SR-1
-    inFlightTimeoutMs: 8000,
     // An alert older than this, measured from its frame capture, is dropped unspoken. SR-3, NFR-4
     staleLimitMs: 1000,
-    // Horizontal angle (degrees from straight ahead) at which the tone is panned fully left or right. FR-12
-    panFullAngleDeg: 30,
-    // Most objects listed by "what's around me", nearest first, and the farthest one it will mention. FR-15
-    summaryMaxItems: 5,
-    summaryMaxDistanceM: 6,
   },
 
   audio: {

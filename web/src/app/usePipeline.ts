@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { AlertPolicy } from '../alerts/policy'
 import { CLASSES } from '../detection/classes'
 import { Tracker } from '../tracking/tracker'
 import type { AudioLink } from './audioLink'
@@ -15,7 +14,6 @@ export function usePipeline(session: Session, link: AudioLink): Pipeline {
         session,
         link,
         tracker: new Tracker(CLASSES),
-        policy: new AlertPolicy(CLASSES),
         getSettings: () => settingsStore.getSnapshot(),
         now: () => performance.now(),
       }),

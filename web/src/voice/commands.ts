@@ -5,12 +5,10 @@ import type { VoiceIntent } from '../core/types'
 
 const RULES: { intent: VoiceIntent; pattern: RegExp }[] = [
   { intent: 'help', pattern: /\b(help|commands|what can i say|options)\b/ },
-  { intent: 'repeat', pattern: /\b(repeat|again|say that|last one|what was that)\b/ },
   { intent: 'slower', pattern: /\b(slower|slow down|too fast|speak slower)\b/ },
   { intent: 'faster', pattern: /\b(faster|speed up|too slow|speak faster)\b/ },
   { intent: 'resume', pattern: /\b(resume|continue|start|restart|go on|unpause)\b/ },
-  { intent: 'pause', pattern: /\b(pause|stop|hold on|wait)\b/ },
-  { intent: 'whats-around', pattern: /\b(around|here|near|nearby|front|ahead|surroundings|whats up)\b/ },
+  { intent: 'pause', pattern: /\b(pause|hold on|wait)\b/ },
 ]
 
 /** Map recognized text to an intent; anything not matched is 'unknown'. */
@@ -34,7 +32,7 @@ export function stepSpeechRate(rate: number, direction: 'slower' | 'faster'): nu
 }
 
 export const VOICE_PHRASES = {
-  unavailable: 'Voice commands unavailable. Tap to hear what\'s around you.',
+  unavailable: 'Voice commands are not available on this device.',
   notUnderstood: 'Sorry, I didn\'t catch that.',
   paused: 'Paused.',
   resumed: 'Resuming.',
@@ -42,7 +40,5 @@ export const VOICE_PHRASES = {
   faster: 'Faster.',
   slowestReached: 'Slowest speed.',
   fastestReached: 'Fastest speed.',
-  nothingToRepeat: 'Nothing to repeat yet.',
-  aroundSoon: 'What\'s around me is not available yet.',
-  help: 'Tap, then say: what\'s around me, pause, resume, repeat, slower, faster, or help. If I hear nothing, tapping alone tells you what\'s around. Hold for one second to pause or resume.',
+  help: 'Tap, then say: pause, resume, slower, faster, or help. Hold for one second to pause or resume.',
 } as const
