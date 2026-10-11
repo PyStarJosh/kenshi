@@ -1,7 +1,7 @@
 // Unlock: iOS plays Web Audio and speech only if they begin inside a user gesture, so this runs
 // synchronously in the Start tap, before anything is awaited.
 
-export const GREETING = 'Navigator on. Hold the phone at eye level.'
+export const GREETING = 'Navigator on. It does not replace your cane. Hold the phone at eye level.'
 
 type AudioContextConstructor = typeof AudioContext
 

@@ -155,6 +155,20 @@ describe('HealthMonitor', () => {
     expect(monitor.update(5000 + cfg.stalledAfterMs).announcements).toEqual([])
   })
 
+  test('while paused a reminder repeats at the configured interval, and stops on resume (SR-9)', () => {
+    const interval = CONFIG.audio.pausedReminderIntervalMs
+    const monitor = started()
+    monitor.setRunState('paused', 1000)
+    expect(monitor.update(1000 + interval - 1).announcements).toEqual([])
+    const first = monitor.update(1000 + interval)
+    expect(first.announcements).toEqual([{ kind: 'reminder', phrase: HEALTH_PHRASES.pausedReminder }])
+    expect(monitor.update(1000 + interval + 1).announcements).toEqual([])
+    expect(monitor.update(1000 + 2 * interval).announcements).toHaveLength(1)
+    monitor.setRunState('running', 1000 + 2 * interval + 10)
+    expect(monitor.update(1000 + 3 * interval).announcements.every((a) => a.kind !== 'reminder')).toBe(true)
+    expect(HEALTH_PHRASES.pausedReminder).not.toMatch(/(clear|safe|free)/i)
+  })
+
   test('a fault warns even when stopped and clears after the recovery time', () => {
     const monitor = new HealthMonitor()
     monitor.setFault('no-camera', true)
