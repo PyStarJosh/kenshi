@@ -43,8 +43,13 @@ export const CONFIG = {
     processWidth: 320,
     // The path is computed on one frame in this many. If detection p95 goes past the SDS budget, raise this to 5.
     everyNthFrame: 3,
-    // The decision handed to guidance is the most common one in this many recent results, so it does not flap.
+    // The decision handed to guidance changes only when a new one has at least decisionMinVotes of the last
+    // decisionHistory results; otherwise the last one stands, so it does not flap.
     decisionHistory: 5,
+    decisionMinVotes: 3,
+    // The target's column, which steers the line, moves only when the target has moved by more than this share of the
+    // picture width (about 2 degrees), so a steady hand does not make the line wander.
+    targetColumnDeadband: 0.03,
     // A path result older than this is not shown or used.
     maxAgeMs: 1_500,
     // The overlay: free floor tinted green at this opacity, the line drawn this many pixels wide.

@@ -463,4 +463,15 @@ describe('the path line (R7)', () => {
     t.runner.cancel()
     expect(t.runner.getTargetColumn()).toBeNull()
   })
+
+  test('the column holds still for a small sway of the hand, and follows a real turn', async () => {
+    const t = setup()
+    await guide(t, 0.75)
+    expect(t.runner.getTargetColumn()).toBeCloseTo(0.75, 6)
+    t.state.heading = 1 // about 0.015 of the picture: inside the dead band
+    expect(t.runner.getTargetColumn()).toBeCloseTo(0.75, 6)
+    t.state.heading = 4 // about 0.06: a real turn
+    expect(t.runner.getTargetColumn()).toBeCloseTo(0.75 - 4 / 65, 6)
+    expect(t.runner.isGuiding()).toBe(true)
+  })
 })

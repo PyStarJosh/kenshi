@@ -12,7 +12,7 @@ import type { Capture, LocateOptions, LocateOutcome } from '../find/locateClient
 import { bearing } from '../find/targetMemory'
 import { cleanTarget, findYoloSighting } from '../find/targets'
 import type { FrameDims } from '../geometry/geometry'
-import { targetColumn } from '../geometry/pathInput'
+import { steadyColumn, targetColumn } from '../geometry/pathInput'
 
 export interface FindRunnerDeps {
   bus: EventBus<EventMap>
@@ -54,6 +54,8 @@ export class FindRunner {
   private alertCount = 0
   private snapshot: FindSnapshot = snapshotOf(initialContext(), null)
   private listeners = new Set<() => void>()
+  /** The target column last handed to the path line, held steady against small sways. */
+  private pathColumn: number | null = null
 
   constructor(deps: FindRunnerDeps) {
     this.deps = deps
@@ -85,11 +87,18 @@ export class FindRunner {
    */
   getTargetColumn(): number | null {
     const { memory } = this.ctx
-    if (this.ctx.state !== 'guiding' || memory === null) return null
     const heading = this.deps.orientationLatest(this.deps.now())?.headingDeg
-    if (heading === undefined) return null
-    const hfovDeg = this.deps.getSettings().horizontalFovDeg
-    return targetColumn(bearing(memory, heading), hfovDeg)
+    const column =
+      this.ctx.state === 'guiding' && memory !== null && heading !== undefined
+        ? targetColumn(bearing(memory, heading), this.deps.getSettings().horizontalFovDeg)
+        : null
+    this.pathColumn = steadyColumn(this.pathColumn, column, CONFIG.freeSpace.targetColumnDeadband)
+    return this.pathColumn
+  }
+
+  /** True while guiding to a target: the only time the path line is needed outside ?debug. */
+  isGuiding(): boolean {
+    return this.ctx.state === 'guiding'
   }
 
   subscribe = (listener: () => void): (() => void) => {
