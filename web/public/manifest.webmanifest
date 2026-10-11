@@ -1,7 +1,7 @@
 {
   "name": "Kenshi",
   "short_name": "Kenshi",
-  "description": "A guide for blind and low-vision people. It complements the white cane and never replaces it.",
+  "description": "A guide for blind and low-vision people.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000000",

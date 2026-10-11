@@ -113,7 +113,7 @@ This product is safety-critical. A safety requirement overrides any other requir
 | SR-4 | Urgent alerts preempt all other speech, summaries, and descriptions. | Unit test, Field test |
 | SR-5 | When detection degrades (stalled, low frame rate, low light, camera or worker errors), the app says so immediately. | Unit test, Field test |
 | SR-6 | When the phone is lowered or pointed far from the horizon, the app warns that detection may be unreliable. | Unit test, Field test |
-| SR-7 | The first-run text, help, and docs state that Kenshi complements the white cane and does not replace it. | Inspection |
+| SR-7 | The docs state that Kenshi complements the white cane and does not replace it. The owner removed this sentence from the start screen, the spoken help, and the manifest; the alerts still tell the user to keep using the cane. | Inspection |
 | SR-8 | Every failure produces a spoken and on-screen message and a recovery path; no error is silently swallowed. | Unit test, Inspection |
 | SR-9 | While paused, a distinct reminder repeats at a steady interval, so a paused app is never mistaken for a quiet path. | Unit test, Field test |
 | SR-10 | Walk-mode detection and obstacle alerts keep running during Find. An urgent obstacle alert preempts any Find speech and silences the beacon while it plays; Find resumes afterwards. | Unit test, Field test |
