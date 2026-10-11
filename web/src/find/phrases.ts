@@ -5,6 +5,9 @@ import { CONFIG } from '../core/config'
 
 export type Direction = 'ahead' | 'slightly-left' | 'slightly-right' | 'left' | 'right' | 'behind'
 
+/** How far the target is, in three levels (owner request): the app says and shows these, never meters. */
+export type DepthLevel = 'far' | 'close' | 'reach'
+
 export const FIND_PHRASES = {
   privacy: 'Find sends camera photos to Google Gemini to locate things.',
   notInView: 'Not in view. Turn slowly to your right.',
@@ -72,6 +75,24 @@ const SPOKEN_DIRECTION: Record<Direction, string> = {
 
 export function directionWords(direction: Direction): string {
   return SPOKEN_DIRECTION[direction]
+}
+
+/**
+ * The level for a distance: within reach inside the arrival distance (a larger one when the distance is only an upper
+ * bound, as for a box cut off at the bottom), close within levelCloseM, far beyond. An upper bound can say how near the
+ * target is at most, never that it is far, so past levelCloseM it is unknown (null).
+ */
+export function depthLevel(distanceM: number | null, isBound: boolean, cfg = CONFIG.find): DepthLevel | null {
+  if (distanceM === null || !Number.isFinite(distanceM) || distanceM < 0) return null
+  if (distanceM <= (isBound ? cfg.arrivalClippedM : cfg.arrivalDistanceM)) return 'reach'
+  if (distanceM <= cfg.levelCloseM) return 'close'
+  return isBound ? null : 'far'
+}
+
+/** "Chair is far.", "Stairs are close." (a name ending in a plain s is taken as plural). */
+export function levelPhrase(target: string, level: 'far' | 'close'): string {
+  const plural = /^(people|children|men|women)$/.test(target) || /[^su']s$/.test(target)
+  return `${capitalize(target)} ${plural ? 'are' : 'is'} ${level}.`
 }
 
 export const lookingFor = (target: string) => `Looking for ${withArticle(target)}.`
