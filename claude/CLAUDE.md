@@ -9,7 +9,7 @@ Kenshi: a real-time obstacle guide for blind and low-vision pedestrians that run
 ## Design decisions (do not change without asking)
 - Platform: web app for iPhone Safari, Vite + React + TypeScript, deployed on Vercel. No backend, except the optional stretch step S6 (one Vercel function).
 - Detection: YOLO26n exported to ONNX, run with onnxruntime-web inside a Web Worker. WebGPU first, multi-threaded WebAssembly fallback (needs cross-origin isolation headers). Input size 320 or 416, decided at Gate A.
-- Model: the base COCO model first. A retrained model that adds stairs, curb, pole, and door replaces it only if it wins on our tests (step M3).
+- Model: the base COCO model first. A retrained model that adds stairs, curb, pole, door, and desk replaces it only if it wins on our tests (step M3).
 - Alerts: walk mode only. Announce confirmed objects that are in the walking path or approaching. One spoken alert at a time; urgent alerts preempt everything.
 - Phrase format: "<object>, <clock> o'clock, about <meters> meters[, on the floor | , at head height]". Clock positions 11, 12, 1, plus "far left" and "far right". Meters rounded to the nearest 0.5.
 - Audio: a short directional tone (stereo pan), then the phrase, through AirPods in transparency mode. A quiet heartbeat tick while healthy; a distinct warning the moment detection degrades.
@@ -20,7 +20,7 @@ Kenshi: a real-time obstacle guide for blind and low-vision pedestrians that run
 ## Structure
 ```
 pyproject.toml, uv.lock     Python tooling (uv); dependency groups: ml, analysis
-ml/                         model export, class map (class_map.json; class_map.hazard.json is the 84-class draft for M3), walk evaluation
+ml/                         model export, class map (class_map.json; class_map.hazard.json is the 85-class draft for M3), walk evaluation
   datasets.md               hazard datasets: sources, licenses, class mapping, what to download by hand
   dataset_sources.json      per-dataset class mapping and sample sizes
   fetch_zoo.py, fetch_argoverse.py, convert_zenodo.py   download and convert the raw datasets into datasets/raw/

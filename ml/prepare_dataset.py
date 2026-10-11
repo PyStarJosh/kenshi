@@ -2,7 +2,7 @@
 
 Steps:
   1. For each source in ml/dataset_sources.json that exists under datasets/raw/, take a reproducible sample of images,
-     rename its classes to ours (ids 0-79 are COCO, 80-83 are stairs, curb, pole, door; see ml/class_map.hazard.json),
+     rename its classes to ours (ids 0-79 are COCO, 80-84 are stairs, curb, pole, door, desk; see ml/class_map.hazard.json),
      and copy the images and labels to datasets/hazards/.
   2. Pseudo-label: on images from hazard sources, run the base YOLO model and add its boxes for our kept obstacle
      classes (confidence 0.5), so people, chairs and cars in hazard photos are not learned as background.
@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import shutil
 import sys
 import zipfile
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -111,6 +113,36 @@ def link_or_copy(source: Path, target: Path) -> None:
         shutil.copy2(source, target)
 
 
+def label_stems(labels_dir: Path) -> dict[str, Path | None]:
+    """Every label file by name; a name that occurs twice maps to None, as it cannot be matched to an image."""
+    found: dict[str, Path | None] = {}
+    for path in sorted(labels_dir.rglob("*.txt")) if labels_dir.exists() else []:
+        found[path.stem] = None if path.stem in found else path
+    return found
+
+
+def label_for(
+    image: Path,
+    images_dir: Path,
+    labels_dir: Path,
+    split: str,
+    by_stem: Callable[[], dict[str, Path | None]],
+) -> Path:
+    """The label file of an image.
+
+    Flat sources keep labels/<split>/<name>.txt. Nested ones (Argoverse: images/train/<log>/<camera>/<name>.jpg) keep the
+    label in the same folder path under labels/, with or without the leading split folder; failing that, a unique name wins.
+    """
+    relative = image.relative_to(images_dir).with_suffix(".txt")
+    candidates = [labels_dir / relative, labels_dir / split / relative.name]
+    if len(relative.parts) > 1:
+        candidates.insert(1, labels_dir.joinpath(*relative.parts[1:]))
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return by_stem().get(image.stem) or candidates[-1]
+
+
 def collect_split(
     source: Source, split: str, limit: int | None, val_percent: int
 ) -> list[tuple[Path, Path]]:
@@ -120,18 +152,37 @@ def collect_split(
     """
     images_dir = source.path / "images"
     labels_dir = source.path / "labels"
+    index: dict[str, Path | None] = {}
+
+    def by_stem() -> dict[str, Path | None]:
+        if not index:
+            index.update(label_stems(labels_dir))
+        return index
+
     if (images_dir / "val").exists():
-        pairs = [
-            (p, labels_dir / split / f"{p.stem}.txt")
-            for p in list_images(images_dir / split)
-        ]
+        label_split = split
+        images = list_images(images_dir / split)
     else:
-        pairs = [
-            (p, labels_dir / "train" / f"{p.stem}.txt")
+        label_split = (
+            "train"  # val images are carved out of train, so their labels are there too
+        )
+        images = [
+            p
             for p in list_images(images_dir / "train")
             if split_for(p.stem, val_percent) == split
         ]
+    pairs = [
+        (p, label_for(p, images_dir, labels_dir, label_split, by_stem)) for p in images
+    ]
     return sample_stems(pairs, limit)
+
+
+def output_name(source_name: str, image: Path, split_dir: Path) -> str:
+    """A unique file name for an image; images in subfolders get a short hash of their folder path."""
+    if image.parent == split_dir:
+        return f"{source_name}__{image.stem}"
+    folder = image.parent.relative_to(split_dir).as_posix()
+    return f"{source_name}__{hashlib.md5(folder.encode()).hexdigest()[:6]}_{image.stem}"
 
 
 def import_source(
@@ -154,12 +205,16 @@ def import_source(
             else source.max_images.get(split)
         )
         pairs = collect_split(source, split, limit, val_percent)
+        # images sit in images/val for sources with their own val folder, else in images/train
+        split_folder = split if (source.path / "images" / "val").exists() else "train"
         kept = 0
         for image, label_file in pairs:
             boxes = remap_boxes(read_labels(label_file), mapping)
             if not boxes:
                 continue  # nothing of ours in this image
-            name = f"{source.name}__{image.stem}"
+            name = output_name(
+                source.name, image, source.path / "images" / split_folder
+            )
             link_or_copy(
                 image, out / "images" / split / f"{name}{image.suffix.lower()}"
             )
@@ -188,6 +243,7 @@ def pseudo_label(
     kept: set[int],
     conf: float,
     batch: int = 16,
+    same_object: frozenset[int] = frozenset(),
 ) -> int:
     """Add the base model's boxes for our kept classes to images from sources flagged pseudo_label."""
     from ultralytics import YOLO
@@ -215,7 +271,7 @@ def pseudo_label(
                 out / "labels" / row["split"] / f"{Path(row['image']).stem}.txt"
             )
             existing = read_labels(label_file)
-            merged = merge_pseudo(existing, predicted)
+            merged = merge_pseudo(existing, predicted, same_object=same_object)
             if len(merged) > len(existing):
                 write_labels(label_file, merged)
                 row["pseudo_boxes"] = len(merged) - len(existing)
@@ -368,7 +424,12 @@ def main() -> None:
         )
     if not args.no_pseudo:
         added = pseudo_label(
-            args.out, rows, args.base_weights, set(kept), args.pseudo_conf
+            args.out,
+            rows,
+            args.base_weights,
+            set(kept),
+            args.pseudo_conf,
+            same_object=frozenset({ids["desk"], ids["dining table"]}),
         )
         print(f"  added {added} pseudo-labeled boxes")
     write_outputs(args.out, rows, names)

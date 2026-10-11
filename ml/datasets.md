@@ -8,7 +8,7 @@ The retrained model keeps the 80 COCO class ids and adds four classes: **stairs 
 
 | Source | Gives us | License (check each page before relying on it) | How we get it |
 |---|---|---|---|
-| [Open Images V7](https://storage.googleapis.com/openimages/web/factsfigures_v7.html) | stairs, door, pole (from "Street light") | Annotations CC BY 4.0; images listed as CC BY 2.0 (Open Images' statement; I did not re-verify it from the page) | `ml/fetch_zoo.py` (FiftyOne) |
+| [Open Images V7](https://storage.googleapis.com/openimages/web/factsfigures_v7.html) | stairs, door, pole (from "Street light"), desk (from "Desk" and "Countertop"), extra tables (labeled "dining table") | Annotations CC BY 4.0; images listed as CC BY 2.0 (Open Images' statement; I did not re-verify it from the page) | `ml/fetch_zoo.py` (FiftyOne) |
 | [Zenodo: Image Dataset of Accessibility Barriers](https://zenodo.org/records/6382090) | stairs, curb | **CC BY 4.0** (read on the record page) | manual download, then `ml/convert_zenodo.py` |
 | [COCO 2017](https://cocodataset.org/#download) | our 17 kept obstacle classes | Annotations CC BY 4.0; images are Flickr photos under their own licenses | `ml/fetch_zoo.py` (FiftyOne) |
 | [Argoverse-HD](https://docs.ultralytics.com/datasets/detect/argoverse) | person, bicycle, car, motorcycle, bus, truck | **CC BY-NC-SA 4.0, non-commercial** (as stated on the Ultralytics page) | `ml/fetch_argoverse.py` (31.5 GB) |
@@ -16,12 +16,17 @@ The retrained model keeps the 80 COCO class ids and adds four classes: **stairs 
 Things to know:
 
 - **Argoverse is non-commercial.** Fine for a hackathon or research; check with the team before any commercial use of a
-  model trained on it. It also has none of the four new classes: it only supplies street-scene people and vehicles.
+  model trained on it. It also has none of the five new classes: it only supplies street-scene people and vehicles.
 - **"pole" is approximated by Open Images "Street light"** (a lamp on a post). A real `pole` class would be better; the
   Obstacle-Dataset from TW0521 has one but states no license, so it is not used.
-- **Curb comes only from Zenodo**, from the boxes labeled "steps" whose `type` attribute is "curb" (the record says steps
-  between a street and a sidewalk are annotated as curbs). Other steps (doorsteps, "other"), ramps, and grab bars are dropped.
-  I could not see the dataset's XML before writing the converter, so run `--inspect` first and check the attribute values.
+- **Curb comes only from Zenodo**, from the boxes labeled "step" whose `type` attribute is "curb" (the record says steps
+  between a street and a sidewalk are annotated as curbs). The files spell the labels in the singular (`step`, `stair`,
+  `ramp`, `grab_bar`). Other steps (doorsteps, "other"), ramps, and grab bars are dropped. Checked on the real download:
+  1,185 curb and 1,492 stair boxes in 1,868 of its 5,538 images.
+- **"desk" is desks, reception desks, and counters**, from Open Images "Desk" and "Countertop". Open Images has no
+  wall or reception class, so reception desks are only covered to the extent they look like those. Tables are not a new
+  class: COCO's `dining table` is already kept, and Open Images "Table", "Kitchen & dining room table", and "Coffee
+  table" (a third as many images per class) are mapped to it. Walls are not detected at all (see the SDS for why).
 - Open Images labels are not exhaustive: an image picked for "Door" may contain unlabeled stairs. Those become background.
 
 ## Class mapping
@@ -31,8 +36,10 @@ Things to know:
 | Open Images `Stairs` | stairs (80) |
 | Open Images `Door` | door (83) |
 | Open Images `Street light` | pole (82) |
+| Open Images `Desk`, `Countertop` | desk (84) |
+| Open Images `Table`, `Kitchen & dining room table`, `Coffee table` | dining table (60) |
 | Zenodo `stairs` | stairs (80) |
-| Zenodo `steps` with `type` = curb | curb (81) |
+| Zenodo `step` with `type` = curb | curb (81) |
 | COCO (our 17 kept classes) | same class, same id |
 | Argoverse `person`, `bicycle`, `car`, `motorcycle`, `bus`, `truck` | same class, same id |
 | Argoverse `traffic_light`, `stop_sign` | dropped (not announced by the app) |
@@ -45,7 +52,8 @@ handbag, suitcase, chair, couch, potted plant, dining table. The mapping lives i
 Hazard photos contain people, chairs, and cars that the hazard datasets do not label. Left alone they would be learned as
 background and the retrained model would get worse at the classes we already rely on. `prepare_dataset.py` therefore runs
 the base model (`yolo26n.pt`) on every image from a hazard source and adds its boxes for our 17 kept classes at confidence
-0.5, skipping any box that duplicates a label already there (same class, IoU above 0.5). Images from COCO and Argoverse are
+0.5, skipping any box that duplicates a label already there (same class, IoU above 0.5; `desk` and `dining table` count as
+the same class, so a hand-labeled desk does not also get a pseudo-labeled dining table). Images from COCO and Argoverse are
 labeled by people and get no pseudo-labels.
 
 ## Train and validation split
@@ -53,7 +61,7 @@ labeled by people and get no pseudo-labels.
 - Open Images, COCO, and Argoverse: their own train and validation splits.
 - Zenodo has no split, so images are divided 90 / 10 by a stable hash of the file name. Photos taken during one walk can
   land on both sides, which makes the curb and stairs validation numbers a little optimistic.
-- Default sample sizes: Open Images 1,500 training and 250 validation images per class; COCO 300 per kept class per split
+- Default sample sizes: Open Images 1,500 training and 250 validation images per class (500 and about 80 for the three table classes); COCO 300 per kept class per split
   (about 4,000 unique training images); Argoverse 4,000 training and 500 validation images. Change them with the flags of
   `fetch_zoo.py` and the `max_images` entries in `ml/dataset_sources.json`.
 - The validation set keeps a record of where each image came from (`datasets/hazards/manifest.csv`). `compare_models.py`
@@ -62,16 +70,22 @@ labeled by people and get no pseudo-labels.
 
 ## What you must do by hand
 
-Disk: plan for about 30 GB without Argoverse and about 95 GB with it, free, on the drive that holds this repo. The downloaded zip files stay after unzipping, so delete them afterwards to get the space back.
+Disk: plan for about 30 GB without Argoverse and about 100 GB with it, free, on the drive that holds this repo. Both zip files stay after unzipping (the Zenodo one is kept unless you delete it; `fetch_argoverse.py` deletes its own zip once converted, `--keep-zip` keeps it).
 
 1. **Open Images and COCO** (automatic downloads, but the first Open Images run downloads about 7 GB of index files, a 4.8 GB image list and a 2.3 GB box file, of which about 3 GB stays in FiftyOne's cache in your user folder):
    `uv run --group ml python ml/fetch_zoo.py --openimages --coco`
 2. **Zenodo**: download `wm_barriers_data.zip` (8.0 GB) from https://zenodo.org/records/6382090 and unzip it to
    `datasets/raw/zenodo-src/`. Then `uv run --group ml python ml/convert_zenodo.py --src datasets/raw/zenodo-src --inspect`
-   (look at the `steps.type` values), then the same command without `--inspect`.
-3. **Argoverse** (optional but recommended for street-scene people and vehicles; 31.5 GB):
-   `uv run --group ml python ml/fetch_argoverse.py`
-4. **Merge**: `uv run --group ml python ml/prepare_dataset.py --zip`. Read the per-class counts and warnings it prints.
+   (look at the `step.type` values), then the same command without `--inspect`.
+3. **Argoverse** (optional but recommended for street-scene people and vehicles; 31.5 GB download, about the same again unpacked):
+   `uv run --group ml python ml/fetch_argoverse.py`. It downloads the zip from the Google Drive file Ultralytics points to in
+   8 resumable parallel pieces (run it again after an interruption), unzips it, and runs Ultralytics' converter. Ultralytics
+   prints a "MUST be downloaded manually" warning during the conversion; that is about its own download step, which this script
+   already did. If Google ever refuses the download (quota or login page), download the file in a browser from the link in
+   that warning, save it as `datasets/raw/Argoverse/Argoverse-HD-Full.zip`, and run the command again.
+4. **Merge**: `uv run --group ml python ml/prepare_dataset.py` (about an hour: it runs the base model over about 10,000 hazard images). Read the per-class counts and warnings it prints.
+   **Shrink and zip**: `uv run --group ml python ml/shrink_dataset.py --zip` caps every image at 640 px on the long side (training uses 416) and writes `datasets/hazards.zip`. Without it the zip is about 8 GB; with it about 1.6 GB, and Colab loads images much faster. The downloads in `datasets/raw/` are not changed.
+   If the shrink step stops with "cannot read", an image was cut off by an interrupted download (this happened to 7 COCO images after a dropped connection). Download that file again, or delete it and its label, and run the step again.
 5. Upload `datasets/hazards.zip` to Google Drive as `My Drive/kenshi/hazards.zip`, then run `ml/train_colab.ipynb` in Colab.
 
 ## Attribution text (put in the project's credits)

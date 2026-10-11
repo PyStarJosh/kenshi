@@ -6,10 +6,12 @@ import numpy as np
 from ml.compare_models import (
     Det,
     decode,
+    edge_counts,
     match_counts,
     nms,
     precision_recall,
     recall_flags,
+    touches_edge,
 )
 from ml.yolo_utils import Box
 
@@ -53,6 +55,29 @@ class Matching(unittest.TestCase):
         self.assertEqual(precision_recall(8, 2, 2), (0.8, 0.8))
         self.assertEqual(precision_recall(0, 0, 0), (None, None))
         self.assertEqual(precision_recall(0, 3, 0), (0.0, None))
+
+
+class EdgeCutOffObjects(unittest.TestCase):
+    def test_a_box_reaching_any_border_is_cut_off(self):
+        self.assertTrue(touches_edge(Box(0, 0.1, 0.5, 0.2, 0.3)))  # left border at 0.0
+        self.assertTrue(touches_edge(Box(0, 0.9, 0.5, 0.2, 0.3)))  # right border at 1.0
+        self.assertTrue(touches_edge(Box(0, 0.5, 0.9, 0.2, 0.2)))  # bottom
+        self.assertTrue(touches_edge(Box(0, 0.5, 0.1, 0.2, 0.2)))  # top
+        self.assertFalse(touches_edge(Box(0, 0.5, 0.5, 0.2, 0.3)))
+
+    def test_only_cut_off_ground_truth_boxes_are_scored(self):
+        truth = [
+            Box(0, 0.1, 0.5, 0.2, 0.4),
+            Box(0, 0.6, 0.5, 0.2, 0.4),
+        ]  # first touches the left border
+        found_only_the_whole_one = [det(0, 0.9, 0.6, 0.5, 0.2, 0.4)]
+        self.assertEqual(edge_counts(truth, found_only_the_whole_one, {0})[0], [0, 1])
+        found_the_cut_one = [det(0, 0.9, 0.1, 0.5, 0.2, 0.4)]
+        self.assertEqual(edge_counts(truth, found_the_cut_one, {0})[0], [1, 0])
+
+    def test_no_cut_off_objects_gives_zero_support(self):
+        truth = [Box(0, 0.5, 0.5, 0.2, 0.4)]
+        self.assertEqual(edge_counts(truth, [], {0})[0], [0, 0])
 
 
 class RecallFlags(unittest.TestCase):

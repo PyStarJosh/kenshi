@@ -1,6 +1,8 @@
 """Download class-filtered subsets of Open Images V7 and COCO 2017 with FiftyOne and export them as YOLO datasets.
 
-Open Images gives the hazard classes (Stairs, Door, Street light as our "pole"); COCO gives our kept obstacle classes.
+Open Images gives the hazard classes (Stairs, Door, Street light as our "pole", Desk and Countertop as our "desk") and
+extra tables (Table, Kitchen & dining room table, Coffee table, all labeled "dining table"); COCO gives our kept obstacle
+classes.
 Output goes to datasets/raw/openimages-v7 and datasets/raw/coco-kept (images/{train,val}, labels/{train,val}).
 
   uv run --group ml python ml/fetch_zoo.py --openimages --coco
@@ -13,6 +15,7 @@ for "Door" still carries its stairs and street-light boxes. Images are copied, s
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -25,7 +28,14 @@ OPEN_IMAGES_CLASSES = [
     "Stairs",
     "Door",
     "Street light",
-]  # order = YOLO ids 0, 1, 2 in the export
+    "Desk",
+    "Countertop",
+    "Table",
+    "Kitchen & dining room table",
+    "Coffee table",
+]  # order = YOLO ids 0 to 7 in the export; ml/dataset_sources.json lists the same order
+# Tables are common and already a COCO class, so they only top up "dining table": a third of the images per class.
+TABLE_CLASSES = {"Table", "Kitchen & dining room table", "Coffee table"}
 SEED = 51
 
 
@@ -56,10 +66,10 @@ def _fetch(
             split=split,
             label_types=["detections"],
             classes=[cls],
-            max_samples=per_class,
+            max_samples=per_class // 3 if cls in TABLE_CLASSES else per_class,
             shuffle=True,
             seed=SEED,
-            dataset_name=f"kenshi-{tag}-{split}-{cls}".replace(" ", "-"),
+            dataset_name=f"kenshi-{tag}-{split}-{re.sub('[^A-Za-z0-9]+', '-', cls)}",
             drop_existing_dataset=True,
         )
         field = field or _label_field(part)
@@ -83,7 +93,9 @@ def _export(view, field: str, out: Path, split_out: str, classes: list[str]) -> 
 
 
 def fetch_open_images(out: Path, per_class_train: int, per_class_val: int) -> None:
-    print("Open Images V7 (Stairs, Door, Street light)")
+    print(
+        f"Open Images V7 ({len(OPEN_IMAGES_CLASSES)} classes: {', '.join(OPEN_IMAGES_CLASSES)})"
+    )
     for zoo_split, split_out, n in (
         ("train", "train", per_class_train),
         ("validation", "val", per_class_val),
@@ -118,7 +130,7 @@ def main() -> None:
     parser.add_argument(
         "--openimages",
         action="store_true",
-        help="download Stairs, Door, Street light from Open Images V7",
+        help="download the hazard, desk and table classes from Open Images V7",
     )
     parser.add_argument(
         "--coco", action="store_true", help="download the kept classes from COCO 2017"

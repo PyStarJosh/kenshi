@@ -1,7 +1,8 @@
 """Convert the Zenodo "Image Dataset of Accessibility Barriers" (CVAT XML) to YOLO labels.
 
-Dataset: https://zenodo.org/records/6382090 (CC BY 4.0). Labels: steps, stairs, ramps, grab bars.
+Dataset: https://zenodo.org/records/6382090 (CC BY 4.0). Labels (singular in the files): step, stair, ramp, grab_bar.
 Steps carry a "type" attribute (doorstep, curb, other); we keep stairs, and steps whose type is curb as "curb".
+The plural spellings are accepted too.
 
   1. Download wm_barriers_data.zip (8 GB) from the Zenodo page and unzip it, for example to datasets/raw/zenodo-src/.
   2. Look at how this copy is labeled:   uv run --group ml python ml/convert_zenodo.py --src datasets/raw/zenodo-src --inspect
@@ -41,9 +42,12 @@ def box_label(
 ) -> str | None:
     """Our label for one CVAT box, or None to drop it."""
     label = label.strip().lower()
-    if label == "stairs":
+    if label in ("stair", "stairs"):
         return "stairs"
-    if label == "steps" and attributes.get("type", "").strip().lower() in curb_types:
+    if (
+        label in ("step", "steps")
+        and attributes.get("type", "").strip().lower() in curb_types
+    ):
         return "curb"
     return None
 

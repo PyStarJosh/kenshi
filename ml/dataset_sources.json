@@ -5,8 +5,17 @@
       "name": "openimages-v7",
       "kind": "hazard",
       "path": "datasets/raw/openimages-v7",
-      "names": ["Stairs", "Door", "Street light"],
-      "map": { "Stairs": "stairs", "Door": "door", "Street light": "pole" },
+      "names": ["Stairs", "Door", "Street light", "Desk", "Countertop", "Table", "Kitchen & dining room table", "Coffee table"],
+      "map": {
+        "Stairs": "stairs",
+        "Door": "door",
+        "Street light": "pole",
+        "Desk": "desk",
+        "Countertop": "desk",
+        "Table": "dining table",
+        "Kitchen & dining room table": "dining table",
+        "Coffee table": "dining table"
+      },
       "pseudo_label": true,
       "max_images": { "train": null, "val": null }
     },

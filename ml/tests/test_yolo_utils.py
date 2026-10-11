@@ -29,10 +29,10 @@ class ClassTables(unittest.TestCase):
         base = load_class_table(BASE_CLASS_MAP)
         hazard = load_class_table(HAZARD_CLASS_MAP)
         self.assertEqual(len(base), 80)
-        self.assertEqual(len(hazard), 84)
+        self.assertEqual(len(hazard), 85)
         self.assertEqual(hazard[:80], base)
         self.assertEqual([r["label"] for r in hazard[80:]], list(HAZARD_LABELS))
-        self.assertEqual([r["id"] for r in hazard[80:]], [80, 81, 82, 83])
+        self.assertEqual([r["id"] for r in hazard[80:]], [80, 81, 82, 83, 84])
 
     def test_new_classes_are_announced(self):
         hazard = load_class_table(HAZARD_CLASS_MAP)
@@ -133,8 +133,28 @@ class PseudoLabels(unittest.TestCase):
         predicted = [Box(0, 0.5, 0.5, 0.2, 0.4)]
         self.assertEqual(len(merge_pseudo(existing, predicted)), 2)
 
+    def test_same_object_classes_count_as_one_class(self):
+        desk, dining_table = 84, 60
+        existing = [Box(desk, 0.5, 0.5, 0.4, 0.3)]
+        predicted = [Box(dining_table, 0.51, 0.5, 0.4, 0.3)]
+        self.assertEqual(
+            len(merge_pseudo(existing, predicted)), 2
+        )  # without the grouping both would be kept
+        grouped = merge_pseudo(
+            existing, predicted, same_object=frozenset({desk, dining_table})
+        )
+        self.assertEqual(grouped, existing)
+
+    def test_same_object_does_not_hide_a_table_somewhere_else_or_other_classes(self):
+        group = frozenset({84, 60})
+        existing = [Box(84, 0.3, 0.5, 0.2, 0.3)]
+        far_table = Box(60, 0.8, 0.5, 0.2, 0.3)
+        person_on_desk = Box(0, 0.3, 0.5, 0.2, 0.3)
+        merged = merge_pseudo(existing, [far_table, person_on_desk], same_object=group)
+        self.assertEqual([b.cls for b in merged], [84, 60, 0])
+
     def test_does_not_modify_its_input(self):
-        existing = [Box(80, 0.3, 0.5, 0.2, 0.4)]
+        existing = [Box(80, 0.3, 0.5, 0.2, 0.3)]
         merge_pseudo(existing, [Box(0, 0.7, 0.5, 0.2, 0.4)])
         self.assertEqual(len(existing), 1)
 

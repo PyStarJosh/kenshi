@@ -82,5 +82,6 @@
   {"id": 80, "label": "stairs", "spokenName": "stairs", "typicalHeightM": null, "groundContact": true, "alertable": true},
   {"id": 81, "label": "curb", "spokenName": "curb", "typicalHeightM": null, "groundContact": true, "alertable": true},
   {"id": 82, "label": "pole", "spokenName": "pole", "typicalHeightM": null, "groundContact": true, "alertable": true},
-  {"id": 83, "label": "door", "spokenName": "door", "typicalHeightM": 2.0, "groundContact": true, "alertable": true}
+  {"id": 83, "label": "door", "spokenName": "door", "typicalHeightM": 2.0, "groundContact": true, "alertable": true},
+  {"id": 84, "label": "desk", "spokenName": "desk or counter", "typicalHeightM": 0.85, "groundContact": true, "alertable": true}
 ]

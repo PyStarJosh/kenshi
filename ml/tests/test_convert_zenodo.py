@@ -34,6 +34,13 @@ class Labels(unittest.TestCase):
     def test_stairs_are_kept(self):
         self.assertEqual(box_label("stairs", {}, {"curb"}), "stairs")
 
+    def test_the_dataset_s_singular_label_names_are_understood(self):
+        self.assertEqual(box_label("stair", {}, {"curb"}), "stairs")
+        self.assertEqual(box_label("step", {"type": "curb"}, {"curb"}), "curb")
+        self.assertIsNone(box_label("step", {"type": "doorstep"}, {"curb"}))
+        self.assertIsNone(box_label("grab_bar", {}, {"curb"}))
+        self.assertIsNone(box_label("ramp", {}, {"curb"}))
+
     def test_steps_of_type_curb_become_curbs(self):
         self.assertEqual(box_label("steps", {"type": "curb"}, {"curb"}), "curb")
         self.assertEqual(box_label("Steps", {"type": " Curb "}, {"curb"}), "curb")

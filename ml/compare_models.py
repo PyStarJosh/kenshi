@@ -3,7 +3,7 @@
 (a) Validation set: per-class precision and recall for both models, with a flag on any kept obstacle class whose recall
     drops by more than 3 points. Kept classes are scored only on images from sources labeled by hand (COCO, Argoverse),
     because the other images carry pseudo-labels made by the base model itself, which would favor the base model.
-    The new classes (stairs, curb, pole, door) are scored on the hazard-source images.
+    The new classes (stairs, curb, pole, door, desk) are scored on the hazard-source images.
 (b) Our own clips in field-tests/clips/: detection counts per class and sample frames with boxes for each model.
 
   uv run --group ml python ml/compare_models.py --hazard path/to/yolo26n-hazards-416.onnx
@@ -159,6 +159,30 @@ def match_counts(
     return counts
 
 
+EDGE_MARGIN = 0.01  # a box within this fraction of the image border counts as cut off by the frame
+
+
+def touches_edge(box: Box, margin: float = EDGE_MARGIN) -> bool:
+    """True if the box reaches the image border on any side, i.e. the object is probably cut off by the frame."""
+    return (
+        box.cx - box.w / 2 <= margin
+        or box.cx + box.w / 2 >= 1 - margin
+        or box.cy - box.h / 2 <= margin
+        or box.cy + box.h / 2 >= 1 - margin
+    )
+
+
+def edge_counts(
+    truth: list[Box], predictions: list[Det], classes: set[int]
+) -> dict[int, list[int]]:
+    """Per class [found, missed] for the ground-truth boxes that touch the image border."""
+    cut = [b for b in truth if touches_edge(b)]
+    return {
+        cls: [tp, fn]
+        for cls, (tp, _, fn) in match_counts(cut, predictions, classes).items()
+    }
+
+
 def precision_recall(tp: int, fp: int, fn: int) -> tuple[float | None, float | None]:
     precision = tp / (tp + fp) if tp + fp else None
     recall = tp / (tp + fn) if tp + fn else None
@@ -203,6 +227,9 @@ def evaluate_validation(
     totals: dict[str, dict[int, list[int]]] = {
         name: defaultdict(lambda: [0, 0, 0]) for name in detectors
     }
+    edge_totals: dict[str, dict[int, list[int]]] = {
+        name: defaultdict(lambda: [0, 0]) for name in detectors
+    }
     evaluated = 0
     for row in rows:
         classes = kept if row["kind"] == "kept" else hazard
@@ -213,20 +240,28 @@ def evaluate_validation(
             data_dir / "labels" / "val" / f"{Path(row['image']).stem}.txt"
         )
         for name, detector in detectors.items():
-            for cls, (tp, fp, fn) in match_counts(
-                truth, detector.detect(image, conf), classes
-            ).items():
+            predictions = detector.detect(image, conf)
+            for cls, (tp, fp, fn) in match_counts(truth, predictions, classes).items():
                 t = totals[name][cls]
                 t[0] += tp
                 t[1] += fp
                 t[2] += fn
+            for cls, (found, missed) in edge_counts(
+                truth, predictions, classes
+            ).items():
+                e = edge_totals[name][cls]
+                e[0] += found
+                e[1] += missed
         evaluated += 1
     result: dict[str, dict[int, dict]] = {}
     for name, per_class in totals.items():
         result[name] = {}
         for cls, (tp, fp, fn) in per_class.items():
             precision, recall = precision_recall(tp, fp, fn)
+            found, missed = edge_totals[name].get(cls, [0, 0])
             result[name][cls] = {
+                "edge_recall": found / (found + missed) if found + missed else None,
+                "edge_support": found + missed,
                 "tp": tp,
                 "fp": fp,
                 "fn": fn,
@@ -397,6 +432,33 @@ def write_report(
                 f"| {names[cls]} | {support} | "
                 + " | ".join(cells)
                 + (f" | {change} |" if len(models) == 2 else " |")
+            )
+        lines += [
+            "",
+            "### Recall on objects cut off by the frame edge",
+            "",
+            "Ground-truth boxes that touch the image border. Few examples means the number is noisy.",
+            "",
+            "| class | edge examples | "
+            + " | ".join(f"{m} recall" for m in models)
+            + " |",
+            "|" + "---|" * (len(models) + 2),
+        ]
+        for cls in kept + hazard:
+            edge_support = max(
+                (validation[m].get(cls, {}).get("edge_support", 0) for m in models),
+                default=0,
+            )
+            if not edge_support:
+                continue
+            cells = [
+                fmt(validation[m][cls]["edge_recall"])
+                if cls in validation[m]
+                else "n/a"
+                for m in models
+            ]
+            lines.append(
+                f"| {names[cls]} | {edge_support} | " + " | ".join(cells) + " |"
             )
         lines += [
             "",

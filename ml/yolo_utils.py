@@ -16,8 +16,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BASE_CLASS_MAP = REPO_ROOT / "ml" / "class_map.json"
 HAZARD_CLASS_MAP = REPO_ROOT / "ml" / "class_map.hazard.json"
 
-# The four classes the retrained model adds, after the 80 COCO classes (ids 80 to 83).
-HAZARD_LABELS = ("stairs", "curb", "pole", "door")
+# The five classes the retrained model adds, after the 80 COCO classes (ids 80 to 84).
+# "desk" is desks, reception desks and counters; tables stay in COCO's "dining table".
+HAZARD_LABELS = ("stairs", "curb", "pole", "door", "desk")
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
@@ -89,12 +90,23 @@ def iou(a: Box, b: Box) -> float:
 
 
 def merge_pseudo(
-    existing: list[Box], predicted: list[Box], iou_threshold: float = 0.5
+    existing: list[Box],
+    predicted: list[Box],
+    iou_threshold: float = 0.5,
+    same_object: frozenset[int] = frozenset(),
 ) -> list[Box]:
-    """Add predicted boxes to existing labels, skipping any that duplicate an existing box of the same class."""
+    """Add predicted boxes to existing labels, skipping any that duplicate an existing box of the same class.
+
+    Classes in `same_object` count as one class here (desk and dining table are often the same piece of furniture),
+    so the base model's "dining table" box is not added on top of a hand-labeled desk.
+    """
     merged = list(existing)
+
+    def same(a: int, b: int) -> bool:
+        return a == b or (a in same_object and b in same_object)
+
     for p in predicted:
-        if not any(e.cls == p.cls and iou(e, p) > iou_threshold for e in existing):
+        if not any(same(e.cls, p.cls) and iou(e, p) > iou_threshold for e in existing):
             merged.append(p)
     return merged
 
@@ -133,7 +145,7 @@ def list_images(directory: Path) -> list[Path]:
     directory = Path(directory)
     if not directory.exists():
         return []
-    return sorted(p for p in directory.iterdir() if p.suffix.lower() in IMAGE_SUFFIXES)
+    return sorted(p for p in directory.rglob("*") if p.suffix.lower() in IMAGE_SUFFIXES)
 
 
 def sample_stems(items: list, limit: int | None, seed: int = 0) -> list:
