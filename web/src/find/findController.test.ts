@@ -952,9 +952,9 @@ describe('keeping hold of a target (reliability)', () => {
   test('once the first has been gone for a moment, the same object under a new id is taken up again', () => {
     const sim = new Sim()
     sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
-    sim.tick(100, { yolo: { angleDeg: 8, distanceM: 2, trackId: 9 } }) // too soon: ignored
+    sim.tick(100, { yolo: { angleDeg: 8, distanceM: 3.8, trackId: 9 } }) // too soon: ignored
     expect(sim.ctx.followId).toBe(7)
-    sim.tick(CFG.yoloLostMs + 100, { yolo: { angleDeg: 8, distanceM: 2, trackId: 9 } })
+    sim.tick(CFG.yoloLostMs + 100, { yolo: { angleDeg: 8, distanceM: 3.8, trackId: 9 } })
     expect(sim.ctx.followId).toBe(9)
     expect(sim.ctx.memory?.heading).toBe(8)
   })
@@ -965,6 +965,39 @@ describe('keeping hold of a target (reliability)', () => {
     sim.tick(CFG.yoloLostMs * 3, { yolo: { angleDeg: 70, distanceM: 2, trackId: 9 } })
     expect(sim.ctx.followId).toBe(7)
     expect(sim.ctx.memory?.heading).toBe(0)
+  })
+
+  test('nor one a little off to the side (over 20 degrees), nor one on the same bearing at a different distance', () => {
+    const aside = new Sim()
+    aside.request('chair', { angleDeg: 0, distanceM: 3, trackId: 7 })
+    aside.tick(CFG.yoloLostMs + 100, { yolo: { angleDeg: 25, distanceM: 3, trackId: 9 } })
+    expect(aside.ctx.followId).toBe(7)
+    const behind = new Sim()
+    behind.request('chair', { angleDeg: 0, distanceM: 2, trackId: 7 })
+    behind.tick(CFG.yoloLostMs + 100, { yolo: { angleDeg: 3, distanceM: 4.5, trackId: 9 } })
+    expect(behind.ctx.followId).toBe(7)
+  })
+
+  test('walking up to the closest chair: when it slips out of the bottom of the view the next one is not taken instead', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 2, trackId: 7 })
+    sim.tick(100, { yolo: { angleDeg: 0, distanceM: 2.4, trackId: 7, clipped: true } }) // its base leaves the frame
+    sim.tick(CFG.yoloLostMs + 100, { yolo: { angleDeg: 12, distanceM: 2.4, trackId: 9 } }) // another chair close by
+    expect(sim.ctx.followId).toBe(7)
+    expect(sim.ctx.memory?.heading).toBe(0)
+  })
+
+  test('a chair Gemini found is handed to the detector when a detector chair sits on the same spot', () => {
+    const sim = new Sim()
+    sim.guideByGemini() // straight ahead, 7.5 m from the floor
+    expect(sim.ctx.memory?.source).toBe('gemini')
+    sim.tick(100, { yolo: { angleDeg: 15, distanceM: 7, trackId: 4 } }) // 15 degrees off: another chair
+    expect(sim.ctx.memory?.source).toBe('gemini')
+    sim.tick(100, { yolo: { angleDeg: 4, distanceM: 7, trackId: 5 } })
+    expect(sim.ctx.memory).toMatchObject({ source: 'yolo', heading: 4, distanceM: 7 })
+    expect(sim.ctx.followId).toBe(5)
+    // from then on it is followed, and Gemini is not asked while the detector holds it
+    expect(sim.locateEffects(sim.tick(CFG.recheckIntervalMs + 100, { yolo: { angleDeg: 3, distanceM: 6.5, trackId: 5 } }))).toEqual([])
   })
 
   test('a Gemini re-check that names a different chair is ignored; one near the first refines it', () => {

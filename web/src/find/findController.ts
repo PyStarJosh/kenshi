@@ -38,7 +38,7 @@ import type { LocateClientErrorCode } from './locateClient'
 import { wrap180 } from '../sensors/heading'
 import { bearing, boxCenterX, estimateTargetDistance, inView, isStale, observe, remember } from './targetMemory'
 import type { TargetMemory } from './targetMemory'
-import { arrivalDistanceFor, cleanTarget } from './targets'
+import { arrivalDistanceFor, cleanTarget, sameDistanceToleranceM } from './targets'
 
 type FindConfig = typeof CONFIG.find
 
@@ -433,6 +433,13 @@ export function isSameObject(memory: TargetMemory, headingDeg: number, angleDeg:
   return Math.abs(wrap180(angleDeg - bearing(memory, headingDeg))) <= sameObjectGateDeg(memory, cfg)
 }
 
+/** A detector sighting lies where the followed object is remembered: close in bearing and, if both are known, in distance. */
+function isOnSameSpot(memory: TargetMemory, headingDeg: number, sighting: YoloSighting, cfg: FindConfig): boolean {
+  if (Math.abs(wrap180(sighting.angleDeg - bearing(memory, headingDeg))) > cfg.reacquireDeg) return false
+  if (memory.distanceM === null || sighting.distanceM === null) return true
+  return Math.abs(sighting.distanceM - memory.distanceM) <= sameDistanceToleranceM(memory.distanceM, cfg)
+}
+
 /** The target was last seen with its base out of the bottom of the frame, is roughly ahead, and that was recent. */
 function belowView(c: FindContext, bearingDeg: number, nowMs: number, cfg: FindConfig): boolean {
   return (
@@ -558,16 +565,33 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
   const now = e.nowMs
   if (c.memory === null || e.heading === null) return
 
+  // A target Gemini found is handed to the detector as soon as a detector track of its kind sits on the same spot, so
+  // from then on it is followed frame by frame (and Gemini is not asked again while the detector holds it).
+  if (
+    c.memory.source === 'gemini' &&
+    e.yolo !== null &&
+    e.yolo.trackId !== undefined &&
+    Math.abs(wrap180(e.yolo.angleDeg - bearing(c.memory, e.heading))) <= cfg.handoffDeg
+  ) {
+    c.memory = { ...c.memory, source: 'yolo' }
+    c.followId = e.yolo.trackId
+  }
+
   // The detector follows a target it can see, frame by frame, so bearing and distance stay smooth. It keeps to the
-  // object it started with: another of the same kind is taken up only after the first has been gone for a moment.
-  // A track with the followed id is the same object. Any other is taken up only after the first has been gone for a
-  // moment (a new id for the same object after a flicker), and only if it is where the first was.
+  // object it started with: a track with the followed id is the same object. Another is taken up only after the first
+  // has been gone for a moment (a new id for the same object after a flicker), only if it lies on the same spot (close
+  // in bearing and distance), and never while the first has probably just slipped below the view.
   const yolo = c.memory.source === 'yolo' ? e.yolo : null
   const sameTrack = yolo !== null && yolo.trackId !== undefined && yolo.trackId === c.followId
-  const reacquired =
-    yolo !== null &&
-    (c.followId === null || yolo.trackId === undefined || now - c.yoloSeenAt >= cfg.yoloLostMs) &&
-    isSameObject(c.memory, e.heading, yolo.angleDeg, cfg)
+  let reacquired = false
+  if (yolo !== null && !sameTrack) {
+    reacquired =
+      yolo.trackId === undefined
+        ? isSameObject(c.memory, e.heading, yolo.angleDeg, cfg) // a sighting with no id cannot be told apart: its spot only
+        : (c.followId === null || now - c.yoloSeenAt >= cfg.yoloLostMs) &&
+          !belowView(c, bearing(c.memory, e.heading), now, cfg) &&
+          isOnSameSpot(c.memory, e.heading, yolo, cfg)
+  }
   const sighting = sameTrack || reacquired ? yolo : null
   if (sighting !== null) {
     c.memory = {

@@ -51,6 +51,7 @@ export interface PipelineLink {
 }
 
 export interface PipelineTracker {
+  /** The orientation carries the heading, so the tracker can follow a turn between frames. */
   update(result: FrameResult, tilt: OrientationSample | null, settings: Pick<Settings, 'eyeHeightM' | 'horizontalFovDeg'>): Track[]
   reset(): void
 }

@@ -6,7 +6,7 @@
 import { CONFIG } from '../core/config'
 import type { EventMap, FindRequest, FindSnapshot, OrientationSample, Settings, Track } from '../core/types'
 import type { EventBus } from '../alerts/bus'
-import { initialContext, reduce, sameObjectGateDeg, snapshotOf } from '../find/findController'
+import { initialContext, reduce, snapshotOf } from '../find/findController'
 import type { FindContext, FindEffect, FindEvent, FrameMeta } from '../find/findController'
 import type { Capture, LocateOptions, LocateOutcome } from '../find/locateClient'
 import { bearing } from '../find/targetMemory'
@@ -130,11 +130,14 @@ export class FindRunner {
       Math.abs(bearing(this.ctx.memory, heading)) <= CONFIG.find.pathAlignedDeg
         ? this.deps.getPathDecision?.(now) ?? null
         : null
-    // While guiding, a track other than the followed one counts only if it is where the remembered object is.
+    // While guiding, a track other than the followed one counts only if it is where the remembered object is: for a
+    // detector target close in bearing and distance; for a Gemini target, right on its bearing (the hand-off).
     const { memory } = this.ctx
     const near =
       this.ctx.state === 'guiding' && memory !== null && heading !== null
-        ? { angleDeg: bearing(memory, heading), maxDeg: sameObjectGateDeg(memory, CONFIG.find) }
+        ? memory.source === 'yolo'
+          ? { angleDeg: bearing(memory, heading), maxDeg: CONFIG.find.reacquireDeg, distanceM: memory.distanceM }
+          : { angleDeg: bearing(memory, heading), maxDeg: CONFIG.find.handoffDeg }
         : null
     this.dispatch({
       type: 'tick',

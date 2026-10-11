@@ -202,6 +202,23 @@ describe('findYoloSighting', () => {
     const unsure = track({ id: 5, distanceM: 2, confidence: 0.6, clock: { position: 12, angleDeg: 2 } })
     expect(findYoloSighting('chair', [unsure, sure])?.angleDeg).toBe(1)
   })
+
+  test('a track with no distance (reported as the farthest valid one) comes last, and its distance is unknown', () => {
+    const unknown = track({ id: 1, distanceM: CONFIG.geometry.maxValidDistanceM, clock: { position: 12, angleDeg: 0 } })
+    const known = track({ id: 2, distanceM: 6, clock: { position: 12, angleDeg: 10 } })
+    expect(findYoloSighting('chair', [unknown, known])).toMatchObject({ trackId: 2, distanceM: 6 })
+    expect(findYoloSighting('chair', [unknown])).toMatchObject({ trackId: 1, distanceM: null })
+  })
+
+  test('given where the object was and how far, a track at a clearly different distance is another object', () => {
+    const spot = { angleDeg: 0, maxDeg: 20, distanceM: 2 }
+    const behind = track({ id: 3, distanceM: 4.5, clock: { position: 12, angleDeg: 2 } }) // same bearing, 2.5 m further
+    const same = track({ id: 4, distanceM: 2.4, clock: { position: 12, angleDeg: 6 } })
+    expect(findYoloSighting('chair', [behind], 99, spot)).toBeNull()
+    expect(findYoloSighting('chair', [behind, same], 99, spot)).toMatchObject({ trackId: 4 })
+    // with no distance to compare, the bearing alone decides
+    expect(findYoloSighting('chair', [behind], 99, { angleDeg: 0, maxDeg: 20 })).toMatchObject({ trackId: 3 })
+  })
 })
 
 describe('arrivalDistanceFor', () => {

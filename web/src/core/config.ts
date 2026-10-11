@@ -371,6 +371,15 @@ export const CONFIG = {
     sameObjectNearM: 2.5,
     // The detector must lose a followed target for this long before it counts as lost or another object is followed.
     yoloLostMs: 1_000,
+    // Another detector track is taken for a lost one only if it lies within reacquireDeg of where the object was and,
+    // when both distances are known, within reacquireDistanceFrac of its distance (at least reacquireDistanceMinM); and
+    // never while the object has probably just slipped below the view. Stick to the closest one (owner request).
+    reacquireDeg: 20,
+    reacquireDistanceFrac: 0.4,
+    reacquireDistanceMinM: 1,
+    // A target Gemini found is handed to the detector when a detector track of its kind lies within handoffDeg of it,
+    // so from then on it is followed frame by frame.
+    handoffDeg: 10,
     // A direction word changes only when the bearing is this far past its boundary, so it does not flap.
     directionHysteresisDeg: 5,
     // Automatic retries of the first check after a transient failure (network, timeout, unusable reply).

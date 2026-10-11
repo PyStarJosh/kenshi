@@ -178,31 +178,63 @@ export function isDetectorLabel(label: string, classes: readonly ClassInfo[]): b
   return classes.some((c) => c.label === label)
 }
 
+/** Where the object being followed was, so a lost track is replaced only by one on that spot. */
+export interface SightingSpot {
+  /** Its bearing now, degrees from straight ahead. */
+  angleDeg: number
+  /** How far off another track may be and still count. */
+  maxDeg: number
+  /** Its distance, when known: a track at a clearly different distance is another object. */
+  distanceM?: number | null
+}
+
+/** A track's distance, or null when geometry had none (the tracker then reports the farthest valid distance). */
+function knownDistance(track: Track): number | null {
+  return track.distanceM < CONFIG.geometry.maxValidDistanceM ? track.distanceM : null
+}
+
+/** How far apart two distances may be and still be the same object. */
+export function sameDistanceToleranceM(distanceM: number, cfg = CONFIG.find): number {
+  return Math.max(cfg.reacquireDistanceMinM, cfg.reacquireDistanceFrac * distanceM)
+}
+
 /**
- * The best confirmed track of the target's class in view, as a bearing and distance, or null. Nearest first, then
- * the most confident. A target the detector does not know never matches.
+ * The best confirmed track of the target's class in view, as a bearing and distance, or null. The closest first, then
+ * the most confident; a track with no distance comes last. A target the detector does not know never matches.
  */
 export function findYoloSighting(
   target: string,
   tracks: readonly Track[],
   preferTrackId: number | null = null,
-  near: { angleDeg: number; maxDeg: number } | null = null,
+  near: SightingSpot | null = null,
 ): YoloSighting | null {
   const labels = detectorLabelsFor(target)
   if (labels.length === 0) return null
   const matches = tracks.filter((t) => labels.includes(t.label) && t.status === 'confirmed')
   if (matches.length === 0) return null
-  matches.sort((a, b) => a.distanceM - b.distanceM || b.confidence - a.confidence)
+  matches.sort((a, b) => (knownDistance(a) ?? Infinity) - (knownDistance(b) ?? Infinity) || b.confidence - a.confidence)
   // Keep following the object already being followed, so two chairs in view do not swap places as their
-  // estimated distances wobble.
-  // If it is gone, only one where it was is taken for it (the same object under a new id), not another of the kind.
-  const onSpot = near === null ? matches : matches.filter((t) => Math.abs(wrap180(t.clock.angleDeg - near.angleDeg)) <= near.maxDeg)
-  if (near !== null) onSpot.sort((a, b) => Math.abs(wrap180(a.clock.angleDeg - near.angleDeg)) - Math.abs(wrap180(b.clock.angleDeg - near.angleDeg)))
-  const best = matches.find((t) => t.id === preferTrackId) ?? onSpot[0]
+  // estimated distances wobble. If it is gone, only one where it was is taken for it (the same object under a new id):
+  // close in bearing and, when both distances are known, in distance; the best fit of those.
+  const fit = (t: Track): number | null => {
+    if (near === null) return 0
+    const angleOff = Math.abs(wrap180(t.clock.angleDeg - near.angleDeg))
+    if (angleOff > near.maxDeg) return null
+    const d = knownDistance(t)
+    if (near.distanceM == null || d === null) return angleOff / near.maxDeg
+    const tolerance = sameDistanceToleranceM(near.distanceM)
+    const distanceOff = Math.abs(d - near.distanceM)
+    return distanceOff > tolerance ? null : angleOff / near.maxDeg + distanceOff / tolerance
+  }
+  const onSpot = matches
+    .map((t) => ({ t, score: fit(t) }))
+    .filter((m): m is { t: Track; score: number } => m.score !== null)
+    .sort((a, b) => a.score - b.score)
+  const best = matches.find((t) => t.id === preferTrackId) ?? onSpot[0]?.t
   if (best === undefined) return null
   return {
     angleDeg: best.clock.angleDeg,
-    distanceM: best.distanceM,
+    distanceM: knownDistance(best),
     trackId: best.id,
     clipped: best.box.y + best.box.height >= 1 - CONFIG.geometry.edgeTouchMargin,
   }
