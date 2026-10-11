@@ -62,6 +62,10 @@ export interface FindContext {
   sweepSeenHeading: number | null
   sweepProgressAt: number
   sweepReminded: boolean
+  /** The heading at the last look (the first check or a pause check), so a pause check needs a real turn since. */
+  sweepCheckHeading: number | null
+  /** A pause check was made during this stillness; the next one waits for the user to move again. */
+  sweepDwellChecked: boolean
   // Guiding
   rechecking: boolean
   failedRechecks: number
@@ -88,6 +92,8 @@ export function initialContext(): FindContext {
     sweepSeenHeading: null,
     sweepProgressAt: 0,
     sweepReminded: false,
+    sweepCheckHeading: null,
+    sweepDwellChecked: false,
     rechecking: false,
     failedRechecks: 0,
     lastRecheckAt: 0,
@@ -186,6 +192,8 @@ function beginSweep(d: Draft, heading: number | null, nowMs: number): void {
   c.sweepSeenHeading = heading
   c.sweepProgressAt = nowMs
   c.sweepReminded = false
+  c.sweepCheckHeading = heading
+  c.sweepDwellChecked = false
   d.effects.push({ type: 'discardFrames' })
 }
 
@@ -258,6 +266,18 @@ function memoryFrom(d: Draft, result: LocateResult, meta: FrameMeta | undefined,
   })
 }
 
+/** The detector sees the target: place it from the track and start guiding, with no network. */
+function guideFromYolo(d: Draft, yolo: YoloSighting, heading: number, nowMs: number): void {
+  const memory: TargetMemory = {
+    label: d.c.target,
+    heading: heading + yolo.angleDeg,
+    distanceM: yolo.distanceM === null ? null : roundDistance(yolo.distanceM),
+    seenAt: nowMs,
+    source: 'yolo',
+  }
+  enterGuiding(d, memory, bearing(memory, heading), nowMs)
+}
+
 function onRequest(d: Draft, e: Extract<FindEvent, { type: 'request' }>): void {
   const target = cleanTarget(e.target)
   if (target.length === 0) return
@@ -279,14 +299,7 @@ function onRequest(d: Draft, e: Extract<FindEvent, { type: 'request' }>): void {
     toIdle(d)
     return
   }
-  const memory: TargetMemory = {
-    label: target,
-    heading: e.heading + e.yolo.angleDeg,
-    distanceM: e.yolo.distanceM === null ? null : roundDistance(e.yolo.distanceM),
-    seenAt: e.nowMs,
-    source: 'yolo',
-  }
-  enterGuiding(d, memory, bearing(memory, e.heading), e.nowMs)
+  guideFromYolo(d, e.yolo, e.heading, e.nowMs)
 }
 
 function onLocated(d: Draft, e: Extract<FindEvent, { type: 'located' }>): void {
@@ -322,6 +335,15 @@ function onLocated(d: Draft, e: Extract<FindEvent, { type: 'located' }>): void {
     return
   }
 
+  if (c.state === 'sweeping') {
+    // A look taken while the user paused during the sweep. Finding it ends the sweep; otherwise the sweep carries on.
+    const memory = found ? memoryFrom(d, e.result, e.frames[e.result.frameIndex as number], e.nowMs) : null
+    if (memory !== null) {
+      enterGuiding(d, memory, bearing(memory, e.heading ?? memory.heading), e.nowMs)
+    }
+    return
+  }
+
   if (c.state === 'guiding') {
     c.rechecking = false
     c.lastRecheckAt = e.nowMs
@@ -348,6 +370,7 @@ function onFailed(d: Draft, e: Extract<FindEvent, { type: 'failed' }>): void {
     toError(d, e.code, e.nowMs)
     return
   }
+  if (c.state === 'sweeping') return // a pause look failed: the sweep goes on, and its full-turn call still follows
   if (c.state === 'guiding') {
     c.rechecking = false
     // Our own pacing limits say nothing about the target; try again later. Any other failure counts against it.
@@ -368,6 +391,7 @@ function tickSweep(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
     if (Math.abs(e.heading - c.sweepSeenHeading) >= cfg.sweepProgressDeg) {
       c.sweepSeenHeading = e.heading
       c.sweepProgressAt = now
+      c.sweepDwellChecked = false
     }
     const delta = Math.abs(e.heading - c.sweepLastHeading)
     if (delta >= cfg.sweepStepDeg) {
@@ -390,6 +414,20 @@ function tickSweep(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
   if (idleMs >= cfg.sweepReminderMs && !c.sweepReminded) {
     c.sweepReminded = true
     say(d, now, FIND_PHRASES.keepTurning)
+  }
+  if (
+    e.heading !== null &&
+    c.sweepCheckHeading !== null &&
+    !c.sweepDwellChecked &&
+    c.pending === null &&
+    e.canLocate &&
+    idleMs >= cfg.sweepDwellMs &&
+    Math.abs(e.heading - c.sweepCheckHeading) >= cfg.sweepDwellMinTurnDeg
+  ) {
+    c.sweepDwellChecked = true
+    c.sweepCheckHeading = e.heading
+    say(d, now, FIND_PHRASES.checking)
+    issueLocate(d, 'current')
   }
 }
 
@@ -452,6 +490,12 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
 function onTick(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
   const { c, cfg } = d
   const now = e.nowMs
+  // The detector may see the target while a search is still looking (a chair that comes into view as you turn).
+  const searching = c.state === 'checking' || c.state === 'sweeping' || c.state === 'sweepChecking' || c.state === 'lost'
+  if (searching && e.yolo !== null && e.heading !== null) {
+    guideFromYolo(d, e.yolo, e.heading, now)
+    return
+  }
   switch (c.state) {
     case 'checking':
     case 'sweepChecking':

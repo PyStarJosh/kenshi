@@ -275,6 +275,10 @@ export const CONFIG = {
     // No turning for this long: remind once. Still none after sweepGiveUpMs: send what there is, or give up.
     sweepReminderMs: 4_000,
     sweepGiveUpMs: 15_000,
+    // Holding still this long during the sweep, after turning at least sweepDwellMinTurnDeg since the last look,
+    // takes one fresh look at once instead of waiting for the full turn: this is what staring at a target does.
+    sweepDwellMs: 1_500,
+    sweepDwellMinTurnDeg: 20,
     // Arrived: the target is this near and within this angle of straight ahead.
     arrivalDistanceM: 1.0,
     arrivalAngleDeg: 20,
