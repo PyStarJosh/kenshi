@@ -24,6 +24,8 @@ export default function TalkButton({ link }: Props) {
     <button
       type="button"
       className="talk"
+      // No visible text over the camera picture; screen readers still get the name.
+      aria-label="Talk"
       onPointerDown={() => gesture.pressStart()}
       onPointerUp={() => gesture.pressEnd()}
       onPointerCancel={() => gesture.pressCancel()}
@@ -34,8 +36,6 @@ export default function TalkButton({ link }: Props) {
       onClick={(event) => {
         if (event.detail === 0) gesture.tap()
       }}
-    >
-      Talk
-    </button>
+    />
   )
 }
