@@ -131,7 +131,7 @@ export interface OrientationSample {
 export type AlertPriority = 'urgent' | 'normal' | 'info'
 
 /** What the alert is about. Only "obstacle" alerts carry a track; Find guidance (R5) adds its own kinds. */
-export type AlertKind = 'obstacle' | 'summary' | 'health' | 'status' | 'help'
+export type AlertKind = 'obstacle' | 'summary' | 'health' | 'status' | 'help' | 'find'
 
 /** A request to the audio engine to play a tone and/or speak a phrase. */
 export interface AlertEvent {
@@ -193,6 +193,8 @@ export interface Settings {
 }
 
 export type VoiceIntent =
+  | 'find'
+  | 'stop'
   | 'pause'
   | 'resume'
   | 'slower'
@@ -209,6 +211,37 @@ export type AlertOutcome =
   | 'dropped-stale'
   | 'dropped-track-gone'
 
+/** Where Find is: the controller's state (find/findController.ts). */
+export type FindStateName =
+  | 'idle'
+  | 'checking' // one locate call with the current frame is out
+  | 'sweeping' // the user is turning while frames are captured
+  | 'sweepChecking' // the sweep frames are out in one locate call
+  | 'guiding' // the target's direction is known and being followed
+  | 'lost' // the target could not be re-confirmed; a new sweep starts
+  | 'arrived'
+  | 'notFound'
+  | 'error'
+
+/** What the Find screen and the status line show; published on the bus as `find` whenever it changes. */
+export interface FindSnapshot {
+  state: FindStateName
+  /** The thing being looked for, as the user named it; null when idle. */
+  target: string | null
+  /** Degrees to turn to face it, positive to the right; null when not guiding or no heading. */
+  bearingDeg: number | null
+  /** Estimated distance in meters, or null. */
+  distanceM: number | null
+  /** Who found it: the Gemini locate call or the on-device detector. */
+  source: 'gemini' | 'yolo' | null
+}
+
+/** A request to start looking for something: from a voice command or the quick-pick list. */
+export interface FindRequest {
+  target: string
+  source: 'voice' | 'list'
+}
+
 /** Topics and payloads on the event bus (alerts/bus.ts). */
 export interface EventMap {
   frame: FrameResult
@@ -218,6 +251,9 @@ export interface EventMap {
   health: HealthState
   voice: VoiceIntent
   settings: Settings
+  findRequest: FindRequest
+  findCancel: undefined
+  find: FindSnapshot
 }
 
 // Find: the contract of POST /api/locate (web/api/locate.ts), shared by the function and the client (FR-22).

@@ -4,8 +4,39 @@ import { describe, expect, test } from 'vitest'
 import { MESSAGES } from '../app/messages'
 import { GREETING } from '../audio/unlock'
 import { FIND_MESSAGES } from '../find/messages'
+import {
+  arrivedPhrase,
+  directionPhrase,
+  FIND_PHRASES,
+  foundPhrase,
+  lookingFor,
+  lostPhrase,
+  notFoundPhrase,
+} from '../find/phrases'
+import type { Direction } from '../find/phrases'
+import { QUICK_PICKS } from '../find/targets'
 import { HEALTH_PHRASES } from '../health/monitor'
 import { VOICE_PHRASES } from '../voice/commands'
+
+const DIRECTIONS: Direction[] = ['ahead', 'slightly-left', 'slightly-right', 'left', 'right', 'behind']
+
+/** Every sentence Find can build, for every quick-pick target and every direction, with and without a sign. */
+function findSentences(): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const pick of QUICK_PICKS) {
+    const target = pick.toLowerCase()
+    out[`looking ${target}`] = lookingFor(target)
+    out[`lost ${target}`] = lostPhrase(target)
+    out[`arrived ${target}`] = arrivedPhrase(target)
+    out[`notFound ${target}`] = notFoundPhrase(target, null)
+    out[`notFoundSign ${target}`] = notFoundPhrase(target, 'EXIT ->')
+    for (const direction of DIRECTIONS) {
+      out[`found ${target} ${direction}`] = foundPhrase(target, direction)
+      out[`direction ${direction}`] = directionPhrase(direction)
+    }
+  }
+  return out
+}
 
 const BANNED = /\b(clear|clearly|safe|safely|safety|free|all good|no obstacles?|nothing there|nothing ahead)\b/i
 
@@ -15,6 +46,8 @@ const sources: [string, Record<string, string> | string][] = [
   ['status messages', MESSAGES],
   ['greeting', { greeting: GREETING }],
   ['find messages', FIND_MESSAGES],
+  ['find phrases', FIND_PHRASES],
+  ['find phrases with every quick-pick target', findSentences()],
 ]
 
 describe('SR-2 wording', () => {

@@ -9,7 +9,7 @@ import { createBrowserSpeaker } from '../audio/speech'
 import { listeningTone, TonePlayer } from '../audio/tones'
 import { GREETING, unlockAudioContext } from '../audio/unlock'
 import { CONFIG } from '../core/config'
-import type { AlertEvent, AlertOutcome, AlertPriority, FrameResult, HealthState, VoiceIntent } from '../core/types'
+import type { AlertEvent, AlertOutcome, AlertPriority, FindRequest, FrameResult, HealthState, VoiceIntent } from '../core/types'
 import { HealthMonitor } from '../health/monitor'
 import type { HealthAnnouncement, RunState } from '../health/monitor'
 import { VoiceControl } from '../voice/control'
@@ -56,6 +56,13 @@ export class AudioLink {
     say: (text) => this.say(text),
     holdSpeech: (held) => this.speech.speaker.setHeld(held),
     earcon: (phase) => this.tones?.play(listeningTone(phase), settingsStore.getSnapshot().toneVolume),
+    startFind: (target) => {
+      for (const listener of this.findRequestListeners) listener({ target, source: 'voice' })
+    },
+    cancelFind: () => {
+      for (const listener of this.findCancelListeners) listener()
+    },
+    isFindActive: () => this.findActive(),
     pauseDetection: () => this.session?.pause(),
     resumeDetection: () => void this.session?.resume(),
     isPaused: () => this.session?.getSnapshot().state === 'paused',
@@ -72,6 +79,9 @@ export class AudioLink {
   private trackLookup: TrackLookup | null = null
   private outcomeListeners = new Set<OutcomeListener>()
   private intentListeners = new Set<(intent: VoiceIntent) => void>()
+  private findRequestListeners = new Set<(request: FindRequest) => void>()
+  private findCancelListeners = new Set<() => void>()
+  private findActive: () => boolean = () => false
   private healthListeners = new Set<(health: HealthState) => void>()
   private healthKey = ''
   private latency = new LatencyStats()
@@ -160,6 +170,28 @@ export class AudioLink {
   onVoiceIntent(listener: (intent: VoiceIntent) => void): () => void {
     this.intentListeners.add(listener)
     return () => this.intentListeners.delete(listener)
+  }
+
+  /** Hear a voice request to find something. Returns a stop function. */
+  onFindRequest(listener: (request: FindRequest) => void): () => void {
+    this.findRequestListeners.add(listener)
+    return () => this.findRequestListeners.delete(listener)
+  }
+
+  /** Hear a voice or long-press request to cancel Find. Returns a stop function. */
+  onFindCancel(listener: () => void): () => void {
+    this.findCancelListeners.add(listener)
+    return () => this.findCancelListeners.delete(listener)
+  }
+
+  /** Tell the link whether a Find is running, so a long press cancels it instead of pausing. */
+  setFindActive(isActive: () => boolean): void {
+    this.findActive = isActive
+  }
+
+  /** A soft tick, for example when the Find sweep captures a frame. */
+  playTick(): void {
+    this.tones?.play(listeningTone('stop'), settingsStore.getSnapshot().toneVolume)
   }
 
   /** Hear each change of the health status, issues, or pause. Returns a stop function. */

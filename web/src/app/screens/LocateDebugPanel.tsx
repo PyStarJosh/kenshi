@@ -3,7 +3,7 @@
 // pitch come from the orientation sensor at the moment of the frame; heading is 0 if the sensor has none.
 import { useState } from 'react'
 import { createBitmapGrabber } from '../../camera/scheduler'
-import { Locator } from '../../find/locateClient'
+import { sharedLocator } from '../../find/locateClient'
 import type { Session } from '../session'
 import './LocateDebugPanel.css'
 
@@ -13,7 +13,7 @@ interface Props {
 }
 
 export default function LocateDebugPanel({ session, getVideo }: Props) {
-  const [locator] = useState(() => new Locator())
+  const locator = sharedLocator()
   const [target, setTarget] = useState('chair')
   const [busy, setBusy] = useState(false)
   const [output, setOutput] = useState('')

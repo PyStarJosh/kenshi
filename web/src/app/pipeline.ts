@@ -7,7 +7,7 @@
 //
 //   session result -> tracker -> bus "frame", bus "tracks"
 //   bus "alert" -> audio link -> bus "alertOutcome"
-//   audio link -> bus "health", bus "voice"
+//   audio link -> bus "health", bus "voice", bus "findRequest", bus "findCancel"
 //   a frame counts as healthy (health monitor) only after it went through the whole chain
 import { EventBus } from '../alerts/bus'
 import type { TrackLookup } from '../audio/engine'
@@ -15,6 +15,7 @@ import type {
   AlertEvent,
   AlertOutcome,
   EventMap,
+  FindRequest,
   FrameResult,
   HealthState,
   OrientationSample,
@@ -40,6 +41,9 @@ export interface PipelineLink {
   recordFrame(result: FrameResult): void
   onVoiceIntent(listener: (intent: VoiceIntent) => void): () => void
   onHealth(listener: (health: HealthState) => void): () => void
+  /** A voice request to find something, or to cancel the search; the Find runner listens for them on the bus. */
+  onFindRequest(listener: (request: FindRequest) => void): () => void
+  onFindCancel(listener: () => void): () => void
 }
 
 export interface PipelineTracker {
@@ -90,6 +94,8 @@ export class Pipeline {
       link.onAlertOutcome((alert, outcome) => this.bus.publish('alertOutcome', { alert, outcome, timeMs: this.deps.now() })),
       link.onVoiceIntent((intent) => this.bus.publish('voice', intent)),
       link.onHealth((health) => this.bus.publish('health', health)),
+      link.onFindRequest((request) => this.bus.publish('findRequest', request)),
+      link.onFindCancel(() => this.bus.publish('findCancel', undefined)),
       this.bus.subscribe('alert', (alert) => link.handleAlert(alert)),
     ]
     return () => {

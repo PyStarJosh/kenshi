@@ -1,12 +1,14 @@
 import type { CSSProperties } from 'react'
 import { lazy, Suspense, useState, useSyncExternalStore } from 'react'
 import { useAudioLink } from './app/useAudioLink'
+import { useFind } from './app/useFind'
 import { usePipeline } from './app/usePipeline'
 import TalkButton from './app/screens/TalkButton'
 import { useSession } from './app/useSession'
 
 const DebugOverlay = lazy(() => import('./app/screens/DebugOverlay.tsx'))
 const AudioTestPanel = lazy(() => import('./app/screens/AudioTestPanel.tsx'))
+const FindPanel = lazy(() => import('./app/screens/FindPanel.tsx'))
 const LocateDebugPanel = lazy(() => import('./app/screens/LocateDebugPanel.tsx'))
 const SettingsScreen = lazy(() => import('./app/screens/Settings.tsx'))
 const CalibrateScreen = lazy(() => import('./app/screens/Calibrate.tsx'))
@@ -20,6 +22,7 @@ export default function App() {
   const { session, snapshot, setVideo, getVideo } = useSession()
   const audio = useAudioLink(session)
   const pipeline = usePipeline(session, audio)
+  const find = useFind(session, audio, pipeline, getVideo)
   const audioError = useSyncExternalStore(audio.subscribe, () => audio.getView().error)
   const voiceMessage = useSyncExternalStore(audio.subscribe, () => audio.getView().voiceMessage)
   const [view, setView] = useState<View>('main')
@@ -72,6 +75,12 @@ export default function App() {
 
       {live && (
         <TalkButton link={audio} />
+      )}
+
+      {live && (
+        <Suspense fallback={null}>
+          <FindPanel runner={find} />
+        </Suspense>
       )}
 
       {debugEnabled && (

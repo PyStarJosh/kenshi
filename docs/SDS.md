@@ -269,7 +269,7 @@ Every failure is spoken (unless spoken feedback is off), written to the aria-liv
 | Find request times out | locate client | "The search took too long." | Try again |
 | Target not found | locate result | "I could not find it." (never "it is not here") | Offer the scan sweep, or another target |
 | Heading unavailable (no motion permission) | heading sensor | "I can't tell which way you turn, so I can only search what the camera sees." | Single-frame search only |
-| Privacy notice not accepted | Find controller | "Find sends pictures to Google. Say yes to allow it, or no to cancel." | Find does not start until accepted |
+| Privacy notice (R4: spoken, not yet an explicit yes) | Find controller | "Find sends camera photos to Google Gemini to locate things.", spoken once per session before the first Gemini call (not before a target the detector already sees) | A stored yes, the wait for it, and withdrawal in Settings (FR-30) are still to be built |
 | Paused | pipeline | "Paused." then a reminder every 15 s | Long press or "resume" |
 
 ## 10. Model plan
@@ -369,9 +369,9 @@ Find mode is a "Find My" for blind users. The user names a target; a Gemini mode
 | Frame capture | `find/capture.ts` (R4) | Grabs frames from the camera (reusing the scheduler's bitmap grabber) at the moments the controller asks for and hands them to `frameToJpegBase64`. |
 | Heading | `sensors/heading.ts`, `sensors/attitude.ts` (R3, done) | Camera forward vector from alpha, beta, gamma; compass-style heading and pitch from it; `HeadingTracker` unwraps and lightly smooths. Rides on the existing orientation listener and permission flow (section 2.5). Phone check open. (FR-24) |
 | Target memory | `find/targetMemory.ts` (R3, done) | Pure. `{ label, heading, distanceM, seenAt, source: 'gemini' or 'yolo' }`. `observe(frameHeading, boxCenterX, hfov)` = frame heading + (center - 0.5) * hfov; `bearing(memory, currentHeading)` in (-180, 180], positive to the right; `inView(bearing, hfov)`; `ageMs` and `isStale` (`CONFIG.find.memoryMaxAgeMs`, 60 s, to be measured). `estimateTargetDistance`: ground plane from the box bottom row and the pitch at capture when `onFloor`, else Gemini's `distanceM`, else the box-size method if a typical height is known; rounded to 0.5 m. (FR-24) |
-| Scan planner | `find/scan.ts` (R4) | Pure. From the heading stream decides when to capture (about every 45 degrees, at most 8) and when the sweep is complete, and which cue to speak ("keep turning"). (FR-23) |
-| Target list | `find/targets.ts` (R4) | Quick-pick list and spoken-target cleanup ("find my keys" becomes "keys"). Pure. (FR-21) |
-| Find controller | `find/controller.ts` (R4) | The state machine in 13.3. Owns the privacy gate, requests, retries, cancel, and the events other modules listen to. (FR-21, FR-23, FR-30) |
+| Scan planner | in `find/findController.ts` (R4, done) | The sweep rules live in the controller's `sweeping` state: a frame about every 45 degrees of heading change, up to 8 frames or a full turn, one reminder, a give-up time. (FR-23) |
+| Target list | `find/targets.ts`, `voice/commands.ts` (R4, done) | The quick-pick list (Exit, Door, Elevator, Stairs, Restroom sign, Chair, Trash can, Person) that always works, `cleanTarget` ("find my keys" becomes "keys"), the link from a target name to a detector class, and `findYoloSighting` (the nearest confirmed track of that class in view). Voice: `parseFind` for "find <target>", "where is the <target>" and "take me to <target>" (also "locate", "look for", "search for"), and the `stop` intent. (FR-21) |
+| Find controller | `find/findController.ts`, `find/phrases.ts` (R4, done); adapter `app/findRunner.ts`, `app/useFind.ts`, `app/screens/FindPanel.tsx` | The pure reducer in 13.3, and the sentences it speaks. The adapter turns bus events (`findRequest`, `findCancel`, `tracks`) and a 250 ms timer into controller events, and carries out the effects: speech goes out as an `AlertEvent` of kind `find` (normal priority, no tone) on the bus, so health warnings (urgent) still preempt it; sweep frames are captured with a soft tick; locate calls go through the shared `Locator` (6 s gap, 8 per minute). Find speech has its own stale limit (`speechStaleMs`, 6 s) because its sentences take seconds to speak. `FindPanel` is a plain row of quick-pick buttons over the camera view until the Find screen (R6). (FR-21, FR-23, FR-25, FR-30) |
 | Guidance | `find/guidance.ts` (R5) | Pure. From the stored heading, the current heading, and the distance: degrees to turn, aligned or not, and the spoken line with cooldowns. All wording is tested against the SR-2 word list. (FR-25, SR-11) |
 | Beacon | `audio/beacon.ts` (R5) | Pulses scheduled on the `AudioContext` clock. Rate comes from distance, pan from the relative bearing; silenced while a health warning plays. (FR-26, SR-10) |
 | Find screen | `app/screens/FindScreen.tsx` (R6) | Large arrow rotated by the relative bearing, distance, target name, green when aligned, cancel; everything also spoken and in the aria-live region. (FR-27) |
@@ -416,20 +416,21 @@ flowchart TD
 
 ### 13.3 State machine
 
+Implemented as a pure reducer in `find/findController.ts` (R4): `reduce(context, event, env)` returns the new context and a list of effects (speak, locate, capture a sweep frame, discard frames). Events are `request`, `cancel`, `tick`, `located`, and `failed`; each locate call carries an id, and an answer with an old id (the search was cancelled or replaced) is ignored. The thresholds are in `CONFIG.find` (starting values, to be measured on the phone).
+
 | State | Entered when | Leaves on |
 |---|---|---|
-| `idle` | start, cancel, or finished | find request goes to `consent` or `locating` |
-| `consent` | first Find, or consent withdrawn | yes goes to `locating`; no or cancel goes to `idle` |
-| `locating` | one frame sent | found goes to `guiding`; not found goes to `scan-offer`; error goes to `failed` |
-| `scan-offer` | not in view | user agrees (or after a short prompt) goes to `scanning`; cancel goes to `idle` |
-| `scanning` | sweep started | 8 frames or a full turn goes to `locating-sweep`; cancel goes to `idle` |
-| `locating-sweep` | frames sent | found goes to `guiding`; not found goes to `not-found`; error goes to `failed` |
-| `guiding` | target direction stored | reached goes to `reached`; user says stop goes to `idle`; memory expired goes to `scan-offer`; error in refine stays in `guiding` and says so |
-| `reached` | estimated distance within the reached radius (config, to be measured), or the user says found | back to `idle` after "Check with your hands." |
-| `not-found` | sweep found nothing | try again goes to `scanning`; new target goes to `consent` or `locating`; cancel goes to `idle` |
-| `failed` | network, timeout, rate limit, bad reply | retry goes back to the state that failed; cancel goes to `idle` |
+| `idle` | start, cancel, or a result has been held for `resultHoldMs` (3 s) | a request: a target the detector already sees goes straight to `guiding` (source `yolo`, no network); otherwise `checking` |
+| `checking` | one locate call with the current frame (the first one in a session speaks the privacy notice with "Looking for a chair.") | found goes to `guiding`; not found goes to `sweeping`; a failure goes to `error` |
+| `sweeping` | "Not in view. Turn slowly to your right." | a frame is captured, with a soft tick, each time the heading has turned `sweepStepDeg` (45); after `maxFrames` (8) frames or `sweepFullTurnDeg` (360) of turn it goes to `sweepChecking`; no turning for `sweepReminderMs` (4 s) gives one reminder; no turning for `sweepGiveUpMs` (15 s) sends what there is, or goes to `notFound` with nothing |
+| `sweepChecking` | all sweep frames sent in one call ("Checking.") | found goes to `guiding`; not found goes to `notFound`; a failure goes to `error` |
+| `guiding` | the target's direction is stored as a heading | the bearing is read from the live heading on every tick; a changed direction word is spoken (no more often than `guideSpeechCooldownMs`, 2.5 s); a target the detector follows is tracked frame by frame; otherwise, when the target should be in view (bearing inside half the field of view), `recheckIntervalMs` (6 s) has passed, and the limiter allows, one re-check is made. Two answers that do not find it (`lostAfterFailedRechecks`), or a memory older than `memoryMaxAgeMs`, go to `lost`; distance at most `arrivalDistanceM` (1.0) and bearing under `arrivalAngleDeg` (20) goes to `arrived` |
+| `lost` | "Lost the chair. Scanning." | the next tick goes to `sweeping` |
+| `arrived` | "Chair ahead, within reach." | `idle` after `resultHoldMs` |
+| `notFound` | "I couldn't find a chair here. Try another spot or ask for something else." plus any sign Gemini read ("A sign says exit, to the right.") | `idle` after `resultHoldMs` |
+| `error` | "Find isn't available right now." (our own pacing limits have their own sentences) | `idle` after `resultHoldMs` |
 
-Cancel works from every state. Every transition is spoken (unless spoken feedback is off) and written to the aria-live region.
+Cancel ("stop", the Stop button, or a long press while a Find is running) works from every state, says "Find stopped.", and throws away any sweep frames. While a search is out (`checking`, `sweepChecking`) the user hears "Still searching." at least every `feedbackMaxGapMs` (5 s); the heartbeat runs throughout. With no heading from the phone only a single check is made: it says so, and ends with where the box was. Every spoken sentence is checked against the SR-2 word list.
 
 ### 13.4 Latency budget
 

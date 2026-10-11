@@ -153,6 +153,11 @@ export class Locator {
     this.timeoutMs = deps.timeoutMs ?? find.requestTimeoutMs
   }
 
+  /** True when a call would be allowed right now: none running, the gap since the last one passed, under the cap. */
+  canLocate(): boolean {
+    return !this.inFlight && this.limiter.check(this.now()).ok
+  }
+
   /** Ask where the target is. Every failure comes back as { ok: false }; nothing is thrown. */
   async locate(target: string, captures: readonly Capture[]): Promise<LocateOutcome> {
     const { maxFrames, maxTargetChars } = CONFIG.find
@@ -217,4 +222,12 @@ export class Locator {
     if (!isLocateResult(body)) return failure('bad_response', 'The reply had the wrong shape.')
     return { ok: true, result: body }
   }
+}
+
+let shared: Locator | null = null
+
+/** The one Locator for the app, so the Find controller and the ?debug panel share a single rate limit. */
+export function sharedLocator(): Locator {
+  shared ??= new Locator()
+  return shared
 }

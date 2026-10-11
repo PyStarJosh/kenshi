@@ -39,7 +39,9 @@ export type AlertVerdict = 'ok' | 'dropped-stale' | 'dropped-track-gone'
 
 /** SR-3: drop an alert that is too old, or whose track is gone, before it makes any sound. */
 export function screenAlert(alert: AlertEvent, nowMs: number, getTrack: TrackLookup): AlertVerdict {
-  if (nowMs - alert.frameTimeMs > CONFIG.alerts.staleLimitMs) return 'dropped-stale'
+  // Find sentences take seconds to speak, so a Find phrase behind another is allowed to wait longer.
+  const staleLimitMs = alert.kind === 'find' ? CONFIG.find.speechStaleMs : CONFIG.alerts.staleLimitMs
+  if (nowMs - alert.frameTimeMs > staleLimitMs) return 'dropped-stale'
   if (alert.trackId !== null && getTrack(alert.trackId) === null) return 'dropped-track-gone'
   return 'ok'
 }

@@ -1,0 +1,45 @@
+/* Above the full-screen Talk button, along the top of the camera view. */
+.find-panel {
+  position: absolute;
+  top: max(0.5rem, env(safe-area-inset-top));
+  left: max(0.5rem, env(safe-area-inset-left));
+  right: max(0.5rem, env(safe-area-inset-right));
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.find-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.find-picks button {
+  min-height: 2.75rem;
+  padding: 0.4rem 0.9rem;
+  border: 0.15rem solid #fff;
+  border-radius: 0.6rem;
+  background: #000c;
+  color: #fff;
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 600;
+  touch-action: manipulation;
+}
+
+.find-picks .find-stop {
+  border-color: #ff8a80;
+  color: #ff8a80;
+}
+
+.find-text {
+  align-self: flex-start;
+  margin: 0;
+  padding: 0.25rem 0.6rem;
+  border-radius: 0.4rem;
+  background: #000c;
+  color: #fff;
+  font-size: 1.1rem;
+}
