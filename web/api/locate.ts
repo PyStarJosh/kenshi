@@ -26,6 +26,8 @@ const LIMITS = {
 // Override with GEMINI_MODEL when Google retires or renames models. The owner chose gemini-3.1-flash-lite: it
 // answered in about 2 to 3.5 s with the same box on every repeat (SDS 13.5), where gemini-3.8-flash timed out.
 const DEFAULT_MODEL = 'gemini-3.1-flash-lite'
+// The answer is a small JSON object (about 10 to 60 tokens); this stops a runaway answer from eating the time limit.
+const MAX_OUTPUT_TOKENS = 300
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions'
 
 // The lowest thinking level each model allows (Gemini thinking docs). A model not listed gets no thinking_level,
@@ -150,7 +152,9 @@ function buildGeminiBody(request: LocateRequest, model: string): unknown {
     model,
     input,
     response_format: { type: 'text', mime_type: 'application/json', schema: RESPONSE_SCHEMA },
-    generation_config: level ? { thinking_level: level, temperature: 0 } : { temperature: 0 },
+    generation_config: level
+      ? { thinking_level: level, temperature: 0, max_output_tokens: MAX_OUTPUT_TOKENS }
+      : { temperature: 0, max_output_tokens: MAX_OUTPUT_TOKENS },
   }
 }
 
@@ -229,9 +233,9 @@ function reply(body: LocateResult | LocateErrorBody, status: number): Response {
   })
 }
 
-function fail(code: LocateErrorCode, message: string, status = STATUS[code]): Response {
-  // Only the code is logged: never the key, the target, or the images.
-  console.error(`locate: ${code}`)
+function fail(code: LocateErrorCode, message: string, status = STATUS[code], detail = ''): Response {
+  // Only the code and a few counts are logged: never the key, the target, or the images.
+  console.error(`locate: ${code}${detail}`)
   return reply({ error: code, message }, status)
 }
 
@@ -263,6 +267,8 @@ export async function POST(request: Request): Promise<Response> {
 
   const requested = (process.env.GEMINI_MODEL ?? '').trim()
   const model = /^[a-z0-9][a-z0-9.-]{0,60}$/.test(requested) ? requested : DEFAULT_MODEL
+  const info = (extra = '') =>
+    ` model=${model} frames=${parsed.value.frames.length} ms=${Math.round(performance.now() - started)}${extra}`
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), LIMITS.geminiTimeoutMs)
   let status: number
@@ -278,20 +284,25 @@ export async function POST(request: Request): Promise<Response> {
     text = await gemini.text()
   } catch (error) {
     const timedOut = error instanceof Error && error.name === 'AbortError'
-    return timedOut ? fail('timeout', 'Gemini took too long.') : fail('network', 'Could not reach Gemini.')
+    return timedOut
+      ? fail('timeout', 'Gemini took too long.', STATUS.timeout, info())
+      : fail('network', 'Could not reach Gemini.', STATUS.network, info())
   } finally {
     clearTimeout(timer)
   }
 
-  if (status < 200 || status >= 300) return fail(geminiFailure(status, text), `Gemini answered ${status}.`)
+  if (status < 200 || status >= 300) {
+    const code = geminiFailure(status, text)
+    return fail(code, `Gemini answered ${status}.`, STATUS[code], info(` gemini=${status}`))
+  }
   let body: unknown
   try {
     body = JSON.parse(text)
   } catch {
-    return fail('bad_response', 'Gemini sent something unreadable.')
+    return fail('bad_response', 'Gemini sent something unreadable.', STATUS.bad_response, info())
   }
   const result = parseGeminiReply(body, parsed.value.frames.length)
-  if (!result) return fail('bad_response', 'Gemini sent an answer we cannot use.')
+  if (!result) return fail('bad_response', 'Gemini sent an answer we cannot use.', STATUS.bad_response, info())
   return reply({ ...result, latencyMs: Math.round(performance.now() - started) }, 200)
 }
 
