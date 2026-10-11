@@ -9,13 +9,15 @@ import { createBrowserSpeaker } from '../audio/speech'
 import { listeningTone, TonePlayer } from '../audio/tones'
 import { GREETING, unlockAudioContext } from '../audio/unlock'
 import { CONFIG } from '../core/config'
-import type { AlertEvent, AlertOutcome, AlertPriority, HealthState, VoiceIntent } from '../core/types'
+import type { AlertEvent, AlertOutcome, AlertPriority, FrameResult, HealthState, VoiceIntent } from '../core/types'
 import { HealthMonitor } from '../health/monitor'
 import type { HealthAnnouncement, RunState } from '../health/monitor'
 import { VOICE_PHRASES } from '../voice/commands'
 import { VoiceControl } from '../voice/control'
 import type { VoiceSource } from '../voice/control'
 import { createBrowserRecognizer } from '../voice/recognizer'
+import { LatencyStats } from './latency'
+import type { LatencyView } from './latency'
 import type { Session, SessionState } from './session'
 import { settingsStore } from './settings'
 
@@ -37,6 +39,8 @@ export interface AudioLinkView {
   voiceMessage: string | null
   /** The latest voice intent and where it came from, for the debug panel. */
   lastVoice: string | null
+  /** Capture-to-tone and capture-to-speech percentiles over real alerts (not the test panel's). */
+  latency: LatencyView
 }
 
 const RUN_STATE: Record<SessionState, RunState> = {
@@ -69,6 +73,7 @@ export class AudioLink {
     onIntent: (intent, source) => {
       for (const listener of this.voiceListeners) listener(intent, source)
       this.update({ lastVoice: `${intent} (${source})` })
+      for (const listener of this.intentListeners) listener(intent)
     },
     onError: (message) => this.update({ voiceMessage: message }),
   })
@@ -76,8 +81,11 @@ export class AudioLink {
   private testTracks = new Map<number, { distanceM: number }>()
   private trackLookup: TrackLookup | null = null
   private outcomeListeners = new Set<OutcomeListener>()
+  private intentListeners = new Set<(intent: VoiceIntent) => void>()
   private healthListeners = new Set<(health: HealthState) => void>()
   private voiceListeners = new Set<(intent: VoiceIntent, source: VoiceSource) => void>()
+  private healthKey = ''
+  private latency = new LatencyStats()
   private testCount = 0
   private simulateHealthy = false
   private listeners = new Set<() => void>()
@@ -90,6 +98,7 @@ export class AudioLink {
     lastOutcome: null,
     voiceMessage: null,
     lastVoice: null,
+    latency: { urgentTone: null, tone: null, speech: null },
     error: this.speech.available ? null : 'Speech is not available in this browser. Tones still play.',
   }
 
@@ -124,6 +133,7 @@ export class AudioLink {
         now: () => performance.now(),
         onOutcome: (alert, outcome, latencyMs, times) => this.recordOutcome(alert, outcome, latencyMs, times),
         onError: (message) => this.reportError(message),
+        onLatency: (alert, stage, ms) => this.recordLatency(alert, stage, ms),
       })
       this.engine.applySettings(settingsStore.getSnapshot())
     }
@@ -137,7 +147,6 @@ export class AudioLink {
     const syncRun = () => this.monitor.setRunState(RUN_STATE[session.getSnapshot().state], performance.now())
     syncRun()
     const offState = session.subscribe(syncRun)
-    const offResult = session.onResult((result) => this.monitor.recordFrame(result))
     const offSettings = settingsStore.subscribe(() => this.engine?.applySettings(settingsStore.getSnapshot()))
     const restore = () => {
       if (this.ctx && this.ctx.state !== 'running') this.unlock(false)
@@ -148,10 +157,26 @@ export class AudioLink {
       clearInterval(timer)
       window.removeEventListener('pointerdown', restore)
       offSettings()
-      offResult()
       offState()
       this.session = null
     }
+  }
+
+  /** A frame result that made it through the whole pipeline; the health monitor counts only those. */
+  recordFrame(result: FrameResult): void {
+    this.monitor.recordFrame(result)
+  }
+
+  /** Hear every voice command the user gives. Returns a stop function. */
+  onVoiceIntent(listener: (intent: VoiceIntent) => void): () => void {
+    this.intentListeners.add(listener)
+    return () => this.intentListeners.delete(listener)
+  }
+
+  /** Hear each change of the health status, issues, or pause. Returns a stop function. */
+  onHealth(listener: (health: HealthState) => void): () => void {
+    this.healthListeners.add(listener)
+    return () => this.healthListeners.delete(listener)
   }
 
   handleAlert(alert: AlertEvent): void {
@@ -182,12 +207,6 @@ export class AudioLink {
   onAlertOutcome(listener: OutcomeListener): () => void {
     this.outcomeListeners.add(listener)
     return () => this.outcomeListeners.delete(listener)
-  }
-
-  /** Hear the health state after every check (every few hundred ms). Returns a stop function. */
-  onHealth(listener: (health: HealthState) => void): () => void {
-    this.healthListeners.add(listener)
-    return () => this.healthListeners.delete(listener)
   }
 
   /** Hear each voice command and where it came from. Returns a stop function. */
@@ -246,7 +265,11 @@ export class AudioLink {
       for (const announcement of announcements) this.engine.announceHealth(announcement)
       this.engine.tickHeartbeat()
     }
-    for (const listener of this.healthListeners) listener(health)
+    const key = `${health.status}|${health.issues.join(',')}|${health.paused}`
+    if (key !== this.healthKey) {
+      this.healthKey = key
+      for (const listener of this.healthListeners) listener(health)
+    }
     this.update({ health, timing: this.engine?.getTiming() ?? null, voice: this.speech.speaker.getVoice()?.name ?? null })
   }
 
@@ -254,6 +277,12 @@ export class AudioLink {
     const state = this.ctx?.state ?? 'none'
     this.monitor.setFault('audio-blocked', this.ctx !== null && state !== 'running')
     this.update({ unlocked: this.ctx !== null, contextState: state })
+  }
+
+  private recordLatency(alert: AlertEvent, stage: 'tone' | 'speech', ms: number): void {
+    if (alert.id.startsWith('test-')) return // the test panel's fake alerts would skew the numbers
+    this.latency.record(stage, alert.priority, ms)
+    this.update({ latency: this.latency.view() })
   }
 
   private recordOutcome(alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null, times: AlertTimes): void {

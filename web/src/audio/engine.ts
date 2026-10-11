@@ -37,6 +37,8 @@ export interface AudioEngineDeps {
   now: () => number
   onOutcome: (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null, times: AlertTimes) => void
   onError: (message: string) => void
+  /** Frame capture to the start of the tone or the speech, once per alert and stage. */
+  onLatency?: (alert: AlertEvent, stage: 'tone' | 'speech', ms: number) => void
 }
 
 export type AlertVerdict = 'ok' | 'dropped-stale' | 'dropped-track-gone'
@@ -103,12 +105,14 @@ export class AudioEngine {
         times.toneStartMs = tone.startMs
         this.timing.alertToToneMs = tone.startMs - alert.createdTimeMs
         this.timing.frameToToneMs = tone.startMs - alert.frameTimeMs
+        deps.onLatency?.(alert, 'tone', this.timing.frameToToneMs)
         deps.onOutcome(alert, 'started', this.timing.frameToToneMs, times)
         return Math.max(0, tone.endMs - nowMs) + CONFIG.audio.toneToSpeechGapMs
       },
       onStart: (timeMs) => {
         times.speechStartMs = timeMs
         if (this.timing?.alertId === alert.id) this.timing.frameToSpeechMs = timeMs - alert.frameTimeMs
+        deps.onLatency?.(alert, 'speech', timeMs - alert.frameTimeMs)
         if (!toneStarted) deps.onOutcome(alert, 'started', timeMs - alert.frameTimeMs, times)
       },
       onDone: (outcome, detail) => this.reportDone(alert, outcome, times, detail),
@@ -117,7 +121,7 @@ export class AudioEngine {
 
   announceHealth(announcement: HealthAnnouncement): void {
     const { deps } = this
-    const warning = announcement.kind === 'warning'
+    const warning = announcement.kind !== 'recovered' // warnings and the paused reminder get the warning tone
     deps.speaker.speak({
       text: announcement.phrase,
       urgent: warning,

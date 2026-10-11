@@ -39,6 +39,8 @@ export const CONFIG = {
   debug: {
     // Frames kept for the overlay's inference percentiles. FR-19
     statsSamples: 60,
+    // Alerts kept for the latency percentiles in the debug panel.
+    latencySamples: 200,
     // How often the overlay's session clock redraws. FR-19
     clockUpdateMs: 100,
   },

@@ -1,10 +1,15 @@
-// Pipeline: the live path from detections to spoken alerts. Each frame result goes through the tracker (A4),
+// Pipeline: the one orchestrator of the live path (S3). Each frame result goes through the tracker (A4),
 // whose tracks go to the alert policy (A5); alerts leave on the event bus, and the audio link (U1) listens.
 // The audio link reports what became of each alert, which tells the policy when the next one may go.
+// The same link supplies the health monitor's state and the user's voice commands, which go on the bus too,
+// and it gets the live tracks and the "what's around me" summarizer. Modules meet only through types.ts,
+// the bus, and the small interfaces below.
 //
 //   session result -> tracker -> tracks -> policy -> bus "alert" -> audio link
 //                                            ^                          |
 //                                            +---- bus "alertOutcome" <-+
+//   audio link -> bus "health", bus "voice"
+//   a frame counts as healthy (health monitor) only after it went through the whole chain
 import { EventBus } from '../alerts/bus'
 import type { AlertReason, DropRecord, PolicyResult } from '../alerts/policy'
 import type { AlertTimes, TrackLookup } from '../audio/engine'
@@ -38,8 +43,11 @@ export interface PipelineLink {
   onAlertOutcome(
     listener: (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null, times?: AlertTimes) => void,
   ): () => void
-  /** Health state after every check, and voice commands; both are only logged, so a link may leave them out. */
-  onHealth?(listener: (health: HealthState) => void): () => void
+  /** A frame result that went through the whole pipeline; the health monitor counts only those. */
+  recordFrame(result: FrameResult): void
+  onVoiceIntent(listener: (intent: VoiceIntent) => void): () => void
+  onHealth(listener: (health: HealthState) => void): () => void
+  /** Voice commands with their source; only logged, so a link may leave it out. */
   onVoice?(listener: (intent: VoiceIntent, source: VoiceSource) => void): () => void
 }
 
@@ -135,7 +143,11 @@ export class Pipeline {
           speechStartMs: times?.speechStartMs ?? null,
         })
       }),
-      link.onHealth?.((health) => this.telemetry({ kind: 'health', timeMs: this.deps.now(), health })),
+      link.onVoiceIntent((intent) => this.bus.publish('voice', intent)),
+      link.onHealth((health) => {
+        this.bus.publish('health', health)
+        this.telemetry({ kind: 'health', timeMs: this.deps.now(), health })
+      }),
       link.onVoice?.((intent, source) => this.telemetry({ kind: 'voice', timeMs: this.deps.now(), intent, source })),
       this.bus.subscribe('alert', (alert) => link.handleAlert(alert)),
       this.bus.subscribe('alertOutcome', ({ alert, outcome, timeMs }) => policy.notifyOutcome(alert.id, outcome, timeMs)),
@@ -148,6 +160,23 @@ export class Pipeline {
   }
 
   private process(result: FrameResult): void {
+    try {
+      this.run(result)
+    } catch (error) {
+      // Not counted as a healthy frame, so a pipeline that keeps failing ends in the stalled warning (SR-5, SR-8);
+      // the session also sees the failure and stops the loop after repeated ones.
+      this.bus.publish('telemetry', {
+        kind: 'error',
+        timeMs: this.deps.now(),
+        source: 'pipeline',
+        message: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
+    this.deps.link.recordFrame(result)
+  }
+
+  private run(result: FrameResult): void {
     const { session, tracker, policy, getSettings, now } = this.deps
     // Pair the frame with the tilt at the moment it was captured, not the moment it finished.
     const orientation = session.getOrientationAt(result.captureTimeMs)

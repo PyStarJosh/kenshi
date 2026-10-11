@@ -152,6 +152,8 @@ export function simulateWalk(): FixtureWalk {
     },
     setSummarizer() {},
     setTrackLookup() {},
+    recordFrame() {},
+    onVoiceIntent: () => () => {},
     onAlertOutcome: (l) => (outcomeListeners.add(l), () => outcomeListeners.delete(l)),
     onHealth: (l) => (healthListeners.add(l), () => healthListeners.delete(l)),
     onVoice: (l) => (voiceListeners.add(l), () => voiceListeners.delete(l)),
