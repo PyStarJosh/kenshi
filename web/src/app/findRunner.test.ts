@@ -225,6 +225,21 @@ describe('the sweep', () => {
     expect(t.calls.at(-1)?.captures).toHaveLength(8)
   })
 
+  test('staring after a turn takes one fresh look with a single frame', async () => {
+    const t = setup()
+    t.state.outcome = { ok: true, result: notFoundResult }
+    t.runner.request('exit')
+    await t.flush()
+    expect(t.calls).toHaveLength(1)
+    t.state.heading = 60
+    await t.frame(100) // one sweep frame is taken
+    await t.frame(CONFIG.find.sweepDwellMs + 200)
+    expect(t.calls).toHaveLength(2)
+    expect(t.calls[1].captures).toHaveLength(1)
+    expect(t.calls[1].captures[0].heading).toBe(60)
+    expect(t.runner.getSnapshot().state).toBe('sweeping')
+  })
+
   test('cancelling mid-sweep closes the held frames and says Find stopped', async () => {
     const t = setup()
     t.state.outcome = { ok: true, result: notFoundResult }
