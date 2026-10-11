@@ -398,7 +398,7 @@ Find mode is a "Find My" for blind users. The user names a target; a Gemini mode
 
 | Component | Path (step) | Responsibility |
 |---|---|---|
-| Install files | `public/manifest.webmanifest`, icons, `index.html` meta (R1) | Home Screen install, full screen, no service worker (FR-29) |
+| Install files | `public/manifest.webmanifest`, `public/icons/` (drawn by `ml/make_icons.py`), `index.html` meta (R1, done) | Home Screen install, standalone display, black status bar, no `orientation` field (portrait and both landscapes work), no service worker (FR-29) |
 | Locate function | `web/api/locate.ts` (R2) | One Vercel function. Validates the body (frame count at most 8, size caps, target text length), calls Gemini with a JSON schema asking for found, frame index, a normalized box, and confidence, maps errors (rate limit, server error, bad reply), stores and logs nothing. The key is `GEMINI_API_KEY` in Vercel. (FR-22) |
 | Locate client | `find/locateClient.ts` (R2) | Downscales and JPEG-encodes frames, posts to `/api/locate` with a timeout, returns a typed result or a typed error. Thin adapter over `fetch`. (FR-22, NFR-14) |
 | Frame capture | `find/capture.ts` (R2) | Grabs frames from the camera (reusing the scheduler's bitmap grabber) at the moments the controller asks for. |

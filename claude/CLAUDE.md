@@ -23,13 +23,13 @@ Kenshi: a real-time guide for blind and low-vision people that runs on an iPhone
 ## Structure
 ```
 pyproject.toml, uv.lock     Python tooling (uv); one dependency group: ml
-ml/                         export_onnx.py, class_map.json, gen_classes.py (writes detection/classes.ts), check_onnx.py
+ml/                         export_onnx.py, class_map.json, gen_classes.py (writes detection/classes.ts), check_onnx.py, make_icons.py
 web/                        Vite + React + TypeScript app
   api/locate.ts             (R2) the Vercel function that calls Gemini
   public/models/            ONNX models (each under 15 MB)
   public/ort/               onnxruntime-web WebAssembly files, copied by scripts/copy-ort.mjs (gitignored)
   public/samples/           bus.jpg for the benchmark screen (?bench)
-  public/manifest.webmanifest, icons   (R1) Home Screen install
+  public/manifest.webmanifest, icons/  Home Screen install (icons drawn by ml/make_icons.py)
   src/core/                 types.ts (shared contracts), config.ts (every tunable number)
   src/camera/               camera stream, frame scheduler, wake lock
   src/detection/            worker, engine, protocol, preprocess, postprocess, classes.ts (generated)
@@ -109,7 +109,7 @@ Keep this section current when the structure changes.
 - No secrets in the repo. Never open or print .env files.
 
 ## Commands
-Python (repo root): sync with uv sync --all-groups. Export the model: uv run --group ml python ml/export_onnx.py. Check it: uv run --group ml python ml/check_onnx.py. Generate the class map: uv run --group ml python ml/gen_classes.py (reads ml/class_map.json, writes web/src/detection/classes.ts).
+Python (repo root): sync with uv sync --all-groups. Export the model: uv run --group ml python ml/export_onnx.py. Check it: uv run --group ml python ml/check_onnx.py. Redraw the Home Screen icons: uv run --group ml python ml/make_icons.py. Generate the class map: uv run --group ml python ml/gen_classes.py (reads ml/class_map.json, writes web/src/detection/classes.ts).
 
 Web (in web/):
 - Install: npm install
