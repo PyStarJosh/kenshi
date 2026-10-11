@@ -29,6 +29,7 @@ import {
   lookingFor,
   lostPhrase,
   notFoundPhrase,
+  spokenBand,
 } from './phrases'
 import { initialGuidance, nextGuidance, seedGuidance } from './guidance'
 import type { GuidanceState, PathDecision } from './guidance'
@@ -37,7 +38,7 @@ import type { LocateClientErrorCode } from './locateClient'
 import { wrap180 } from '../sensors/heading'
 import { bearing, boxCenterX, estimateTargetDistance, inView, isStale, observe, remember } from './targetMemory'
 import type { TargetMemory } from './targetMemory'
-import { cleanTarget } from './targets'
+import { arrivalDistanceFor, cleanTarget } from './targets'
 
 type FindConfig = typeof CONFIG.find
 
@@ -78,7 +79,7 @@ export interface FindContext {
   rechecking: boolean
   failedRechecks: number
   lastRecheckAt: number
-  /** What guidance last said and when, the direction zone it is in, and the countdown levels announced. */
+  /** What guidance last said and when, the direction zone it is in, and the distance word said. */
   guidance: GuidanceState
   /** The detector's track being followed, so a second object of the same kind is not swapped in. */
   followId: number | null
@@ -243,6 +244,7 @@ function beginSweep(d: Draft, heading: number | null, nowMs: number): void {
 function enterGuiding(d: Draft, memory: TargetMemory, bearingDeg: number, nowMs: number): void {
   const { c } = d
   const direction = classifyDirection(bearingDeg, d.cfg)
+  const band = spokenBand(memory.distanceM, memory.clipped === true, d.cfg)
   c.state = 'guiding'
   c.enteredAt = nowMs
   c.memory = memory
@@ -250,13 +252,13 @@ function enterGuiding(d: Draft, memory: TargetMemory, bearingDeg: number, nowMs:
   c.failedRechecks = 0
   c.rechecking = false
   c.lastRecheckAt = nowMs
-  c.guidance = seedGuidance(direction, nowMs)
+  c.guidance = seedGuidance(direction, nowMs, band)
   c.pending = null
   c.sweepPending = []
   c.arrivalSince = null
   c.tiltPrompts = 0
   c.lastTiltAt = -Infinity
-  say(d, nowMs, foundPhrase(c.target, direction))
+  say(d, nowMs, foundPhrase(c.target, direction, band))
 }
 
 function toNotFound(d: Draft, nowMs: number): void {
@@ -587,10 +589,11 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
 
   const bearingDeg = bearing(c.memory, e.heading)
 
-  // Arrived: near enough and straight ahead, and it has stayed that way for a moment. When the target's base is out
-  // of the frame its distance is only an upper bound (the nearest floor in view), so it is judged against a larger
-  // distance; tilting the phone down brings the floor, and so a real distance, into view.
-  const limitM = c.memory.clipped === true ? cfg.arrivalClippedM : cfg.arrivalDistanceM
+  // Arrived: near enough and straight ahead, and it has stayed that way for a moment. Stairs and doors count from
+  // further away. When the target's base is out of the frame its distance is only an upper bound (the nearest floor in
+  // view), so it is judged against a larger distance; tilting the phone down brings the floor, and so a real distance,
+  // into view.
+  const limitM = arrivalDistanceFor(c.target, c.memory.clipped === true, cfg)
   if (c.memory.distanceM !== null && c.memory.distanceM <= limitM && Math.abs(bearingDeg) < cfg.arrivalAngleDeg) {
     c.arrivalSince ??= now
     if (now - c.arrivalSince >= cfg.arrivalHoldMs) {
@@ -640,20 +643,22 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
   }
 
   // Ask Gemini again when the target should be in view and the detector is not holding it. The detector gets a moment
-  // to find it again after a flicker, and a target that has probably slipped below the view is not looked for.
+  // to find it again after a flicker, and a target that has probably slipped below the view is not looked for. Close to
+  // the target the re-checks come faster (a look that skips the minimum gap), so "within reach" uses a fresh distance.
   const detectorHolds = c.memory.source === 'yolo' && now - c.yoloSeenAt < cfg.yoloLostMs
   const slippedBelow = c.memory.source === 'yolo' && below
+  const nearTarget = c.memory.distanceM !== null && c.memory.distanceM <= cfg.nearRecheckM
   if (
     inView(bearingDeg, env.hfovDeg) &&
     !detectorHolds &&
     !slippedBelow &&
     !c.rechecking &&
-    e.canLocate &&
-    now - c.lastRecheckAt >= cfg.recheckIntervalMs
+    (nearTarget ? e.canLook : e.canLocate) &&
+    now - c.lastRecheckAt >= (nearTarget ? cfg.nearRecheckIntervalMs : cfg.recheckIntervalMs)
   ) {
     c.rechecking = true
     c.lastRecheckAt = now
-    issueLocate(d, true)
+    issueLocate(d, !nearTarget)
   }
 }
 

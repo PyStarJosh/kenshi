@@ -6,6 +6,7 @@ import { GREETING } from '../audio/unlock'
 import { FIND_MESSAGES } from '../find/messages'
 import {
   arrivedPhrase,
+  bandPhrase,
   directionPhrase,
   FIND_PHRASES,
   foundPhrase,
@@ -13,13 +14,13 @@ import {
   lostPhrase,
   notFoundPhrase,
 } from '../find/phrases'
-import type { Direction } from '../find/phrases'
-import { countdownPhrase, GUIDANCE_PHRASES } from '../find/guidance'
+import type { Direction, DistanceBand } from '../find/phrases'
+import { GUIDANCE_PHRASES } from '../find/guidance'
 import { QUICK_PICKS } from '../find/targets'
 import { HEALTH_PHRASES } from '../health/monitor'
 import { VOICE_PHRASES } from '../voice/commands'
 
-const CONFIG_COUNTDOWN = [10, 5, 3, 2]
+const BANDS: (DistanceBand | null)[] = ['close', 'near', 'far', null]
 const DIRECTIONS: Direction[] = ['ahead', 'slightly-left', 'slightly-right', 'left', 'right', 'behind']
 
 /** Every sentence Find can build, for every quick-pick target and every direction, with and without a sign. */
@@ -32,11 +33,11 @@ function findSentences(): Record<string, string> {
     out[`arrived ${target}`] = arrivedPhrase(target)
     out[`notFound ${target}`] = notFoundPhrase(target, null)
     out[`notFoundSign ${target}`] = notFoundPhrase(target, 'EXIT ->')
-    for (const meters of CONFIG_COUNTDOWN) out[`countdown ${target} ${meters}`] = countdownPhrase(target, meters)
-    for (const direction of DIRECTIONS) {
-      out[`found ${target} ${direction}`] = foundPhrase(target, direction)
-      out[`direction ${direction}`] = directionPhrase(direction)
+    for (const band of BANDS) {
+      if (band !== null) out[`band ${target} ${band}`] = bandPhrase(target, band)
+      for (const direction of DIRECTIONS) out[`found ${target} ${direction} ${band}`] = foundPhrase(target, direction, band)
     }
+    for (const direction of DIRECTIONS) out[`direction ${direction}`] = directionPhrase(direction)
   }
   return out
 }

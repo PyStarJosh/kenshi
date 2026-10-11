@@ -154,7 +154,7 @@ describe('a search from the quick-pick list or a voice command', () => {
     const t = setup()
     t.bus.publish('findRequest', { target: 'chair', source: 'list' })
     await t.flush()
-    expect(t.alerts.at(-1)?.phrase).toBe('Chair found, ahead.')
+    expect(t.alerts.at(-1)?.phrase).toBe('Chair found, ahead. It is near.')
     expect(t.runner.getSnapshot()).toMatchObject({ state: 'guiding', target: 'chair', source: 'gemini' })
     expect(t.snapshots.map((s) => s.state)).toEqual(['checking', 'guiding'])
     expect(t.runner.isActive()).toBe(true)
@@ -175,7 +175,7 @@ describe('a search from the quick-pick list or a voice command', () => {
     await t.flush()
     expect(t.calls).toHaveLength(0)
     expect(t.runner.getSnapshot()).toMatchObject({ state: 'guiding', source: 'yolo' })
-    expect(t.alerts.at(-1)?.phrase).toBe('Chair found, ahead.')
+    expect(t.alerts.at(-1)?.phrase).toBe('Chair found, ahead. It is near.')
   })
 
   test('offline: says Find is not available, then goes idle', async () => {
@@ -241,7 +241,7 @@ describe('the sweep', () => {
       await t.frame()
     }
     expect(t.runner.getSnapshot().state).toBe('guiding')
-    expect(t.alerts.at(-1)?.phrase).toBe('Exit found, ahead.')
+    expect(t.alerts.at(-1)?.phrase).toBe('Exit found, ahead. It is near.')
     const sent = t.calls.length
     t.state.heading = 135
     await t.frame()

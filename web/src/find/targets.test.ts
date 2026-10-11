@@ -2,7 +2,15 @@ import { describe, expect, test } from 'vitest'
 import { CONFIG } from '../core/config'
 import type { Track } from '../core/types'
 import { CLASSES } from '../detection/classes'
-import { cleanTarget, DETECTOR_SYNONYMS, detectorLabelsFor, findYoloSighting, isDetectorLabel, QUICK_PICKS } from './targets'
+import {
+  arrivalDistanceFor,
+  cleanTarget,
+  DETECTOR_SYNONYMS,
+  detectorLabelsFor,
+  findYoloSighting,
+  isDetectorLabel,
+  QUICK_PICKS,
+} from './targets'
 
 function track(overrides: Partial<Track> = {}): Track {
   return {
@@ -180,5 +188,20 @@ describe('findYoloSighting', () => {
     const sure = track({ id: 4, distanceM: 2, confidence: 0.95, clock: { position: 12, angleDeg: 1 } })
     const unsure = track({ id: 5, distanceM: 2, confidence: 0.6, clock: { position: 12, angleDeg: 2 } })
     expect(findYoloSighting('chair', [unsure, sure])?.angleDeg).toBe(1)
+  })
+})
+
+describe('arrivalDistanceFor', () => {
+  test('stairs count as within reach from 2 m, doors, exits, elevators and restrooms from 1.5 m, anything else from 1 m', () => {
+    for (const stairs of ['stairs', 'staircase', 'steps', 'escalator']) expect(arrivalDistanceFor(stairs, false), stairs).toBe(2)
+    for (const door of ['door', 'exit', 'elevator', 'lift', "women's restroom", 'restroom sign', 'bathroom', 'front entrance']) {
+      expect(arrivalDistanceFor(door, false), door).toBe(1.5)
+    }
+    for (const other of ['chair', 'trash can', 'person', 'keys', 'doormat']) expect(arrivalDistanceFor(other, false), other).toBe(1)
+  })
+
+  test('a box cut off at the bottom (an upper bound) is judged against at least the clipped limit', () => {
+    expect(arrivalDistanceFor('chair', true)).toBe(CONFIG.find.arrivalClippedM)
+    expect(arrivalDistanceFor('stairs', true)).toBe(2)
   })
 })

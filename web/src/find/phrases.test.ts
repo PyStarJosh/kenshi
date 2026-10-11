@@ -1,16 +1,19 @@
 import { describe, expect, test } from 'vitest'
 import {
   arrivedPhrase,
+  bandPhrase,
   capitalize,
   classifyDirection,
   directionPhrase,
   directionWords,
+  distanceBand,
   FIND_PHRASES,
   foundPhrase,
   lookingFor,
   lostPhrase,
   notFoundPhrase,
   signPhrase,
+  spokenBand,
   stableDirection,
   withArticle,
 } from './phrases'
@@ -130,5 +133,36 @@ describe('notFoundPhrase', () => {
 
   test('a sign hint with nothing readable adds nothing', () => {
     expect(notFoundPhrase('exit', '->')).toBe("I couldn't find an exit here. Try another spot or ask for something else.")
+  })
+})
+
+describe('distance in words', () => {
+  test('close within 2 m, near within 5 m, far beyond, null when unknown', () => {
+    expect(distanceBand(0.5, false)).toBe('close')
+    expect(distanceBand(2, false)).toBe('close')
+    expect(distanceBand(2.01, false)).toBe('near')
+    expect(distanceBand(5, false)).toBe('near')
+    expect(distanceBand(5.5, false)).toBe('far')
+    expect(distanceBand(null, false)).toBeNull()
+    expect(distanceBand(Number.NaN, false)).toBeNull()
+  })
+
+  test('an upper bound is never far: the target may be much closer than the bound', () => {
+    expect(distanceBand(1.5, true)).toBe('close')
+    expect(distanceBand(4, true)).toBe('near')
+    expect(distanceBand(8, true)).toBeNull()
+  })
+
+  test('aloud, an upper bound may only say close', () => {
+    expect(spokenBand(1.5, true)).toBe('close')
+    expect(spokenBand(4, true)).toBeNull()
+    expect(spokenBand(4, false)).toBe('near')
+  })
+
+  test('found says the word too when it is known, for one thing or several', () => {
+    expect(foundPhrase('chair', 'ahead', 'near')).toBe('Chair found, ahead. It is near.')
+    expect(foundPhrase('stairs', 'right', 'close')).toBe('Stairs found, to your right. They are close.')
+    expect(foundPhrase('exit', 'behind', null)).toBe('Exit found, behind you.')
+    expect(bandPhrase('door', 'far')).toBe('Door is far.')
   })
 })

@@ -186,7 +186,7 @@ describe('a found target', () => {
     const sim = new Sim()
     sim.guideByGemini()
     expect(sim.state).toBe('guiding')
-    expect(sim.said().at(-1)).toBe('Chair found, ahead.')
+    expect(sim.said().at(-1)).toBe('Chair found, ahead. It is far.') // 7.5 m from the floor
     expect(sim.ctx.memory).toMatchObject({ label: 'chair', source: 'gemini', heading: 0 })
   })
 
@@ -199,7 +199,7 @@ describe('a found target', () => {
   ])('a box at %f of the width is %s', (centerX, words) => {
     const sim = new Sim()
     sim.guideByGemini({}, centerX)
-    expect(sim.said().at(-1)).toBe(`Chair found, ${words}.`)
+    expect(sim.said().at(-1)).toBe(`Chair found, ${words}. It is far.`)
   })
 
   test('the target heading is the frame heading plus where the box sits, and distance comes from the floor', () => {
@@ -216,7 +216,7 @@ describe('a found target', () => {
     const [locate] = sim.locateEffects(sim.request('exit'))
     sim.heading = 90 // the user kept turning while the answer was on its way
     sim.located(locate.id, foundResult(0, 0.5), [{ heading: 0, pitch: 0 }])
-    expect(sim.said().at(-1)).toBe('Exit found, to your left.')
+    expect(sim.said().at(-1)).toBe('Exit found, to your left. It is far.')
   })
 })
 
@@ -228,7 +228,7 @@ describe('the YOLO shortcut', () => {
     expect(sim.locateEffects(effects)).toEqual([])
     expect(sim.state).toBe('guiding')
     expect(sim.ctx.memory).toMatchObject({ source: 'yolo', heading: 120, distanceM: 2.5 })
-    expect(sim.said(effects)).toEqual(['Chair found, slightly right.'])
+    expect(sim.said(effects)).toEqual(['Chair found, slightly right. It is near.'])
   })
 
   test('follows the track every frame, so the direction stays smooth', () => {
@@ -355,7 +355,7 @@ describe('the sweep', () => {
     expect(captures).toHaveLength(2)
     const effects = sim.located(captures[1].id, foundResult(0, 0.5), sim.metaOf(captures[1].id))
     expect(sim.state).toBe('guiding')
-    expect(sim.said(effects)).toEqual(['Exit found, slightly left.']) // seen at 90, now facing 120: 30 degrees to the left
+    expect(sim.said(effects)).toEqual(['Exit found, slightly left. It is far.']) // seen at 90, now facing 120: 30 degrees to the left
     expect(sim.ctx.memory).toMatchObject({ source: 'gemini', heading: 90 })
     expect(sim.ctx.sweepPending).toEqual([])
   })
@@ -389,7 +389,7 @@ describe('the sweep', () => {
     const captures = sim.captureEffects(sim.turnTo(360))
     const frame180 = captures[3] // taken facing 180
     const effects = sim.located(frame180.id, foundResult(0, 0.5), sim.metaOf(frame180.id))
-    expect(sim.said(effects)).toEqual(['Exit found, behind you.'])
+    expect(sim.said(effects)).toEqual(['Exit found, behind you. It is far.'])
     expect(sim.ctx.memory?.heading).toBe(180)
   })
 
@@ -522,7 +522,7 @@ describe('looking while the user pauses, and the detector during a search', () =
     const [look] = sim.locateEffects(sim.tick(CFG.sweepDwellMs + 100))
     const effects = sim.located(look.id, foundResult(0, 0.5), [{ heading: 30, pitch: 0 }])
     expect(sim.state).toBe('guiding')
-    expect(sim.said(effects)).toEqual(['Chair found, ahead.'])
+    expect(sim.said(effects)).toEqual(['Chair found, ahead. It is far.'])
     expect(sim.ctx.memory).toMatchObject({ source: 'gemini', heading: 30 })
   })
 
@@ -555,7 +555,7 @@ describe('looking while the user pauses, and the detector during a search', () =
     const effects = sim.tick(100, { yolo: { angleDeg: 12, distanceM: 3 } })
     expect(sim.state).toBe('guiding')
     expect(sim.ctx.memory).toMatchObject({ source: 'yolo', heading: 42 })
-    expect(sim.said(effects)).toEqual(['Chair found, ahead.'])
+    expect(sim.said(effects)).toEqual(['Chair found, ahead. It is near.'])
     expect(sim.ctx.sweepPending).toEqual([])
   })
 
@@ -718,24 +718,25 @@ describe('guiding, re-checks, and lost', () => {
 })
 
 describe('guidance through the controller', () => {
-  test('the distance counts down as the target is crossed at 10, 5, 3 and 2 meters while facing it', () => {
+  test('the distance is told in words as the target gets nearer: far when found, then near, then close', () => {
     const sim = new Sim()
-    sim.request('chair', { angleDeg: 0, distanceM: 12, trackId: 3 })
+    const found = sim.request('chair', { angleDeg: 0, distanceM: 12, trackId: 3 })
+    expect(sim.said(found)).toEqual(['Chair found, ahead. It is far.'])
     const said: string[] = []
     for (const distanceM of [11, 9.5, 8, 4.5, 2.5, 1.5]) {
       said.push(...sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 0, distanceM, trackId: 3 } })))
     }
-    expect(said).toEqual(['chair, about 10 meters.', 'chair, about 5 meters.', 'chair, about 3 meters.', 'chair, about 2 meters.'])
+    expect(said).toEqual(['Chair is near.', 'Chair is close.'])
   })
 
-  test('a distance that is only an upper bound (the base is out of the frame) is never counted down', () => {
+  test('a distance that is only an upper bound (the base is out of the frame) is never said as near or far', () => {
     const sim = new Sim()
     sim.request('chair', { angleDeg: 0, distanceM: 12, trackId: 3 })
     const said: string[] = []
     for (const distanceM of [9.5, 4.5, 2.5]) {
       said.push(...sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 0, distanceM, trackId: 3, clipped: true } })))
     }
-    expect(said.filter((s) => s.includes('meters'))).toEqual([])
+    expect(said.filter((s) => /near|far|meters/.test(s))).toEqual([])
   })
 
   test('with the path line saying go around, it says which way, and still only when it changes or is due again', () => {
@@ -792,7 +793,7 @@ describe('not talking over itself', () => {
   test('the tilt request waits for the same reason', () => {
     const sim = new Sim()
     sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
-    const cut = { angleDeg: 0, distanceM: 2.2, trackId: 7, clipped: true }
+    const cut = { angleDeg: 0, distanceM: 3.2, trackId: 7, clipped: true }
     const busy = sim.tick(CFG.tiltPromptCooldownMs, { yolo: cut, pitch: -5, speaking: true })
     expect(sim.said(busy).filter((s) => s === FIND_PHRASES.tiltDown)).toEqual([])
     const free = sim.tick(100, { yolo: cut, pitch: -5, speaking: false })
@@ -884,6 +885,56 @@ describe('arrival', () => {
     sim.tick(100)
     sim.tick(CFG.arrivalHoldMs + 50)
     expect(sim.state).toBe('arrived')
+  })
+
+  test('stairs and doors are within reach sooner: stairs at 2 m, a door at 1.5 m, a chair only at 1 m', () => {
+    const at = (target: string, distanceM: number) => {
+      const sim = new Sim()
+      const [locate] = sim.locateEffects(sim.request(target))
+      sim.located(locate.id, foundResult(0, 0.5, { onFloor: false, distanceM }))
+      sim.tick(100)
+      sim.tick(CFG.arrivalHoldMs + 50)
+      return sim.state
+    }
+    expect(at('stairs', 2)).toBe('arrived')
+    expect(at('stairs', 2.5)).toBe('guiding')
+    expect(at('door', 1.5)).toBe('arrived')
+    expect(at('door', 2)).toBe('guiding')
+    expect(at('chair', 1.5)).toBe('guiding')
+  })
+
+  test('the stairs arrival says within reach, as for anything else', () => {
+    const sim = new Sim()
+    const [locate] = sim.locateEffects(sim.request('stairs'))
+    sim.located(locate.id, foundResult(0, 0.5, { onFloor: false, distanceM: 2 }))
+    sim.tick(100)
+    expect(sim.said(sim.tick(CFG.arrivalHoldMs + 50))).toEqual(['Stairs ahead, within reach.'])
+  })
+})
+
+describe('re-checks close to the target', () => {
+  test('within 3 m Gemini is asked again every 3 s, as a look that skips the minimum gap', () => {
+    const sim = new Sim()
+    sim.guideByGemini({ onFloor: false, distanceM: 2.5 })
+    expect(sim.locateEffects(sim.tick(CFG.nearRecheckIntervalMs - 100))).toEqual([])
+    const [look] = sim.locateEffects(sim.tick(200))
+    expect(look).toMatchObject({ type: 'locate', paced: false })
+    expect([CFG.nearRecheckM, CFG.nearRecheckIntervalMs]).toEqual([3, 3000])
+  })
+
+  test('farther away it keeps the normal 6 s, paced', () => {
+    const sim = new Sim()
+    sim.guideByGemini({ onFloor: false, distanceM: 6 })
+    expect(sim.locateEffects(sim.tick(CFG.nearRecheckIntervalMs + 100))).toEqual([])
+    const [look] = sim.locateEffects(sim.tick(CFG.recheckIntervalMs))
+    expect(look).toMatchObject({ type: 'locate', paced: true })
+  })
+
+  test('a close re-check waits for the per-minute and concurrency caps', () => {
+    const sim = new Sim()
+    sim.guideByGemini({ onFloor: false, distanceM: 2.5 })
+    expect(sim.locateEffects(sim.tick(CFG.nearRecheckIntervalMs + 100, { canLook: false }))).toEqual([])
+    expect(sim.locateEffects(sim.tick(100, { canLook: true }))).toHaveLength(1)
   })
 })
 
@@ -979,7 +1030,7 @@ describe('keeping hold of a target (reliability)', () => {
     const sim = new Sim()
     sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
     // its base is out of view, then it leaves the frame altogether
-    sim.tick(100, { yolo: { angleDeg: 0, distanceM: 2.2, trackId: 7, clipped: true } })
+    sim.tick(100, { yolo: { angleDeg: 0, distanceM: 3.2, trackId: 7, clipped: true } })
     const gone = sim.tick(CFG.guideSpeechCooldownMs, { yolo: null, pitch: -10 })
     expect(sim.said(gone)).toEqual([FIND_PHRASES.tiltDown])
     // it is not called lost, and nothing is counted against it

@@ -320,13 +320,21 @@ export const CONFIG = {
     // takes one fresh look at once instead of waiting for the full turn: this is what staring at a target does.
     sweepDwellMs: 1_500,
     sweepDwellMinTurnDeg: 20,
-    // Arrived: the target is this near and within this angle of straight ahead.
+    // Arrived: the target is this near and within this angle of straight ahead. Things you should not walk into get it
+    // earlier (owner request): stairs (and steps, escalators) at arrivalStairsM, doors, exits, elevators and restrooms at
+    // arrivalDoorM. FR-25
     arrivalDistanceM: 1.0,
+    arrivalStairsM: 2.0,
+    arrivalDoorM: 1.5,
     arrivalAngleDeg: 20,
     // While guiding, ask Gemini again no sooner than this when the target should be in view, and call it lost after
     // this many answers that do not find it.
     recheckIntervalMs: 6_000,
     lostAfterFailedRechecks: 2,
+    // Within nearRecheckM of the target the re-check comes every nearRecheckIntervalMs instead (a look that skips the
+    // minimum gap but still counts toward the per-minute cap), so "within reach" works from a fresher distance. FR-25
+    nearRecheckM: 3,
+    nearRecheckIntervalMs: 3_000,
     // Arrived, not found, and error go back to idle after this long.
     resultHoldMs: 3_000,
     // While waiting on a search the user hears something at least this often.
@@ -382,10 +390,12 @@ export const CONFIG = {
     // ---- Guidance (R5). Starting values; to be measured on the phone. FR-25 ----
     // An instruction that asks the user to do something (turn, bear, go around) is said again this often until they do.
     guidanceRepeatMs: 5_000,
-    // The distance is counted down as the target is crossed at these distances (meters), while roughly facing it. A
-    // level is announced again only if the user has moved back out beyond it by countdownResetM.
-    countdownM: [10, 5, 3, 2] as readonly number[],
-    countdownResetM: 0.5,
+    // Distance in words (owner request): close within distanceCloseM, near within distanceNearM, far beyond. The word is
+    // spoken when the target comes into a nearer one while roughly facing it, and shown on the Find screen instead of
+    // meters. A word is said again only after the user has moved back out beyond it by bandResetM. FR-25, FR-27
+    distanceCloseM: 2,
+    distanceNearM: 5,
+    bandResetM: 0.5,
   },
 
   // The beacon (R5, FR-26): short pulses while guiding. All starting values; to be measured on the phone with AirPods.

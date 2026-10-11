@@ -5,6 +5,9 @@ import { CONFIG } from '../core/config'
 
 export type Direction = 'ahead' | 'slightly-left' | 'slightly-right' | 'left' | 'right' | 'behind'
 
+/** How far the target is, in words (owner request): the app says and shows these instead of meters. */
+export type DistanceBand = 'close' | 'near' | 'far'
+
 export const FIND_PHRASES = {
   notInView: 'Not in view. Turn slowly to your right.',
   keepTurning: 'Keep turning slowly to your right.',
@@ -73,8 +76,39 @@ export function directionWords(direction: Direction): string {
   return SPOKEN_DIRECTION[direction]
 }
 
+/**
+ * The distance as a word: close within distanceCloseM, near within distanceNearM, far beyond; null when unknown. A
+ * distance that is only an upper bound (the target's base is out of the frame) may be much closer than it says, so it is
+ * never "far": beyond distanceNearM it counts as unknown.
+ */
+export function distanceBand(distanceM: number | null, isBound: boolean, cfg = CONFIG.find): DistanceBand | null {
+  if (distanceM === null || !Number.isFinite(distanceM) || distanceM < 0) return null
+  if (distanceM <= cfg.distanceCloseM) return 'close'
+  if (distanceM <= cfg.distanceNearM) return 'near'
+  return isBound ? null : 'far'
+}
+
+/** The band to say aloud: an upper bound may say "close" (the target is at most that far), nothing else. */
+export function spokenBand(distanceM: number | null, isBound: boolean, cfg = CONFIG.find): DistanceBand | null {
+  const band = distanceBand(distanceM, isBound, cfg)
+  return isBound && band !== 'close' ? null : band
+}
+
+/** "Stairs are", "chair is": a name ending in a plain s (not "bus", "glass" or "men's") is taken as plural. */
+function isPlural(name: string): boolean {
+  return /^(people|children|men|women)$/.test(name) || /[^su']s$/.test(name)
+}
+
+/** "Chair is near.", "Stairs are close." */
+export const bandPhrase = (target: string, band: DistanceBand) =>
+  `${capitalize(target)} ${isPlural(target) ? 'are' : 'is'} ${band}.`
+
 export const lookingFor = (target: string) => `Looking for ${withArticle(target)}.`
-export const foundPhrase = (target: string, direction: Direction) => `${capitalize(target)} found, ${directionWords(direction)}.`
+/** "Chair found, ahead." and, when the distance is known, "Chair found, ahead. It is near." */
+export const foundPhrase = (target: string, direction: Direction, band: DistanceBand | null = null) => {
+  const found = `${capitalize(target)} found, ${directionWords(direction)}.`
+  return band === null ? found : `${found} ${isPlural(target) ? 'They are' : 'It is'} ${band}.`
+}
 export const directionPhrase = (direction: Direction) => `${capitalize(directionWords(direction))}.`
 export const lostPhrase = (target: string) => `Lost the ${target}. Scanning.`
 export const arrivedPhrase = (target: string) => `${capitalize(target)} ahead, within reach.`

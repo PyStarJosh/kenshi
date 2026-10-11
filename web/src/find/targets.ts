@@ -7,6 +7,21 @@ import { CLASSES } from '../detection/classes'
 import { wrap180 } from '../sensors/heading'
 import type { YoloSighting } from './findController'
 
+// Things a person should not walk into get "within reach" earlier (owner request): stairs first, then doors and the
+// like (a restroom is found by its door or sign).
+const STAIRS = /\b(stairs?|staircases?|stairways?|steps?|escalators?)\b/
+const DOORWAY = /\b(doors?|doorways?|exits?|entrances?|elevators?|lifts?|gates?|restrooms?|bathrooms?|washrooms?)\b/
+
+/**
+ * How near the target must be to count as within reach: CONFIG.find.arrivalStairsM for stairs, arrivalDoorM for doors,
+ * exits, elevators and restrooms, arrivalDistanceM for anything else. A box cut off at the bottom gives only an upper
+ * bound, so it is judged against at least arrivalClippedM.
+ */
+export function arrivalDistanceFor(target: string, clipped: boolean, cfg = CONFIG.find): number {
+  const base = STAIRS.test(target) ? cfg.arrivalStairsM : DOORWAY.test(target) ? cfg.arrivalDoorM : cfg.arrivalDistanceM
+  return clipped ? Math.max(base, cfg.arrivalClippedM) : base
+}
+
 /** The quick-pick buttons, in order. */
 export const QUICK_PICKS = ['Exit', 'Door', 'Elevator', 'Stairs', 'Restroom sign', 'Chair', 'Trash can', 'Person'] as const
 
