@@ -72,6 +72,8 @@ function setup() {
     /** Answers to give to the next calls, in order, before falling back to `outcome`. */
     script: [] as LocateOutcome[],
     ticks: 0,
+    /** The phone turns this many degrees while a frame is being grabbed. */
+    turnDuringGrab: 0,
     bitmaps: [] as { close: ReturnType<typeof vi.fn> }[],
   }
   const calls: { target: string; captures: Capture[]; paced: boolean }[] = []
@@ -92,6 +94,7 @@ function setup() {
     grab: async () => {
       const bitmap = { width: 1280, height: 720, close: vi.fn() }
       state.bitmaps.push(bitmap)
+      if (state.heading !== null) state.heading += state.turnDuringGrab
       return bitmap as unknown as ImageBitmap
     },
     locator: {
@@ -284,6 +287,42 @@ describe('the sweep', () => {
     expect(t.alerts.at(-1)?.phrase).toBe(FIND_PHRASES.stopped)
     expect(t.state.bitmaps).toHaveLength(3) // the first look and two sweep frames
     for (const bitmap of t.state.bitmaps) expect(bitmap.close).toHaveBeenCalled()
+  })
+})
+
+describe('reliability', () => {
+  test('the heading a frame is sent with is the one from when the grab started, not after the phone moved on', async () => {
+    const t = setup()
+    t.state.heading = 40
+    t.state.turnDuringGrab = 30
+    t.runner.request('chair')
+    await t.flush()
+    expect(t.calls[0].captures[0].heading).toBe(40)
+  })
+
+  test('with two chairs in view it keeps to the one it started with, even when the other becomes the nearer', async () => {
+    const t = setup()
+    const first = track({ id: 1, distanceM: 3, clock: { position: 12, angleDeg: 0 } })
+    const second = track({ id: 2, distanceM: 4, clock: { position: 1, angleDeg: 30 } })
+    t.state.tracks = [first, second]
+    t.runner.request('chair')
+    await t.flush()
+    expect(t.runner.getSnapshot()).toMatchObject({ state: 'guiding', source: 'yolo', bearingDeg: 0 })
+    t.state.tracks = [track({ id: 1, distanceM: 3.5, clock: { position: 12, angleDeg: 2 } }), track({ id: 2, distanceM: 2, clock: { position: 1, angleDeg: 30 } })]
+    await t.frame()
+    expect(t.runner.getSnapshot().bearingDeg).toBe(2) // still the first chair
+  })
+
+  test('a hiccup on the first check is retried quietly and the search goes on', async () => {
+    const t = setup()
+    t.state.script = [{ ok: false, error: 'network', message: 'x', retryAfterMs: null }, { ok: true, result: foundResult() }]
+    t.runner.request('chair')
+    await t.flush()
+    expect(t.calls).toHaveLength(2)
+    expect(t.calls[0].paced).toBe(true)
+    expect(t.calls[1].paced).toBe(false)
+    expect(t.runner.getSnapshot().state).toBe('guiding')
+    expect(t.alerts.map((a) => a.phrase)).not.toContain(FIND_PHRASES.unavailable)
   })
 })
 

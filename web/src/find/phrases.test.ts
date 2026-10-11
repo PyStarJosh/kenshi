@@ -11,6 +11,7 @@ import {
   lostPhrase,
   notFoundPhrase,
   signPhrase,
+  stableDirection,
   withArticle,
 } from './phrases'
 
@@ -32,6 +33,34 @@ describe('classifyDirection', () => {
     [180, 'behind'],
   ] as const)('%d degrees -> %s', (bearing, direction) => {
     expect(classifyDirection(bearing)).toBe(direction)
+  })
+})
+
+describe('stableDirection', () => {
+  test('with nothing said yet it is just the direction', () => {
+    expect(stableDirection(null, 30)).toBe('slightly-right')
+  })
+
+  test('moving outward needs to be past the boundary by the margin; moving back needs the same', () => {
+    expect(stableDirection('ahead', 16)).toBe('ahead')
+    expect(stableDirection('ahead', 19)).toBe('ahead')
+    expect(stableDirection('ahead', 20)).toBe('slightly-right')
+    expect(stableDirection('slightly-right', 14)).toBe('slightly-right')
+    expect(stableDirection('slightly-right', 12)).toBe('slightly-right')
+    expect(stableDirection('slightly-right', 11)).toBe('ahead')
+    expect(stableDirection('slightly-left', -49)).toBe('slightly-left')
+    expect(stableDirection('slightly-left', -50)).toBe('left')
+    expect(stableDirection('left', -43)).toBe('left')
+    expect(stableDirection('left', -40)).toBe('slightly-left')
+    expect(stableDirection('behind', 133)).toBe('behind')
+    expect(stableDirection('behind', 130)).toBe('right')
+  })
+
+  test('a big jump is not held back, and it is symmetric left and right', () => {
+    expect(stableDirection('ahead', 100)).toBe('right')
+    expect(stableDirection('ahead', -100)).toBe('left')
+    expect(stableDirection('behind', 0)).toBe('ahead')
+    expect(stableDirection('slightly-right', -30)).toBe('slightly-left')
   })
 })
 

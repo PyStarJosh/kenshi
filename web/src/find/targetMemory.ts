@@ -17,6 +17,11 @@ export interface TargetMemory {
   seenAt: number
   /** What found it: the Gemini locate call or the on-device detector. */
   source: 'gemini' | 'yolo'
+  /**
+   * The target's box ran off the bottom of the frame when it was last seen: its base was out of view, so distanceM is
+   * only an upper bound, and the target may soon slip out of the frame altogether.
+   */
+  clipped?: boolean
 }
 
 /**
@@ -116,6 +121,7 @@ export function remember(args: {
   distanceM: number | null
   nowMs: number
   source: 'gemini' | 'yolo'
+  clipped?: boolean
 }): TargetMemory {
   return {
     label: args.label,
@@ -123,5 +129,6 @@ export function remember(args: {
     distanceM: args.distanceM,
     seenAt: args.nowMs,
     source: args.source,
+    ...(args.clipped === undefined ? {} : { clipped: args.clipped }),
   }
 }

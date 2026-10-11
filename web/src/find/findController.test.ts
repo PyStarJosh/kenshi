@@ -56,7 +56,10 @@ class Sim {
   /** The heading each sweep frame was taken at, by the id of its look. */
   captureHeadings = new Map<number, number | null>()
 
-  tick(advanceMs = 0, patch: { yolo?: YoloSighting | null; canLocate?: boolean; canLook?: boolean } = {}): FindEffect[] {
+  tick(
+    advanceMs = 0,
+    patch: { yolo?: YoloSighting | null; canLocate?: boolean; canLook?: boolean; pitch?: number | null } = {},
+  ): FindEffect[] {
     this.nowMs += advanceMs
     const effects = this.send({
       type: 'tick',
@@ -65,6 +68,7 @@ class Sim {
       yolo: null,
       canLocate: true,
       canLook: true,
+      pitch: null,
       ...patch,
     })
     for (const effect of effects) if (effect.type === 'capture') this.captureHeadings.set(effect.id, this.heading)
@@ -116,6 +120,12 @@ class Sim {
 
   get state() {
     return this.ctx.state
+  }
+
+  /** Keep ticking with a sighting until the arrival hold has passed. Returns the effects of the last tick. */
+  hold(yolo: YoloSighting, patch: { pitch?: number | null } = {}): FindEffect[] {
+    this.tick(100, { yolo, ...patch })
+    return this.tick(CFG.arrivalHoldMs + 50, { yolo, ...patch })
   }
 
   /** Get to guiding on a chair straight ahead by a Gemini check. Returns the search id used. */
@@ -687,19 +697,6 @@ describe('guiding, re-checks, and lost', () => {
     expect(sim.tick(100).some((e) => e.type === 'capture')).toBe(true)
   })
 
-  test('a failed re-check from our own pacing is not held against the target; a real failure is', () => {
-    const sim = new Sim()
-    sim.guideByGemini()
-    const [first] = sim.locateEffects(sim.tick(CFG.recheckIntervalMs + 100))
-    sim.failed(first.id, 'too_soon')
-    expect(sim.ctx.failedRechecks).toBe(0)
-    expect(sim.ctx.rechecking).toBe(false)
-    const [second] = sim.locateEffects(sim.tick(CFG.recheckIntervalMs + 100))
-    sim.failed(second.id, 'network')
-    expect(sim.ctx.failedRechecks).toBe(1)
-    expect(sim.state).toBe('guiding')
-  })
-
   test('a memory nobody has refreshed for too long is lost', () => {
     const sim = new Sim()
     sim.guideByGemini()
@@ -722,13 +719,29 @@ describe('arrival', () => {
   test('within reach and straight ahead: says so, then goes idle after the hold time', () => {
     const sim = new Sim()
     sim.request('chair', { angleDeg: 0, distanceM: 4 })
-    const effects = sim.tick(100, { yolo: { angleDeg: 5, distanceM: 0.9 } })
+    const effects = sim.hold({ angleDeg: 5, distanceM: 0.9 })
     expect(sim.state).toBe('arrived')
     expect(sim.said(effects)).toEqual(['Chair ahead, within reach.'])
     sim.tick(CFG.resultHoldMs - 100)
     expect(sim.state).toBe('arrived')
     sim.tick(200)
     expect(sim.state).toBe('idle')
+  })
+
+  test('it has to hold for a moment: one close reading is not enough, and a break starts the count again', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 4 })
+    sim.tick(100, { yolo: { angleDeg: 0, distanceM: 0.5 } })
+    expect(sim.state).toBe('guiding')
+    sim.tick(CFG.arrivalHoldMs - 100, { yolo: { angleDeg: 0, distanceM: 0.5 } })
+    expect(sim.state).toBe('guiding')
+    sim.tick(100, { yolo: { angleDeg: 0, distanceM: 3 } }) // a noisy far reading breaks it
+    expect(sim.ctx.arrivalSince).toBeNull()
+    sim.tick(100, { yolo: { angleDeg: 0, distanceM: 0.5 } })
+    sim.tick(CFG.arrivalHoldMs - 100, { yolo: { angleDeg: 0, distanceM: 0.5 } })
+    expect(sim.state).toBe('guiding')
+    sim.tick(200, { yolo: { angleDeg: 0, distanceM: 0.5 } })
+    expect(sim.state).toBe('arrived')
   })
 
   test('the limits: 1.0 m counts, 1.5 m (rounded) does not; 19 degrees counts, 20 does not', () => {
@@ -742,15 +755,32 @@ describe('arrival', () => {
     for (const [distanceM, angleDeg, expected] of cases) {
       const sim = new Sim()
       sim.request('chair', { angleDeg: 0, distanceM: 4 })
-      sim.tick(100, { yolo: { angleDeg, distanceM } })
+      sim.hold({ angleDeg, distanceM })
       expect(sim.state, `${distanceM} m at ${angleDeg}`).toBe(expected)
     }
+  })
+
+  test('with its base out of the frame the distance is only an upper bound, so a larger one is judged', () => {
+    const cut = new Sim()
+    cut.request('chair', { angleDeg: 0, distanceM: 4 })
+    cut.hold({ angleDeg: 0, distanceM: 1.5, clipped: true }) // the nearest floor in view is 1.5 m: it is closer than that
+    expect(cut.state).toBe('arrived')
+
+    const whole = new Sim()
+    whole.request('chair', { angleDeg: 0, distanceM: 4 })
+    whole.hold({ angleDeg: 0, distanceM: 1.5, clipped: false }) // a measured 1.5 m is not within reach
+    expect(whole.state).toBe('guiding')
+
+    const far = new Sim()
+    far.request('chair', { angleDeg: 0, distanceM: 4 })
+    far.hold({ angleDeg: 0, distanceM: 2.5, clipped: true }) // cut off at a shallow tilt: the bound is too loose to say
+    expect(far.state).toBe('guiding')
   })
 
   test('with no distance there is no arrival', () => {
     const sim = new Sim()
     sim.request('chair', { angleDeg: 0, distanceM: null })
-    sim.tick(100, { yolo: { angleDeg: 0, distanceM: null } })
+    sim.hold({ angleDeg: 0, distanceM: null })
     expect(sim.state).toBe('guiding')
   })
 
@@ -759,15 +789,155 @@ describe('arrival', () => {
     sim.guideByGemini({ onFloor: false, distanceM: 0.8 })
     expect(sim.ctx.memory?.distanceM).toBe(1)
     sim.tick(100)
+    sim.tick(CFG.arrivalHoldMs + 50)
     expect(sim.state).toBe('arrived')
   })
 })
 
+describe('keeping hold of a target (reliability)', () => {
+  test('the detector keeps to the object it started with: a second chair does not take over at once', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
+    sim.tick(100, { yolo: { angleDeg: 40, distanceM: 2, trackId: 9 } }) // a nearer chair appears
+    expect(sim.ctx.memory?.heading).toBe(0) // still the first one's direction, not 40
+    expect(sim.ctx.followId).toBe(7)
+    sim.tick(100, { yolo: { angleDeg: 3, distanceM: 4, trackId: 7 } })
+    expect(sim.ctx.memory?.heading).toBe(3)
+  })
+
+  test('once the first has been gone for a moment, another of the same kind is taken up', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
+    sim.tick(CFG.yoloLostMs + 100, { yolo: { angleDeg: 40, distanceM: 2, trackId: 9 } })
+    expect(sim.ctx.followId).toBe(9)
+    expect(sim.ctx.memory?.heading).toBe(40)
+  })
+
+  test('a flicker of the detector does not trigger a Gemini re-check; a real loss does, after the pause', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
+    sim.tick(CFG.recheckIntervalMs + 100, { yolo: { angleDeg: 0, distanceM: 4, trackId: 7 } })
+    // the track is missing for one tick, long after the last re-check would have been due:
+    expect(sim.locateEffects(sim.tick(200, { yolo: null }))).toEqual([])
+    // gone for good: after the detector's grace and the re-check interval, Gemini is asked
+    expect(sim.locateEffects(sim.tick(CFG.yoloLostMs, { yolo: null }))).toEqual([])
+    expect(sim.locateEffects(sim.tick(CFG.recheckIntervalMs, { yolo: null }))).toHaveLength(1)
+  })
+
+  test('a direction word does not flap while the bearing wobbles around its boundary', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 4 })
+    const said: string[][] = []
+    for (const angle of [14, 17, 13, 18, 12, 19, 14, 16]) {
+      said.push(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: angle, distanceM: 4 } })))
+    }
+    expect(said.flat()).toEqual([]) // never leaves "ahead" until it is clearly past the boundary
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 22, distanceM: 4 } }))).toEqual(['Slightly right.'])
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 13, distanceM: 4 } }))).toEqual([]) // not back yet
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 9, distanceM: 4 } }))).toEqual(['Ahead.'])
+  })
+
+  test('a target that slides out of the bottom of the frame as you walk up is not lost: you are asked to tilt down', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
+    // its base is out of view, then it leaves the frame altogether
+    sim.tick(100, { yolo: { angleDeg: 0, distanceM: 2.2, trackId: 7, clipped: true } })
+    const gone = sim.tick(CFG.guideSpeechCooldownMs, { yolo: null, pitch: -10 })
+    expect(sim.said(gone)).toEqual([FIND_PHRASES.tiltDown])
+    // it is not called lost, and nothing is counted against it
+    sim.tick(2000, { yolo: null, pitch: -10 })
+    expect(sim.state).toBe('guiding')
+    expect(sim.ctx.failedRechecks).toBe(0)
+  })
+
+  test('the tilt request is made at most twice, not when the phone is already tilted down, and not when it is far off to the side', () => {
+    const asked = (patch: { pitch: number | null }, angleDeg = 0) => {
+      const sim = new Sim()
+      sim.request('chair', { angleDeg, distanceM: 4, trackId: 7 })
+      const seen = { angleDeg, distanceM: 2.2, trackId: 7, clipped: true }
+      let count = 0
+      const tilts = (effects: FindEffect[]) => sim.said(effects).filter((s) => s === FIND_PHRASES.tiltDown).length
+      for (let i = 0; i < 4; i++) {
+        count += tilts(sim.tick(CFG.tiltPromptCooldownMs, { yolo: seen, ...patch })) // seen cut off at the bottom
+        count += tilts(sim.tick(CFG.guideSpeechCooldownMs, { yolo: null, ...patch })) // then gone from the frame
+      }
+      return count
+    }
+    expect(asked({ pitch: -5 })).toBe(CFG.tiltPromptMax)
+    expect(asked({ pitch: CFG.tiltPitchDeg - 5 })).toBe(0)
+    expect(asked({ pitch: -5 }, 80)).toBe(0)
+  })
+
+  test('a Gemini re-check that misses a target last seen cut off at the bottom is not held against it for a while', () => {
+    const sim = new Sim()
+    sim.guideByGemini({ box: { x0: 0.4, y0: 0.4, x1: 0.6, y1: 1 } }) // cut off at the bottom
+    expect(sim.ctx.memory?.clipped).toBe(true)
+    const [look] = sim.locateEffects(sim.tick(CFG.recheckIntervalMs))
+    sim.located(look.id, notFoundResult())
+    expect(sim.ctx.failedRechecks).toBe(0)
+    expect(sim.state).toBe('guiding')
+  })
+
+  test('the target is called lost when it has been out of sight for a long time even though it was last seen cut off', () => {
+    const sim = new Sim()
+    sim.guideByGemini({ box: { x0: 0.4, y0: 0.4, x1: 0.6, y1: 1 } })
+    let [look] = sim.locateEffects(sim.tick(CFG.belowViewMaxMs + 100)) // too long ago for "just below the view"
+    for (let i = 0; i < CFG.lostAfterFailedRechecks; i++) {
+      sim.located(look.id, notFoundResult())
+      if (i < CFG.lostAfterFailedRechecks - 1) [look] = sim.locateEffects(sim.tick(CFG.recheckIntervalMs + 100))
+    }
+    expect(sim.state).toBe('lost')
+  })
+
+  test('a failed re-check call (network, timeout) says nothing about the target and is never counted', () => {
+    const sim = new Sim()
+    sim.guideByGemini()
+    for (let i = 0; i < 4; i++) {
+      const [look] = sim.locateEffects(sim.tick(CFG.recheckIntervalMs + 100))
+      sim.failed(look.id, 'network')
+    }
+    expect(sim.state).toBe('guiding')
+    expect(sim.ctx.failedRechecks).toBe(0)
+  })
+
+  test('the first check is retried once, quietly, after a network hiccup, a timeout or an unusable reply', () => {
+    for (const code of ['network', 'timeout', 'bad_response'] as const) {
+      const sim = new Sim()
+      const [first] = sim.locateEffects(sim.request('chair'))
+      const retry = sim.failed(first.id, code)
+      expect(sim.state, code).toBe('checking')
+      expect(sim.said(retry), code).toEqual([])
+      const [second] = sim.locateEffects(retry)
+      expect(second, code).toMatchObject({ type: 'locate', paced: false })
+      expect(second.id).toBeGreaterThan(first.id)
+      // the retry's answer is used
+      sim.located(second.id, foundResult())
+      expect(sim.state, code).toBe('guiding')
+    }
+  })
+
+  test('a second failure of the first check ends in the error sentence, and refusals are not retried', () => {
+    const sim = new Sim()
+    const [first] = sim.locateEffects(sim.request('chair'))
+    const [second] = sim.locateEffects(sim.failed(first.id, 'network'))
+    expect(sim.said(sim.failed(second.id, 'network'))).toEqual([FIND_PHRASES.unavailable])
+    expect(sim.state).toBe('error')
+
+    for (const code of ['quota', 'auth', 'bad_request', 'too_soon', 'limit'] as const) {
+      const once = new Sim()
+      const [look] = once.locateEffects(once.request('chair'))
+      once.failed(look.id, code)
+      expect(once.state, code).toBe('error')
+    }
+  })
+})
+
 describe('errors and silence', () => {
-  test('offline during the first check: Find is not available, then idle', () => {
+  test('offline during the first check: Find is not available (after one quiet retry), then idle', () => {
     const sim = new Sim()
     const [locate] = sim.locateEffects(sim.request('chair'))
-    const effects = sim.failed(locate.id, 'network')
+    const [retry] = sim.locateEffects(sim.failed(locate.id, 'network'))
+    const effects = sim.failed(retry.id, 'network')
     expect(sim.state).toBe('error')
     expect(sim.said(effects)).toEqual(["Find isn't available right now."])
     sim.tick(CFG.resultHoldMs)
@@ -829,11 +999,11 @@ describe('cancel', () => {
       }],
       ['arrived', (sim) => {
         sim.request('chair', { angleDeg: 0, distanceM: 4 })
-        sim.tick(10, { yolo: { angleDeg: 0, distanceM: 0.5 } })
+        sim.hold({ angleDeg: 0, distanceM: 0.5 })
       }],
       ['error', (sim) => {
         const [l] = sim.locateEffects(sim.request('chair'))
-        sim.failed(l.id, 'network')
+        sim.failed(l.id, 'quota')
       }],
     ]
     for (const [state, setup] of setups) {

@@ -30,6 +30,7 @@ import {
   lookingFor,
   lostPhrase,
   notFoundPhrase,
+  stableDirection,
 } from './phrases'
 import type { Direction } from './phrases'
 import { FIND_MESSAGES } from './messages'
@@ -81,6 +82,17 @@ export interface FindContext {
   lastRecheckAt: number
   lastSpokenDirection: Direction | null
   lastDirectionAt: number
+  /** The detector's track being followed, so a second object of the same kind is not swapped in. */
+  followId: number | null
+  /** The last time the detector saw the followed target. */
+  yoloSeenAt: number
+  /** Since when the arrival conditions have held without a break, or null. */
+  arrivalSince: number | null
+  /** How many times the user was asked to tilt the phone down for this target, and when last. */
+  tiltPrompts: number
+  lastTiltAt: number
+  /** Automatic retries made of the first check. */
+  checkRetries: number
 }
 
 export function initialContext(): FindContext {
@@ -112,6 +124,12 @@ export function initialContext(): FindContext {
     lastRecheckAt: 0,
     lastSpokenDirection: null,
     lastDirectionAt: 0,
+    followId: null,
+    yoloSeenAt: 0,
+    arrivalSince: null,
+    tiltPrompts: 0,
+    lastTiltAt: -Infinity,
+    checkRetries: 0,
   }
 }
 
@@ -119,6 +137,10 @@ export function initialContext(): FindContext {
 export interface YoloSighting {
   angleDeg: number
   distanceM: number | null
+  /** The detector's id for the track, so the same object is followed from frame to frame. */
+  trackId?: number
+  /** The box runs off the bottom of the frame: its base is out of view, so distanceM is only an upper bound. */
+  clipped?: boolean
 }
 
 /** The heading and pitch a sent frame was taken at; null where the phone gave none. */
@@ -139,6 +161,8 @@ export type FindEvent =
       canLocate: boolean
       /** An unpaced look (a pause look) would be allowed now: under the per-minute and concurrency caps. */
       canLook: boolean
+      /** The camera pitch now (negative looks down), or null without a tilt reading. */
+      pitch: number | null
     }
   | { type: 'located'; id: number; nowMs: number; heading: number | null; result: LocateResult; frames: FrameMeta[] }
   | { type: 'failed'; id: number; nowMs: number; code: LocateClientErrorCode }
@@ -199,6 +223,7 @@ function startChecking(d: Draft, nowMs: number): void {
   say(d, nowMs, ...parts)
   c.state = 'checking'
   c.enteredAt = nowMs
+  c.checkRetries = 0
   issueLocate(d, true)
 }
 
@@ -233,6 +258,9 @@ function enterGuiding(d: Draft, memory: TargetMemory, bearingDeg: number, nowMs:
   c.lastDirectionAt = nowMs
   c.pending = null
   c.sweepPending = []
+  c.arrivalSince = null
+  c.tiltPrompts = 0
+  c.lastTiltAt = -Infinity
   say(d, nowMs, foundPhrase(c.target, direction))
 }
 
@@ -287,6 +315,7 @@ function memoryFrom(d: Draft, result: LocateResult, meta: FrameMeta | undefined,
     distanceM: distance,
     nowMs,
     source: 'gemini',
+    clipped: result.box.y1 >= 1 - CONFIG.geometry.edgeTouchMargin,
   })
 }
 
@@ -298,7 +327,10 @@ function guideFromYolo(d: Draft, yolo: YoloSighting, heading: number, nowMs: num
     distanceM: yolo.distanceM === null ? null : roundDistance(yolo.distanceM),
     seenAt: nowMs,
     source: 'yolo',
+    clipped: yolo.clipped ?? false,
   }
+  d.c.followId = yolo.trackId ?? null
+  d.c.yoloSeenAt = nowMs
   enterGuiding(d, memory, bearing(memory, heading), nowMs)
 }
 
@@ -382,8 +414,21 @@ function onLocated(d: Draft, e: Extract<FindEvent, { type: 'located' }>): void {
       c.failedRechecks = 0
       return
     }
+    // A target last seen cut off at the bottom and now ahead is probably just below the view: not seeing it says
+    // nothing against it yet.
+    if (c.memory !== null && belowView(c, bearing(c.memory, e.heading ?? c.memory.heading), e.nowMs, d.cfg)) return
     failRecheck(d, e.nowMs)
   }
+}
+
+/** The target was last seen with its base out of the bottom of the frame, is roughly ahead, and that was recent. */
+function belowView(c: FindContext, bearingDeg: number, nowMs: number, cfg: FindConfig): boolean {
+  return (
+    c.memory !== null &&
+    c.memory.clipped === true &&
+    Math.abs(bearingDeg) <= cfg.belowViewAngleDeg &&
+    nowMs - c.memory.seenAt <= cfg.belowViewMaxMs
+  )
 }
 
 function failRecheck(d: Draft, nowMs: number): void {
@@ -398,6 +443,13 @@ function onFailed(d: Draft, e: Extract<FindEvent, { type: 'failed' }>): void {
   if (sweepFrame) c.sweepPending = c.sweepPending.filter((id) => id !== e.id)
   else c.pending = null
   if (c.state === 'checking') {
+    // A hiccup (network, timeout, an unusable reply) gets one more try, quietly, before Find gives up.
+    const transient = e.code === 'network' || e.code === 'timeout' || e.code === 'bad_response'
+    if (transient && c.checkRetries < d.cfg.checkRetryMax) {
+      c.checkRetries += 1
+      issueLocate(d, false)
+      return
+    }
     toError(d, e.code, e.nowMs)
     return
   }
@@ -411,11 +463,10 @@ function onFailed(d: Draft, e: Extract<FindEvent, { type: 'failed' }>): void {
     return
   }
   if (c.state === 'guiding') {
+    // A failed call (our own pacing limits, the network, a timeout) says nothing about the target: try again later.
+    // Only an answer that does not find it counts toward lost.
     c.rechecking = false
-    // Our own pacing limits say nothing about the target; try again later. Any other failure counts against it.
-    if (e.code === 'too_soon' || e.code === 'limit') return
     c.lastRecheckAt = e.nowMs
-    failRecheck(d, e.nowMs)
   }
 }
 
@@ -495,15 +546,26 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
   const now = e.nowMs
   if (c.memory === null || e.heading === null) return
 
-  // The detector follows a target it can see, frame by frame, so bearing and distance stay smooth.
-  if (c.memory.source === 'yolo' && e.yolo !== null) {
+  // The detector follows a target it can see, frame by frame, so bearing and distance stay smooth. It keeps to the
+  // object it started with: another of the same kind is taken up only after the first has been gone for a moment.
+  const sighting =
+    c.memory.source === 'yolo' &&
+    e.yolo !== null &&
+    (c.followId === null || e.yolo.trackId === undefined || e.yolo.trackId === c.followId || now - c.yoloSeenAt >= cfg.yoloLostMs)
+      ? e.yolo
+      : null
+  if (sighting !== null) {
     c.memory = {
       ...c.memory,
-      heading: e.heading + e.yolo.angleDeg,
-      distanceM: e.yolo.distanceM === null ? c.memory.distanceM : roundDistance(e.yolo.distanceM),
+      heading: e.heading + sighting.angleDeg,
+      distanceM: sighting.distanceM === null ? c.memory.distanceM : roundDistance(sighting.distanceM),
       seenAt: now,
+      clipped: sighting.clipped ?? false,
     }
+    c.followId = sighting.trackId ?? c.followId
+    c.yoloSeenAt = now
     c.failedRechecks = 0
+    c.lastRecheckAt = now // a followed target needs no re-check; the clock starts when the detector loses it
   }
   if (isStale(c.memory, now, cfg.memoryMaxAgeMs)) {
     toLost(d, now)
@@ -511,24 +573,53 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
   }
 
   const bearingDeg = bearing(c.memory, e.heading)
-  if (c.memory.distanceM !== null && c.memory.distanceM <= cfg.arrivalDistanceM && Math.abs(bearingDeg) < cfg.arrivalAngleDeg) {
-    c.state = 'arrived'
-    c.enteredAt = now
-    say(d, now, arrivedPhrase(c.target))
-    return
+
+  // Arrived: near enough and straight ahead, and it has stayed that way for a moment. When the target's base is out
+  // of the frame its distance is only an upper bound (the nearest floor in view), so it is judged against a larger
+  // distance; tilting the phone down brings the floor, and so a real distance, into view.
+  const limitM = c.memory.clipped === true ? cfg.arrivalClippedM : cfg.arrivalDistanceM
+  if (c.memory.distanceM !== null && c.memory.distanceM <= limitM && Math.abs(bearingDeg) < cfg.arrivalAngleDeg) {
+    c.arrivalSince ??= now
+    if (now - c.arrivalSince >= cfg.arrivalHoldMs) {
+      c.state = 'arrived'
+      c.enteredAt = now
+      say(d, now, arrivedPhrase(c.target))
+      return
+    }
+  } else {
+    c.arrivalSince = null
   }
 
-  const direction = classifyDirection(bearingDeg, cfg)
+  const direction = stableDirection(c.lastSpokenDirection, bearingDeg, cfg)
   if (direction !== c.lastSpokenDirection && now - c.lastDirectionAt >= cfg.guideSpeechCooldownMs) {
     c.lastSpokenDirection = direction
     c.lastDirectionAt = now
     say(d, now, directionPhrase(direction))
   }
 
-  const followedByDetector = c.memory.source === 'yolo' && e.yolo !== null
+  // Seen cut off at the bottom, and ahead: ask once or twice to tilt the phone down, which keeps it in view and gives
+  // the app a real distance. Not needed when the phone is already tilted that far.
+  const below = belowView(c, bearingDeg, now, cfg)
+  if (
+    below &&
+    (e.pitch === null || e.pitch > cfg.tiltPitchDeg) &&
+    c.tiltPrompts < cfg.tiltPromptMax &&
+    now - c.lastTiltAt >= cfg.tiltPromptCooldownMs &&
+    now - c.lastDirectionAt >= cfg.guideSpeechCooldownMs
+  ) {
+    c.tiltPrompts += 1
+    c.lastTiltAt = now
+    say(d, now, FIND_PHRASES.tiltDown)
+  }
+
+  // Ask Gemini again when the target should be in view and the detector is not holding it. The detector gets a moment
+  // to find it again after a flicker, and a target that has probably slipped below the view is not looked for.
+  const detectorHolds = c.memory.source === 'yolo' && now - c.yoloSeenAt < cfg.yoloLostMs
+  const slippedBelow = c.memory.source === 'yolo' && below
   if (
     inView(bearingDeg, env.hfovDeg) &&
-    !followedByDetector &&
+    !detectorHolds &&
+    !slippedBelow &&
     !c.rechecking &&
     e.canLocate &&
     now - c.lastRecheckAt >= cfg.recheckIntervalMs

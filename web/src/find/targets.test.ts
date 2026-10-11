@@ -127,8 +127,23 @@ describe('detectorLabelsFor', () => {
 
 describe('findYoloSighting', () => {
   test('a confirmed track of the class gives its bearing and distance', () => {
-    const sighting = findYoloSighting('chair', [track({ clock: { position: 1, angleDeg: 22 }, distanceM: 3 })])
-    expect(sighting).toEqual({ angleDeg: 22, distanceM: 3 })
+    const sighting = findYoloSighting('chair', [track({ id: 4, clock: { position: 1, angleDeg: 22 }, distanceM: 3 })])
+    expect(sighting).toEqual({ angleDeg: 22, distanceM: 3, trackId: 4, clipped: false })
+  })
+
+  test('says whether the box runs off the bottom of the frame', () => {
+    const cut = track({ box: { x: 0.4, y: 0.5, width: 0.2, height: 0.5 } })
+    const whole = track({ box: { x: 0.4, y: 0.3, width: 0.2, height: 0.5 } })
+    expect(findYoloSighting('chair', [cut])?.clipped).toBe(true)
+    expect(findYoloSighting('chair', [whole])?.clipped).toBe(false)
+  })
+
+  test('keeps following the object it is told to prefer, even when another is nearer', () => {
+    const near = track({ id: 1, distanceM: 1.5, clock: { position: 12, angleDeg: 5 } })
+    const far = track({ id: 2, distanceM: 4, clock: { position: 12, angleDeg: -10 } })
+    expect(findYoloSighting('chair', [near, far], 2)).toMatchObject({ trackId: 2, angleDeg: -10 })
+    expect(findYoloSighting('chair', [near, far], 99)).toMatchObject({ trackId: 1 }) // gone: the nearest instead
+    expect(findYoloSighting('chair', [near, far], null)).toMatchObject({ trackId: 1 })
   })
 
   test('works through synonyms and for names that stand for several classes', () => {

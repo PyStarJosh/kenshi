@@ -21,6 +21,9 @@ const LIMITS = {
   maxPitchDeg: 180,
   geminiTimeoutMs: 8_000,
   minConfidence: 0.5,
+  // Two tries at most, and a retry only if the first failed within this long.
+  geminiAttempts: 2,
+  retryWithinMs: 4_000,
 } as const
 
 // Override with GEMINI_MODEL when Google retires or renames models. The owner chose gemini-3.1-flash-lite: it
@@ -251,6 +254,27 @@ function sameOrigin(request: Request): boolean {
   }
 }
 
+type GeminiCall = { kind: 'ok'; status: number; text: string } | { kind: 'timeout' } | { kind: 'network' }
+
+/** One call to Gemini with its own timeout. */
+async function callGemini(key: string, body: string): Promise<GeminiCall> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), LIMITS.geminiTimeoutMs)
+  try {
+    const gemini = await fetch(ENDPOINT, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+      body,
+      signal: controller.signal,
+    })
+    return { kind: 'ok', status: gemini.status, text: await gemini.text() }
+  } catch (error) {
+    return error instanceof Error && error.name === 'AbortError' ? { kind: 'timeout' } : { kind: 'network' }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function POST(request: Request): Promise<Response> {
   const started = performance.now()
   const key = process.env.GEMINI_API_KEY
@@ -269,41 +293,38 @@ export async function POST(request: Request): Promise<Response> {
   const model = /^[a-z0-9][a-z0-9.-]{0,60}$/.test(requested) ? requested : DEFAULT_MODEL
   const info = (extra = '') =>
     ` model=${model} frames=${parsed.value.frames.length} ms=${Math.round(performance.now() - started)}${extra}`
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), LIMITS.geminiTimeoutMs)
-  let status: number
-  let text: string
-  try {
-    const gemini = await fetch(ENDPOINT, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
-      body: JSON.stringify(buildGeminiBody(parsed.value, model)),
-      signal: controller.signal,
-    })
-    status = gemini.status
-    text = await gemini.text()
-  } catch (error) {
-    const timedOut = error instanceof Error && error.name === 'AbortError'
-    return timedOut
-      ? fail('timeout', 'Gemini took too long.', STATUS.timeout, info())
-      : fail('network', 'Could not reach Gemini.', STATUS.network, info())
-  } finally {
-    clearTimeout(timer)
+  const geminiBody = JSON.stringify(buildGeminiBody(parsed.value, model))
+  // One quick retry for Gemini's own hiccups: a server error, an unreadable reply, or an answer we cannot use (about
+  // one call in four returned one early on). Only when the first try failed fast, so two tries still fit inside the
+  // function's time and the app's wait. A timeout or a refusal (429, a bad key) is never retried.
+  for (let attempt = 1; ; attempt++) {
+    const call = await callGemini(key, geminiBody)
+    // Decided after the call: only a try that failed fast leaves room for another inside the function's time.
+    const mayRetry = attempt < LIMITS.geminiAttempts && performance.now() - started < LIMITS.retryWithinMs
+    if (call.kind === 'timeout') return fail('timeout', 'Gemini took too long.', STATUS.timeout, info())
+    if (call.kind === 'network') {
+      if (mayRetry) continue
+      return fail('network', 'Could not reach Gemini.', STATUS.network, info())
+    }
+    if (call.status < 200 || call.status >= 300) {
+      const code = geminiFailure(call.status, call.text)
+      if (code === 'network' && mayRetry) continue
+      return fail(code, `Gemini answered ${call.status}.`, STATUS[code], info(` gemini=${call.status}`))
+    }
+    let body: unknown
+    try {
+      body = JSON.parse(call.text)
+    } catch {
+      if (mayRetry) continue
+      return fail('bad_response', 'Gemini sent something unreadable.', STATUS.bad_response, info())
+    }
+    const result = parseGeminiReply(body, parsed.value.frames.length)
+    if (!result) {
+      if (mayRetry) continue
+      return fail('bad_response', 'Gemini sent an answer we cannot use.', STATUS.bad_response, info())
+    }
+    return reply({ ...result, latencyMs: Math.round(performance.now() - started) }, 200)
   }
-
-  if (status < 200 || status >= 300) {
-    const code = geminiFailure(status, text)
-    return fail(code, `Gemini answered ${status}.`, STATUS[code], info(` gemini=${status}`))
-  }
-  let body: unknown
-  try {
-    body = JSON.parse(text)
-  } catch {
-    return fail('bad_response', 'Gemini sent something unreadable.', STATUS.bad_response, info())
-  }
-  const result = parseGeminiReply(body, parsed.value.frames.length)
-  if (!result) return fail('bad_response', 'Gemini sent an answer we cannot use.', STATUS.bad_response, info())
-  return reply({ ...result, latencyMs: Math.round(performance.now() - started) }, 200)
 }
 
 // For the tests only; Vercel ignores everything that is not an HTTP method export.

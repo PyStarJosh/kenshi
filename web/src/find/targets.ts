@@ -155,12 +155,23 @@ export function isDetectorLabel(label: string, classes: readonly ClassInfo[]): b
  * The best confirmed track of the target's class in view, as a bearing and distance, or null. Nearest first, then
  * the most confident. A target the detector does not know never matches.
  */
-export function findYoloSighting(target: string, tracks: readonly Track[]): YoloSighting | null {
+export function findYoloSighting(
+  target: string,
+  tracks: readonly Track[],
+  preferTrackId: number | null = null,
+): YoloSighting | null {
   const labels = detectorLabelsFor(target)
   if (labels.length === 0) return null
   const matches = tracks.filter((t) => labels.includes(t.label) && t.status === 'confirmed')
   if (matches.length === 0) return null
   matches.sort((a, b) => a.distanceM - b.distanceM || b.confidence - a.confidence)
-  const best = matches[0]
-  return { angleDeg: best.clock.angleDeg, distanceM: best.distanceM }
+  // Keep following the object already being followed, so two chairs in view do not swap places as their
+  // estimated distances wobble.
+  const best = matches.find((t) => t.id === preferTrackId) ?? matches[0]
+  return {
+    angleDeg: best.clock.angleDeg,
+    distanceM: best.distanceM,
+    trackId: best.id,
+    clipped: best.box.y + best.box.height >= 1 - CONFIG.geometry.edgeTouchMargin,
+  }
 }

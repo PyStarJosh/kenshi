@@ -133,9 +133,10 @@ export class FindRunner {
       type: 'tick',
       nowMs: now,
       heading: this.deps.orientationLatest(now)?.headingDeg ?? null,
-      yolo: findYoloSighting(this.ctx.target, this.deps.getTracks()),
+      yolo: findYoloSighting(this.ctx.target, this.deps.getTracks(), this.ctx.followId),
       canLocate: this.deps.locator.canLocate(true),
       canLook: this.deps.locator.canLocate(false),
+      pitch: this.deps.orientationLatest(now)?.pitchDeg ?? null,
     })
   }
 
@@ -197,9 +198,11 @@ export class FindRunner {
 
   /** Grab the camera frame with the heading and pitch it was taken at. */
   private async grabFrame(): Promise<Grabbed | null> {
+    // The heading belongs to the moment the frame is taken, which is when the grab starts, not when it finishes: the
+    // phone may turn a few degrees while the bitmap is made.
+    const sample = this.deps.orientationAt(this.deps.now())
     const bitmap = await this.deps.grab()
     if (!bitmap) return null
-    const sample = this.deps.orientationAt(this.deps.now())
     this.frameDims = { width: bitmap.width, height: bitmap.height }
     const heading = sample?.headingDeg ?? null
     const pitch = sample?.pitchDeg ?? null

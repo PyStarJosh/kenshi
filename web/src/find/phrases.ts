@@ -14,6 +14,7 @@ export const FIND_PHRASES = {
   stopped: 'Find stopped.',
   unavailable: "Find isn't available right now.",
   noHeading: "I can't tell which way you turn, so I can only search what the camera sees.",
+  tiltDown: 'Tilt the phone down to keep it in view.',
 } as const
 
 /** The first letter in capitals; the rest as given. */
@@ -34,6 +35,30 @@ export function classifyDirection(bearingDeg: number, cfg = CONFIG.find): Direct
   const right = bearingDeg > 0
   if (size <= cfg.directionSlightDeg) return right ? 'slightly-right' : 'slightly-left'
   return right ? 'right' : 'left'
+}
+
+const RANK: Record<Direction, number> = {
+  ahead: 0,
+  'slightly-left': 1,
+  'slightly-right': 1,
+  left: 2,
+  right: 2,
+  behind: 3,
+}
+
+/**
+ * The direction word to use now, given the one last spoken. It changes only when the bearing is past the boundary by
+ * the hysteresis margin, so a bearing that wobbles around 15 or 45 degrees does not make the app flip between words.
+ */
+export function stableDirection(previous: Direction | null, bearingDeg: number, cfg = CONFIG.find): Direction {
+  const raw = classifyDirection(bearingDeg, cfg)
+  if (previous === null || raw === previous || RANK[raw] === RANK[previous]) return raw
+  const sign = bearingDeg < 0 ? -1 : 1
+  const margin = cfg.directionHysteresisDeg
+  // Moving outward needs to be past the boundary by the margin; moving inward needs to be that far back inside it.
+  const test = RANK[raw] > RANK[previous] ? Math.abs(bearingDeg) - margin : Math.abs(bearingDeg) + margin
+  const confirmed = classifyDirection(sign * Math.max(0, test), cfg)
+  return RANK[raw] > RANK[previous] ? (RANK[confirmed] >= RANK[raw] ? raw : previous) : RANK[confirmed] <= RANK[raw] ? raw : previous
 }
 
 const SPOKEN_DIRECTION: Record<Direction, string> = {

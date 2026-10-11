@@ -255,7 +255,7 @@ export const CONFIG = {
     // The function gives up on Gemini after this long (owner spec), and the app gives up on the function a little
     // later, so the function's own error arrives first. FR-22, NFR-14
     geminiTimeoutMs: 8_000,
-    requestTimeoutMs: 12_000,
+    requestTimeoutMs: 14_000,
     // An answer below this confidence counts as not found. Starting value; to be measured. SR-11
     minConfidence: 0.5,
     // A remembered target direction is dropped after this long: a gyroscope heading drifts and has no north
@@ -303,6 +303,27 @@ export const CONFIG = {
     directionBehindDeg: 135,
     // Find speech that waits behind other speech is dropped after this long (a direction this old is wrong). SR-3
     speechStaleMs: 6_000,
+
+    // ---- Reliability (R4 follow-up). Starting values; to be measured on the phone. ----
+    // Arrival must hold this long before it is announced, so one noisy reading cannot trigger it.
+    arrivalHoldMs: 600,
+    // When the target's base is out of the bottom of the frame its distance is only an upper bound (the nearest floor
+    // in view), so "within reach" is judged against this larger distance instead.
+    arrivalClippedM: 1.75,
+    // A target last seen cut off at the bottom, now ahead and unseen, is probably just below the view: re-checks that
+    // fail are not held against it for this long, and the user is asked to tilt the phone down.
+    belowViewAngleDeg: 30,
+    belowViewMaxMs: 6_000,
+    // Tilting down to about this pitch or steeper puts the floor near the user in view (and gives a real distance).
+    tiltPitchDeg: -25,
+    tiltPromptCooldownMs: 8_000,
+    tiltPromptMax: 2,
+    // The detector must lose a followed target for this long before it counts as lost or another object is followed.
+    yoloLostMs: 1_000,
+    // A direction word changes only when the bearing is this far past its boundary, so it does not flap.
+    directionHysteresisDeg: 4,
+    // Automatic retries of the first check after a transient failure (network, timeout, unusable reply).
+    checkRetryMax: 1,
   },
 }
 

@@ -392,11 +392,98 @@ describe('the handler', () => {
     expect(await (await post(body('chair'))).json()).toMatchObject({ error: 'auth' })
   })
 
-  test('a reply that is not JSON, or has no usable answer, is bad_response', async () => {
-    fetchMock.mockResolvedValueOnce(new Response('<html>', { status: 200 }))
+  test('a reply that is not JSON, or has no usable answer, is bad_response (after the one retry)', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(new Response('<html>', { status: 200 })))
     expect(await (await post(body('chair'))).json()).toMatchObject({ error: 'bad_response' })
-    fetchMock.mockResolvedValueOnce(geminiOk({ found: true, frameIndex: 0, box_2d: [1, 2], confidence: 1 }))
+    fetchMock.mockImplementation(() => Promise.resolve(geminiOk({ found: true, frameIndex: 0, box_2d: [1, 2], confidence: 1 })))
     expect(await (await post(body('chair'))).json()).toMatchObject({ error: 'bad_response' })
+  })
+
+  describe('one quick retry of Gemini\'s own hiccups', () => {
+    const reply = (text: string, status = 200) => () => Promise.resolve(new Response(text, { status }))
+
+    test('a server error is retried once and the second answer is used', async () => {
+      fetchMock.mockImplementationOnce(reply('{}', 503)).mockImplementationOnce(() => Promise.resolve(geminiOk(foundAnswer)))
+      const response = await post(body('chair', frames(2)))
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({ found: true, frameIndex: 1 })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    test('an unreadable reply, or one we cannot use, is retried once', async () => {
+      fetchMock.mockImplementationOnce(reply('<html>')).mockImplementationOnce(() => Promise.resolve(geminiOk(notFoundAnswer)))
+      expect(await (await post(body('chair'))).json()).toMatchObject({ found: false })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+
+      fetchMock.mockReset()
+      fetchMock
+        .mockImplementationOnce(() => Promise.resolve(geminiOk({ found: true, frameIndex: 0 })))
+        .mockImplementationOnce(() => Promise.resolve(geminiOk(foundAnswer)))
+      expect(await (await post(body('chair', frames(2)))).json()).toMatchObject({ found: true })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    test('a network error is retried once', async () => {
+      fetchMock.mockRejectedValueOnce(new TypeError('fetch failed')).mockImplementationOnce(() => Promise.resolve(geminiOk(notFoundAnswer)))
+      expect((await post(body('chair'))).status).toBe(200)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    test('two failures in a row end after exactly two tries', async () => {
+      fetchMock.mockImplementation(reply('{}', 503))
+      const response = await post(body('chair'))
+      expect(response.status).toBe(502)
+      expect(await response.json()).toMatchObject({ error: 'network' })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    test('a refusal (429, a bad key, a missing model) is not retried', async () => {
+      for (const status of [429, 401, 403, 404]) {
+        fetchMock.mockReset()
+        fetchMock.mockImplementation(reply('{"error":{"message":"x"}}', status))
+        await post(body('chair'))
+        expect(fetchMock, String(status)).toHaveBeenCalledTimes(1)
+      }
+    })
+
+    test('a timeout is not retried', async () => {
+      vi.useFakeTimers()
+      try {
+        fetchMock.mockImplementation(
+          (_url: string, init: { signal: AbortSignal }) =>
+            new Promise((_resolve, reject) => {
+              init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
+            }),
+        )
+        const pending = post(body('chair'))
+        await vi.advanceTimersByTimeAsync(LIMITS.geminiTimeoutMs + 10)
+        expect((await pending).status).toBe(504)
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    test('no retry when the first try was already slow, so the wait of the app is never overrun', async () => {
+      let clock = 0
+      const spy = vi.spyOn(performance, 'now').mockImplementation(() => clock)
+      try {
+        fetchMock.mockImplementation(() => {
+          clock += LIMITS.retryWithinMs + 500 // the first try took longer than the retry allows
+          return Promise.resolve(new Response('{}', { status: 503 }))
+        })
+        const response = await post(body('chair'))
+        expect(response.status).toBe(502)
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      } finally {
+        spy.mockRestore()
+      }
+    })
+
+    test('two tries fit inside the app\'s wait', () => {
+      expect(LIMITS.geminiAttempts).toBe(2)
+      expect(LIMITS.retryWithinMs + LIMITS.geminiTimeoutMs).toBeLessThan(CONFIG.find.requestTimeoutMs)
+    })
   })
 
   test('a network failure is network, and a stalled call is timeout after the limit', async () => {
@@ -424,7 +511,7 @@ describe('the handler', () => {
   })
 
   test('a failure is logged with the model, frame count and elapsed time, and the request asks for a short answer', async () => {
-    fetchMock.mockResolvedValue(new Response('{}', { status: 503 }))
+    fetchMock.mockImplementation(() => Promise.resolve(new Response('{}', { status: 503 })))
     await post(body('chair', frames(2)))
     const line = String((console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0])
     expect(line).toMatch(/^locate: network model=gemini-3\.1-flash-lite frames=2 ms=\d+ gemini=503$/)
