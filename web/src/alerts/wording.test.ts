@@ -34,4 +34,10 @@ describe('SR-2 wording', () => {
     expect(SUMMARY_NONE).toMatch(/miss things/)
     expect(SUMMARY_NONE).toMatch(/cane/)
   })
+
+  test('the greeting says the app name as Ken-shee and states that the cane stays in use (SR-7)', () => {
+    expect(GREETING).toMatch(/^Ken-shee\./)
+    expect(GREETING).toMatch(/does not replace your cane/)
+    expect(GREETING).not.toMatch(/navigator/i)
+  })
 })
