@@ -30,6 +30,8 @@ export interface FindRunnerDeps {
   now: () => number
   /** A soft tick sound, played when a sweep frame is captured. */
   tick: () => void
+  /** True while a phrase is waiting or being spoken, so guidance does not queue up behind it. */
+  isSpeaking?: () => boolean
   setTimer: (callback: () => void, ms: number) => unknown
   clearTimer: (handle: unknown) => void
 }
@@ -41,7 +43,16 @@ interface Grabbed extends Capture {
 /** How often the controller is ticked besides once per detected frame, so timers run on a still camera. */
 const TICK_MS = 250
 
-/** A short line for the status text and the screen; the spoken words come from the controller. */
+/** How far to turn, for the screen only: "20 degrees left". It changes with every degree, so it is not a live region. */
+export function describeBearing(snapshot: FindSnapshot): string {
+  if (snapshot.state !== 'guiding' || snapshot.bearingDeg === null) return ''
+  return `${Math.abs(snapshot.bearingDeg)} degrees ${snapshot.bearingDeg >= 0 ? 'right' : 'left'}`
+}
+
+/**
+ * A short line for the status text: what Find is doing. It names the state and not the changing bearing, because it
+ * sits in a live region, and a screen reader would otherwise read out every degree over the app's own speech.
+ */
 export function describeSnapshot(snapshot: FindSnapshot): string {
   const target = snapshot.target ?? ''
   switch (snapshot.state) {
@@ -54,7 +65,7 @@ export function describeSnapshot(snapshot: FindSnapshot): string {
     case 'sweepChecking':
       return `Checking the pictures for ${target}...`
     case 'guiding':
-      return snapshot.bearingDeg === null ? `Guiding to ${target}.` : `${target}: ${Math.abs(snapshot.bearingDeg)} degrees ${snapshot.bearingDeg >= 0 ? 'right' : 'left'}.`
+      return `Guiding to ${target}.`
     case 'lost':
       return `Lost the ${target}. Scanning.`
     case 'arrived':
@@ -137,6 +148,7 @@ export class FindRunner {
       canLocate: this.deps.locator.canLocate(true),
       canLook: this.deps.locator.canLocate(false),
       pitch: this.deps.orientationLatest(now)?.pitchDeg ?? null,
+      speaking: this.deps.isSpeaking?.() ?? false,
     })
   }
 

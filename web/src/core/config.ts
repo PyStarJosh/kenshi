@@ -199,6 +199,9 @@ export const CONFIG = {
     // base + per-character time, so the heartbeat and later alerts never stay blocked. SR-1
     speechWatchdogBaseMs: 3000,
     speechWatchdogPerCharMs: 120,
+    // After the speech engine is cancelled, wait this long before starting the next phrase: on iOS a speak() right after
+    // a cancel() can be dropped, or leave the old phrase audible under the new one. FR-14, SR-4
+    speechAfterCancelMs: 90,
     // Reminder interval while paused, so silence never reads as clear. SR-9
     pausedReminderIntervalMs: 15000,
     // Speech rate bounds and the step used by "slower" and "faster". FR-15, FR-17

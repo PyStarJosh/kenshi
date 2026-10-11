@@ -64,6 +64,7 @@ class Sim {
       canLook?: boolean
       pitch?: number | null
       pathDecision?: 'left' | 'right' | 'straight' | null
+      speaking?: boolean
     } = {},
   ): FindEffect[] {
     this.nowMs += advanceMs
@@ -780,6 +781,35 @@ describe('guidance through the controller', () => {
     const sim = new Sim()
     sim.request('chair', { angleDeg: 25, distanceM: 12, trackId: 3 })
     expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 25, distanceM: 12, trackId: 3 } }))).toEqual([])
+  })
+})
+
+describe('not talking over itself', () => {
+  test('guidance stays quiet while a phrase is being said, then speaks what is current', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 12, trackId: 3 })
+    const turned = { angleDeg: 100, distanceM: 12, trackId: 3 }
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: turned, speaking: true }))).toEqual([])
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: turned, speaking: true }))).toEqual([])
+    expect(sim.said(sim.tick(200, { yolo: turned, speaking: false }))).toEqual(['Turn right.'])
+  })
+
+  test('the tilt request waits for the same reason', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 7 })
+    const cut = { angleDeg: 0, distanceM: 2.2, trackId: 7, clipped: true }
+    const busy = sim.tick(CFG.tiltPromptCooldownMs, { yolo: cut, pitch: -5, speaking: true })
+    expect(sim.said(busy).filter((s) => s === FIND_PHRASES.tiltDown)).toEqual([])
+    const free = sim.tick(100, { yolo: cut, pitch: -5, speaking: false })
+    expect(sim.said(free)).toContain(FIND_PHRASES.tiltDown)
+  })
+
+  test('arrival is still said while something is being said: it is queued, not dropped', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 4, trackId: 3 })
+    sim.tick(100, { yolo: { angleDeg: 0, distanceM: 0.5, trackId: 3 }, speaking: true })
+    const arrival = sim.tick(CFG.arrivalHoldMs, { yolo: { angleDeg: 0, distanceM: 0.5, trackId: 3 }, speaking: true })
+    expect(sim.said(arrival)).toEqual(['Chair ahead, within reach.'])
   })
 })
 

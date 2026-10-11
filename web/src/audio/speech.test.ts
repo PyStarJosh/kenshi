@@ -9,8 +9,10 @@ function setup() {
   let nextTimer = 1
   let now = 0
   let cancels = 0
+  const synthState = { speaking: false }
   const speaker = new Speaker({
     synth: {
+      isSpeaking: () => synthState.speaking,
       speak: (u) => spoken.push(u),
       cancel: () => {
         cancels += 1
@@ -50,9 +52,57 @@ function setup() {
     runTimers,
     timers,
     setNow: (t: number) => (now = t),
+    synthState,
     cancels: () => cancels,
   }
 }
+
+describe('Speaker and the engine\'s state', () => {
+  test('an urgent phrase starts at once when nothing was being said', () => {
+    const s = setup()
+    s.speaker.speak(s.request('Detection stalled.', true))
+    expect(s.last().text).toBe('Detection stalled.')
+  })
+
+  test('after cutting a phrase off, the next waits a moment (iOS can drop or double a phrase started in the same instant)', () => {
+    const s = setup()
+    s.speaker.speak(s.request('Chair found, ahead.'))
+    s.speaker.speak(s.request('Raise the phone.', true)) // cuts it off
+    expect(s.spoken).toHaveLength(1) // nothing new yet
+    expect(s.cancels()).toBe(1)
+    s.runTimers()
+    expect(s.last().text).toBe('Raise the phone.')
+  })
+
+  test('the wait is the configured gap, and a phrase that starts later than that needs no wait', () => {
+    const s = setup()
+    s.speaker.speak(s.request('first'))
+    s.speaker.interrupt()
+    s.setNow(10_000) // long after the cancel
+    s.speaker.speak(s.request('second'))
+    expect(s.last().text).toBe('second')
+  })
+
+  test('if the engine is still speaking something we thought was over, it is cleared once and the phrase starts after a moment', () => {
+    const s = setup()
+    s.synthState.speaking = true // an utterance whose end we never heard
+    s.speaker.speak(s.request('Turn left.'))
+    expect(s.cancels()).toBe(1)
+    expect(s.spoken).toHaveLength(0)
+    s.synthState.speaking = false
+    s.runTimers()
+    expect(s.last().text).toBe('Turn left.')
+  })
+
+  test('it clears a leftover only once per phrase, so a stuck flag cannot stop speech for good', () => {
+    const s = setup()
+    s.synthState.speaking = true // never goes false
+    s.speaker.speak(s.request('Turn left.'))
+    s.runTimers()
+    expect(s.last().text).toBe('Turn left.')
+    expect(s.cancels()).toBe(1)
+  })
+})
 
 describe('Speaker', () => {
   test('isUrgent is true only while an urgent phrase is waiting or playing', () => {
@@ -109,6 +159,10 @@ describe('Speaker', () => {
     s.speaker.speak(s.request('STOP', true))
     expect(s.cancels()).toBe(1)
     expect(s.log).toEqual(['preempted waiting', 'preempted normal'])
+    // The engine gets a moment after the cancel (iOS can drop or double a phrase started in the same instant).
+    expect(s.speaker.isBusy()).toBe(true)
+    expect(s.spoken).toHaveLength(1)
+    s.runTimers()
     expect(s.last().text).toBe('STOP')
     // The late "interrupted" error from the cancelled utterance must not end the urgent one.
     expect(s.speaker.isBusy()).toBe(true)
@@ -175,6 +229,7 @@ describe('Speaker hold', () => {
     expect(s.log).toContain('preempted Chair, 1 o\'clock')
     expect(s.speaker.isBusy()).toBe(false)
     s.speaker.speak(s.request('Pole, 12 o\'clock', true))
+    s.runTimers()
     expect(s.last().text).toBe('Pole, 12 o\'clock')
   })
 

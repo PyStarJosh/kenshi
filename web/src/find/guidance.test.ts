@@ -150,6 +150,26 @@ describe('throttling', () => {
   })
 })
 
+describe('while something is being said', () => {
+  test('nothing new is queued behind it: guidance waits, and says it when the phrase has ended', () => {
+    const first = nextGuidance(initialGuidance(), input({ bearing: 0, nowMs: 0 }))
+    const busy = nextGuidance(first.state, input({ bearing: 60, nowMs: 10_000, speaking: true }))
+    expect(busy.say).toBeNull()
+    expect(busy.state.instruction).toBe('straight') // not marked as said, so it is still due
+    expect(busy.state.spokenAt).toBe(first.state.spokenAt)
+    const free = nextGuidance(busy.state, input({ bearing: 60, nowMs: 10_500, speaking: false }))
+    expect(free.say).toBe('Turn right.')
+  })
+
+  test('the countdown waits as well, and the bookkeeping carries on', () => {
+    const first = nextGuidance(initialGuidance(), input({ bearing: 2, distanceM: 12, nowMs: 0 }))
+    const busy = nextGuidance(first.state, input({ bearing: 2, distanceM: 4.9, nowMs: 10_000, speaking: true }))
+    expect(busy.say).toBeNull()
+    const free = nextGuidance(busy.state, input({ bearing: 2, distanceM: 4.9, nowMs: 10_200 }))
+    expect(free.say).toBe('chair, about 5 meters.')
+  })
+})
+
 describe('the distance countdown', () => {
   const ahead = (distanceM: number | null, patch: Partial<GuidanceInput> = {}): Partial<GuidanceInput> => ({
     bearing: 2,

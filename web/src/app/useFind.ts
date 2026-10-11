@@ -33,6 +33,7 @@ export function useFind(
       locator: sharedLocator(),
       now: () => performance.now(),
       tick: () => link.playTick(),
+      isSpeaking: () => link.isSpeaking(),
       setTimer: (callback, ms) => setInterval(callback, ms),
       clearTimer: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
     })

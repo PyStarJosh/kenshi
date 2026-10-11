@@ -4,11 +4,12 @@
 // AlertEvents arrive through handleAlert (the pipeline delivers them from the event bus); the pipeline also
 // supplies the live track lookup and listens for alert outcomes.
 import { Beacon } from '../audio/beacon'
+import type { BeaconStats } from '../audio/beacon'
 import { AudioEngine } from '../audio/engine'
 import type { AlertTiming, TrackLookup } from '../audio/engine'
 import { createBrowserSpeaker } from '../audio/speech'
 import { listeningTone, TonePlayer } from '../audio/tones'
-import { GREETING, unlockAudioContext } from '../audio/unlock'
+import { GREETING, unlockAudioContext, setMediaAudioSession } from '../audio/unlock'
 import { CONFIG } from '../core/config'
 import type { AlertEvent, AlertOutcome, AlertPriority, FindRequest, FrameResult, HealthState, VoiceIntent } from '../core/types'
 import { HealthMonitor } from '../health/monitor'
@@ -37,6 +38,8 @@ export interface AudioLinkView {
   lastVoice: string | null
   /** Capture-to-tone and capture-to-speech percentiles over real alerts (not the test panel's). */
   latency: LatencyView
+  /** What the Find beacon has done, for the debug panel; null before the audio is unlocked. */
+  beacon: BeaconStats | null
 }
 
 const RUN_STATE: Record<SessionState, RunState> = {
@@ -100,6 +103,7 @@ export class AudioLink {
     voiceMessage: null,
     lastVoice: null,
     latency: { urgentTone: null, tone: null, speech: null },
+    beacon: null,
     error: this.speech.available ? null : 'Speech is not available in this browser. Tones still play.',
   }
 
@@ -123,7 +127,13 @@ export class AudioLink {
     }
     if (!this.ctx) {
       this.ctx = ctx
-      ctx.addEventListener('statechange', () => this.syncContextState())
+      setMediaAudioSession()
+      ctx.addEventListener('statechange', () => {
+        this.syncContextState()
+        // iOS suspends or interrupts the context around speech, the microphone and calls, and does not always bring it
+        // back by itself; ask again at once instead of waiting for a tap.
+        this.resumeAudio()
+      })
       this.tones = new TonePlayer(ctx)
       this.engine = new AudioEngine({
         tones: this.tones,
@@ -142,6 +152,7 @@ export class AudioLink {
         ctx,
         speaker: this.speech.speaker,
         volume: () => settingsStore.getSnapshot().toneVolume,
+        resume: () => this.resumeAudio(),
       })
     }
     if (greet) this.speech.speaker.speak({ text: GREETING, urgent: false })
@@ -160,8 +171,13 @@ export class AudioLink {
     }
     window.addEventListener('pointerdown', restore)
     const timer = setInterval(() => this.check(), CONFIG.audio.checkIntervalMs)
+    const onVisible = () => {
+      if (!document.hidden) this.resumeAudio()
+    }
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('pointerdown', restore)
       offSettings()
       offState()
@@ -195,6 +211,18 @@ export class AudioLink {
   /** Tell the link whether a Find is running, so a long press cancels it instead of pausing. */
   setFindActive(isActive: () => boolean): void {
     this.findActive = isActive
+  }
+
+  /** Wake the AudioContext if it is not running. Safe to call at any time; it only asks. */
+  resumeAudio(): void {
+    const ctx = this.ctx
+    if (!ctx || ctx.state === 'running' || ctx.state === 'closed') return
+    ctx.resume().catch(() => undefined)
+  }
+
+  /** True while a phrase is waiting for its lead-in or being spoken. */
+  isSpeaking(): boolean {
+    return this.speech.speaker.isBusy()
   }
 
   /** The Find beacon, or null until the audio has been unlocked (the Start tap). */
@@ -292,7 +320,12 @@ export class AudioLink {
       this.healthKey = key
       for (const listener of this.healthListeners) listener(health)
     }
-    this.update({ health, timing: this.engine?.getTiming() ?? null, voice: this.speech.speaker.getVoice()?.name ?? null })
+    this.update({
+      health,
+      timing: this.engine?.getTiming() ?? null,
+      voice: this.speech.speaker.getVoice()?.name ?? null,
+      beacon: this.beacon?.getStats() ?? null,
+    })
   }
 
   private syncContextState(): void {
@@ -308,6 +341,8 @@ export class AudioLink {
   }
 
   private recordOutcome(alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null): void {
+    // A phrase just ended: iOS may have taken the sound away while it spoke.
+    if (outcome !== 'started') this.resumeAudio()
     if (alert.trackId !== null && outcome !== 'started') this.testTracks.delete(alert.trackId)
     for (const listener of this.outcomeListeners) listener(alert, outcome, latencyMs)
     const latency = latencyMs === null ? '' : ` after ${latencyMs.toFixed(0)} ms`

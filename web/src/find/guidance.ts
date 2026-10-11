@@ -42,6 +42,11 @@ export interface GuidanceInput {
   /** The target's name, for the countdown ("chair, about 5 meters"). */
   label: string
   nowMs: number
+  /**
+   * Something is being said right now. A new instruction would only wait in line and be old by the time it is spoken
+   * (and the speaker keeps only the newest waiting phrase), so guidance waits for the end of the phrase instead.
+   */
+  speaking?: boolean
 }
 
 export interface GuidanceState {
@@ -113,7 +118,7 @@ export function nextGuidance(
     distance !== null && roughlyAligned ? cfg.countdownM.filter((level) => distance <= level && !announced.includes(level)) : []
 
   const sinceMs = input.nowMs - prev.spokenAt
-  const mayTalk = sinceMs >= cfg.guideSpeechCooldownMs
+  const mayTalk = sinceMs >= cfg.guideSpeechCooldownMs && input.speaking !== true
   const changed = instruction !== prev.instruction
   const repeat = !changed && instruction !== 'straight' && sinceMs >= cfg.guidanceRepeatMs
 

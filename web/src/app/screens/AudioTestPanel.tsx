@@ -69,7 +69,11 @@ export default function AudioTestPanel({ link }: Props) {
         </label>
       </div>
       <p className="audio-test-info">
-        audio {view.contextState} · voice {view.voice ?? 'default'} · health {health?.status ?? '-'}
+        audio {view.contextState} · beacon{' '}
+        {view.beacon
+          ? `${view.beacon.running ? 'on' : 'off'}${view.beacon.stalled ? ' (audio stalled)' : ''}, ${view.beacon.pulses} pulses, ${view.beacon.resumeRequests} resumes`
+          : '-'}{' '}
+        · voice {view.voice ?? 'default'} · health {health?.status ?? '-'}
         {health && health.issues.length > 0 ? ` (${health.issues.join(', ')})` : ''} · fps{' '}
         {health ? health.fps.toFixed(1) : '-'}
         <br />
