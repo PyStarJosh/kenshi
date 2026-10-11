@@ -1,5 +1,6 @@
 // Main-thread wrapper around the detection worker with a typed protocol and typed load errors.
 import type { FrameResult } from '../core/types'
+import type { PathInput } from '../geometry/pathInput'
 import type {
   EngineInfo,
   LoadErrorKind,
@@ -57,13 +58,14 @@ export class DetectionEngine {
 
   /**
    * Send one frame. The bitmap is transferred and closed by the worker.
-   * Resolves with null if a newer frame replaced this one before it ran.
+   * Resolves with null if a newer frame replaced this one before it ran. With `path`, the result also carries the
+   * free-space path on the frames where it is due.
    */
-  detect(bitmap: ImageBitmap, frameId: number, captureTimeMs: number): Promise<FrameResult | null> {
+  detect(bitmap: ImageBitmap, frameId: number, captureTimeMs: number, path?: PathInput): Promise<FrameResult | null> {
     const worker = this.requireWorker()
     return new Promise((resolve, reject) => {
       this.pendingDetect.set(frameId, { resolve, reject })
-      worker.postMessage({ type: 'detect', frameId, captureTimeMs, bitmap }, [bitmap])
+      worker.postMessage({ type: 'detect', frameId, captureTimeMs, bitmap, path }, [bitmap])
     })
   }
 

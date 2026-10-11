@@ -12,6 +12,7 @@ import type { Capture, LocateOptions, LocateOutcome } from '../find/locateClient
 import { bearing } from '../find/targetMemory'
 import { cleanTarget, findYoloSighting } from '../find/targets'
 import type { FrameDims } from '../geometry/geometry'
+import { targetColumn } from '../geometry/pathInput'
 
 export interface FindRunnerDeps {
   bus: EventBus<EventMap>
@@ -21,6 +22,8 @@ export interface FindRunnerDeps {
   /** True while detection is running (not idle, starting, or paused). */
   isRunning: () => boolean
   getTracks: () => readonly Track[]
+  /** What the path line (R7) says about the way ahead now, or null; absent where there is no path line. */
+  getPathDecision?: (nowMs: number) => 'left' | 'right' | 'straight' | null
   getSettings: () => Pick<Settings, 'eyeHeightM' | 'horizontalFovDeg'>
   /** The current camera frame as a bitmap, or null when there is none yet. */
   grab: () => Promise<ImageBitmap | null>
@@ -76,6 +79,19 @@ export class FindRunner {
     return this.ctx.state !== 'idle'
   }
 
+  /**
+   * Where the target is in the picture, from 0 (left edge) to 1 (right edge), for steering the path line toward it;
+   * null unless it is being guided to and is inside the field of view.
+   */
+  getTargetColumn(): number | null {
+    const { memory } = this.ctx
+    if (this.ctx.state !== 'guiding' || memory === null) return null
+    const heading = this.deps.orientationLatest(this.deps.now())?.headingDeg
+    if (heading === undefined) return null
+    const hfovDeg = this.deps.getSettings().horizontalFovDeg
+    return targetColumn(bearing(memory, heading), hfovDeg)
+  }
+
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
@@ -108,6 +124,12 @@ export class FindRunner {
     }
     const now = this.deps.now()
     const heading = this.deps.orientationLatest(now)?.headingDeg ?? null
+    // The path line speaks only while the target is roughly straight ahead; elsewhere "turn" comes first.
+    const pathDecision =
+      this.ctx.state === 'guiding' && this.ctx.memory !== null && heading !== null &&
+      Math.abs(bearing(this.ctx.memory, heading)) <= CONFIG.find.pathAlignedDeg
+        ? this.deps.getPathDecision?.(now) ?? null
+        : null
     // While guiding, a track other than the followed one counts only if it is where the remembered object is.
     const { memory } = this.ctx
     const near =
@@ -122,6 +144,7 @@ export class FindRunner {
       canLocate: this.deps.locator.canLocate(true),
       canLook: this.deps.locator.canLocate(false),
       pitch: this.deps.orientationLatest(now)?.pitchDeg ?? null,
+      pathDecision,
       speaking: this.deps.isSpeaking?.() ?? false,
     })
   }

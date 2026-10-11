@@ -1,5 +1,6 @@
 // Messages between the main thread (engine.ts) and the detection worker (worker.ts).
 import type { FrameResult, InferenceBackend } from '../core/types'
+import type { PathInput } from '../geometry/pathInput'
 
 /** Which provider the caller wants. "auto" tries WebGPU, then WebAssembly. */
 export type ProviderChoice = 'auto' | InferenceBackend
@@ -12,7 +13,8 @@ export type LoadErrorKind =
 
 export type WorkerRequest =
   | { type: 'init'; modelUrl: string; provider: ProviderChoice }
-  | { type: 'detect'; frameId: number; captureTimeMs: number; bitmap: ImageBitmap }
+  /** `path`, when present, asks for the free-space path on this frame (it still runs on one frame in a few). */
+  | { type: 'detect'; frameId: number; captureTimeMs: number; bitmap: ImageBitmap; path?: PathInput }
 
 /** What a successful init reports. */
 export interface EngineInfo {

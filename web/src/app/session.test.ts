@@ -110,6 +110,30 @@ function setup(
   }
 }
 
+describe('the free-space path request (R7)', () => {
+  test('none while nothing asks for it', () => {
+    const t = setup()
+    expect(t.session.pathInputAt(500)).toBeUndefined()
+    t.session.setPathSource(() => null)
+    expect(t.session.pathInputAt(500)).toBeUndefined()
+  })
+
+  test('when asked, a frame carries the tilt from its capture time, the field of view, and the target column', () => {
+    const t = setup()
+    t.session.setPathSource(() => ({ targetX: 0.6, hfovDeg: 65 }))
+    expect(t.session.pathInputAt(500)).toEqual({ pitchDeg: -5, hfovDeg: 65, targetX: 0.6 })
+    t.session.setPathSource(() => ({ targetX: null, hfovDeg: 70 }))
+    expect(t.session.pathInputAt(500)).toEqual({ pitchDeg: -5, hfovDeg: 70, targetX: null })
+  })
+
+  test('removing the source stops it', () => {
+    const t = setup()
+    t.session.setPathSource(() => ({ targetX: 0.5, hfovDeg: 65 }))
+    t.session.setPathSource(null)
+    expect(t.session.pathInputAt(500)).toBeUndefined()
+  })
+})
+
 describe('start', () => {
   test('opens the camera, loads the configured model, and runs', async () => {
     const t = setup()

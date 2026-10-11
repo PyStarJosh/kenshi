@@ -3,6 +3,7 @@ import { lazy, Suspense, useState, useSyncExternalStore } from 'react'
 import { useAudioLink } from './app/useAudioLink'
 import { useFind } from './app/useFind'
 import { usePipeline } from './app/usePipeline'
+import PathOverlay from './app/screens/PathOverlay'
 import TalkButton from './app/screens/TalkButton'
 import { useSession } from './app/useSession'
 
@@ -22,7 +23,8 @@ export default function App() {
   const { session, snapshot, setVideo, getVideo } = useSession()
   const audio = useAudioLink(session)
   const pipeline = usePipeline(session, audio)
-  const find = useFind(session, audio, pipeline, getVideo)
+  const find = useFind(session, audio, pipeline, getVideo, debugEnabled)
+  const findActive = useSyncExternalStore(find.subscribe, () => find.getSnapshot().state !== 'idle')
   const audioError = useSyncExternalStore(audio.subscribe, () => audio.getView().error)
   const voiceMessage = useSyncExternalStore(audio.subscribe, () => audio.getView().voiceMessage)
   const [view, setView] = useState<View>('main')
@@ -39,6 +41,7 @@ export default function App() {
         style={{ '--ar': aspect } as CSSProperties}
       >
         <video ref={setVideo} className="video" aria-hidden="true" />
+        {live && (debugEnabled || findActive) && <PathOverlay pipeline={pipeline} />}
         {debugEnabled && live && (
           <Suspense fallback={null}>
             <DebugOverlay session={session} snapshot={snapshot} pipeline={pipeline} />

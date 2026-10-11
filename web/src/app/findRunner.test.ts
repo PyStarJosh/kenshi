@@ -75,6 +75,8 @@ function setup() {
     /** The phone turns this many degrees while a frame is being grabbed. */
     turnDuringGrab: 0,
     bitmaps: [] as { close: ReturnType<typeof vi.fn> }[],
+    /** What the path line says about the way ahead (R7). */
+    pathDecision: null as 'left' | 'right' | 'straight' | null,
   }
   const calls: { target: string; captures: Capture[]; paced: boolean }[] = []
   const sample = (): OrientationSample => ({
@@ -90,6 +92,7 @@ function setup() {
     orientationLatest: () => sample(),
     isRunning: () => state.running,
     getTracks: () => state.tracks,
+    getPathDecision: () => state.pathDecision,
     getSettings: () => ({ eyeHeightM: 1.6, horizontalFovDeg: 65 }),
     grab: async () => {
       const bitmap = { width: 1280, height: 720, close: vi.fn() }
@@ -402,5 +405,62 @@ describe('stopping', () => {
     t.bus.publish('findRequest', { target: 'door', source: 'voice' })
     await t.flush()
     expect(t.runner.getSnapshot().state).toBe('idle')
+  })
+})
+
+describe('the path line (R7)', () => {
+  async function guide(t: ReturnType<typeof setup>, centerX: number) {
+    t.state.outcome = { ok: true, result: foundResult(0, centerX) }
+    t.runner.request('chair')
+    await t.flush()
+    expect(t.runner.getSnapshot().state).toBe('guiding')
+  }
+
+  test('straight ahead, a path that bends left makes the instruction "Bear left around the obstacle"', async () => {
+    const t = setup()
+    await guide(t, 0.5)
+    t.state.pathDecision = 'left'
+    await t.frame(CONFIG.find.guideSpeechCooldownMs + 500)
+    expect(t.alerts.at(-1)?.phrase).toBe('Bear left around the obstacle.')
+  })
+
+  test('and right for a path that bends right', async () => {
+    const t = setup()
+    await guide(t, 0.5)
+    t.state.pathDecision = 'right'
+    await t.frame(CONFIG.find.guideSpeechCooldownMs + 500)
+    expect(t.alerts.at(-1)?.phrase).toBe('Bear right around the obstacle.')
+  })
+
+  test('a straight path or no opinion changes nothing', async () => {
+    const t = setup()
+    await guide(t, 0.5)
+    const before = t.alerts.length
+    t.state.pathDecision = 'straight'
+    await t.frame(CONFIG.find.guideSpeechCooldownMs + 500)
+    t.state.pathDecision = null
+    await t.frame(CONFIG.find.guideSpeechCooldownMs + 500)
+    // (a distance countdown may still come; no instruction does)
+    expect(t.alerts.slice(before).map((a) => a.phrase).filter((p) => /Bear|Turn|Straight|obstacle/.test(p))).toEqual([])
+  })
+
+  test('only while roughly aligned: with the target well off to one side the turn comes first', async () => {
+    const t = setup()
+    await guide(t, 0.9) // about 26 degrees to the right, past pathAlignedDeg
+    t.state.pathDecision = 'left'
+    await t.frame(CONFIG.find.guideSpeechCooldownMs + 500)
+    expect(t.alerts.map((a) => a.phrase).some((p) => p.includes('obstacle'))).toBe(false)
+  })
+
+  test('the target column steers the path: 0.5 plus bearing over field of view, only while guiding', async () => {
+    const t = setup()
+    expect(t.runner.getTargetColumn()).toBeNull()
+    await guide(t, 0.75) // 16.25 degrees right of straight ahead on a 65 degree lens
+    expect(t.runner.getTargetColumn()).toBeCloseTo(0.75, 6)
+    t.state.heading = 90 // turned right away from it: out of view
+    expect(t.runner.getTargetColumn()).toBeNull()
+    t.state.heading = 0
+    t.runner.cancel()
+    expect(t.runner.getTargetColumn()).toBeNull()
   })
 })

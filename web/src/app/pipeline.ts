@@ -6,23 +6,27 @@
 // types.ts, the bus, and the small interfaces below.
 //
 //   session result -> tracker -> bus "frame", bus "tracks"
+//   a frame result with a free-space path (R7) -> bus "path"; the recent decisions are kept for Find guidance
 //   bus "alert" -> audio link -> bus "alertOutcome"
 //   audio link -> bus "health", bus "voice", bus "findRequest", bus "findCancel"
 //   a frame counts as healthy (health monitor) only after it went through the whole chain
 import { EventBus } from '../alerts/bus'
 import type { TrackLookup } from '../audio/engine'
+import { CONFIG } from '../core/config'
 import type {
   AlertEvent,
   AlertOutcome,
   EventMap,
   FindRequest,
   FrameResult,
+  FreeSpaceResult,
   HealthState,
   OrientationSample,
   Settings,
   Track,
   VoiceIntent,
 } from '../core/types'
+import { majorityDecision } from '../geometry/freeSpacePath'
 import type { SessionState } from './session'
 
 export interface PipelineSession {
@@ -66,6 +70,8 @@ export class Pipeline {
   private tracks: Track[] = []
   private byId = new Map<number, Track>()
   private lastState: SessionState | null = null
+  private pathDecisions: FreeSpaceResult['decision'][] = []
+  private pathAtMs = -Infinity
 
   constructor(deps: PipelineDeps) {
     this.deps = deps
@@ -75,6 +81,16 @@ export class Pipeline {
   /** The tracks from the latest frame. */
   getTracks(): readonly Track[] {
     return this.tracks
+  }
+
+  /**
+   * What the path line says about the way ahead, or null when it has no opinion: the most common of the last few
+   * decisions, if the newest is recent. "None" (no open path found) is no opinion.
+   */
+  getPathDecision(nowMs: number): 'left' | 'right' | 'straight' | null {
+    if (this.pathDecisions.length === 0 || nowMs - this.pathAtMs > CONFIG.freeSpace.maxAgeMs) return null
+    const decision = majorityDecision(this.pathDecisions)
+    return decision === 'none' ? null : decision
   }
 
   /** Start listening to the session and connect the audio link. Returns a function that undoes it. */
@@ -120,11 +136,20 @@ export class Pipeline {
     this.byId = new Map(tracks.map((t) => [t.id, t]))
     this.bus.publish('frame', result)
     this.bus.publish('tracks', tracks)
+    if (result.freeSpace) this.recordPath(result.freeSpace)
+  }
+
+  private recordPath(path: FreeSpaceResult): void {
+    this.pathDecisions.push(path.decision)
+    if (this.pathDecisions.length > CONFIG.freeSpace.decisionHistory) this.pathDecisions.shift()
+    this.pathAtMs = this.deps.now()
+    this.bus.publish('path', path)
   }
 
   private reset(): void {
     this.deps.tracker.reset()
     this.tracks = []
     this.byId.clear()
+    this.pathDecisions = []
   }
 }

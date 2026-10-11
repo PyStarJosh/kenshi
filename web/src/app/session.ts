@@ -6,6 +6,7 @@ import { createBitmapGrabber, createFrameRequester, FrameScheduler } from '../ca
 import { WakeLock } from '../camera/wakeLock'
 import { CONFIG } from '../core/config'
 import type { FrameResult, OrientationSample } from '../core/types'
+import type { PathInput } from '../geometry/pathInput'
 import { DetectionEngine } from '../detection/engine'
 import { modelUrl } from '../detection/models'
 import type { EngineInfo, ProviderChoice } from '../detection/protocol'
@@ -50,7 +51,7 @@ export interface WakeLockLike {
 
 export interface EngineLike {
   init(modelUrl: string, provider: ProviderChoice): Promise<EngineInfo>
-  detect(bitmap: ImageBitmap, frameId: number, captureTimeMs: number): Promise<FrameResult | null>
+  detect(bitmap: ImageBitmap, frameId: number, captureTimeMs: number, path?: PathInput): Promise<FrameResult | null>
   terminate(): void
 }
 
@@ -82,8 +83,12 @@ const IDLE: SessionSnapshot = {
   orientation: 'idle',
 }
 
+/** What asks for the free-space path: null while nothing needs it (Find is idle and ?debug is off). */
+export type PathSource = () => { targetX: number | null; hfovDeg: number } | null
+
 export class Session {
   private deps: SessionDeps
+  private pathSource: PathSource | null = null
   private snapshot: SessionSnapshot = IDLE
   private listeners = new Set<() => void>()
   private resultListeners = new Set<(result: FrameResult) => void>()
@@ -105,6 +110,18 @@ export class Session {
   /** The tilt reading closest to a moment (a frame's capture time), or null if there is none. */
   getOrientationAt(timeMs: number): OrientationSample | null {
     return this.deps.orientation.at(timeMs)
+  }
+
+  /** Say when and how the detector should also find the free-space path (R7); null stops it. */
+  setPathSource(source: PathSource | null): void {
+    this.pathSource = source
+  }
+
+  /** The path request that goes with a frame captured at this moment, or undefined when none is wanted. */
+  pathInputAt(captureTimeMs: number): PathInput | undefined {
+    const want = this.pathSource?.()
+    if (!want) return undefined
+    return { pitchDeg: this.deps.orientation.at(captureTimeMs)?.pitchDeg ?? null, hfovDeg: want.hfovDeg, targetX: want.targetX }
   }
 
   /** The newest tilt reading, or null if there is none or it is stale. */
@@ -279,7 +296,7 @@ export class Session {
 
 /** Build a session wired to the real camera, detector, and wake lock. */
 export function createSession(getVideo: () => HTMLVideoElement | null): Session {
-  return new Session({
+  const session: Session = new Session({
     camera: new Camera(getVideo),
     wakeLock: new WakeLock(),
     orientation: createOrientationSensor(),
@@ -292,11 +309,12 @@ export function createSession(getVideo: () => HTMLVideoElement | null): Session 
         frameGapTolerance: CONFIG.detection.frameGapTolerance,
         requestFrame: createFrameRequester(video),
         grab: createBitmapGrabber(video),
-        detect: (bitmap, frameId, captureTimeMs) => engine.detect(bitmap, frameId, captureTimeMs),
+        detect: (bitmap, frameId, captureTimeMs) => engine.detect(bitmap, frameId, captureTimeMs, session.pathInputAt(captureTimeMs)),
         now: () => performance.now(),
         ...handlers,
       })
     },
     now: () => performance.now(),
   })
+  return session
 }

@@ -15,8 +15,9 @@ flowchart TD
   SET[Settings] --> GEO
   TRK -->|Track| GEO
   GEO -->|Track with geometry| MOT[Smoothing and time to contact]
-  MOT -->|Track| RTE[Path line, R7]
-  RTE --> FND[Find controller, R4 to R6]
+  WRK -->|free-space path, 1 frame in 3| RTE[Path line, R7]
+  MOT -->|Track| FND[Find controller, R4 to R6]
+  RTE -->|decision| FND
   FND -->|AlertEvent| BUS[Event bus]
   VOI[Voice commands] -->|VoiceIntent| BUS
   BUS -->|AlertEvent| AUD[Audio engine]
@@ -136,7 +137,7 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 4. **Track.** The tracker matches detections to tracks and updates confirmation.
 5. **Geometry.** For each track, geometry adds clock, distance, elevation, and `inPath` using the latest `OrientationSample` and `Settings`.
 6. **Motion.** Smoothing and time-to-contact set `closingSpeedMps`, `timeToContactS`, `approaching`.
-7. **Publish.** The pipeline publishes `frame` and `tracks` on the bus. Nothing speaks about them; the path line (R7) reads the tracks.
+7. **Publish.** The pipeline publishes `frame` and `tracks` on the bus, and `path` when the frame carried a free-space path. Nothing speaks about the tracks; the path line (R7) does not use them.
 8. **Audio.** Alerts that other modules put on the bus (Find guidance, health) go to the audio engine, which runs the stale check and track check, plays the tone, then speaks.
 
 All timestamps use `performance.now()` on the main thread, so every latency is measured from `captureTimeMs`.
@@ -153,6 +154,15 @@ Budget for the **detection path**, from the capture of a frame to its tracks, us
 | Inference | 120 | 170 | NFR-2 |
 | Postprocess | 10 | 180 | decode, per-class threshold, NMS, scale to the frame |
 | Tracking and geometry | 10 | **190** | main thread, pure functions |
+| Free-space path (R7) | not in the 190 | | worker, on one frame in three (`CONFIG.freeSpace.everyNthFrame`), 320 px wide; measured in 4.2 |
+
+### 4.2 The free-space path (step R7)
+
+The path stage runs in the detection worker after the detections, on one frame in three, so it adds to those frames' worker time and to the round trip. Measured on the same desktop as 4.1 (not an iPhone):
+
+- The pure function on a 320 x 180 frame (a landscape camera frame at `processWidth` 320), Node, synthetic frames from smooth to noisy: p50 about 5 ms, p95 8 to 12 ms.
+- The `?bench` screen now has a "Path" row and a "Total with path on 1 frame in 3" row (path forced on every frame, then added to one in three). Its sample image `bus.jpg` is a **portrait** picture, so it is analysed at 320 x 427, which costs about six times as much (Node: p50 30 to 34 ms); the same run in the Edge worker gave about 55 ms p50, 60 ms p95, and a "Total with path on 1 frame in 3" p95 of about 183 ms against about 129 ms without it. That is the bench image's shape, not the live shape.
+- The decision rule: if detection p95 on the iPhone goes past the 4 budget with the path on, set `CONFIG.freeSpace.everyNthFrame` to 5 (one line), and only then consider a second worker. **Not yet measured on the iPhone**; the Gate A style run (`?bench`, then `?debug` fps while Find runs) decides.
 
 ### 4.1 Measured on desktop (step A1)
 
@@ -235,7 +245,7 @@ Both raw candidates are kept in the result for tuning. The distance is smoothed 
 
 Removed in step P1. The detector no longer announces objects: there is no alert policy, no object phrase format, no "what's around me", and no tone per object (SR-12). What stays from the old design: the stale check and the track check in the audio engine (SR-3), which Find alerts also use, and the health warnings, which are the only urgent alerts left (SR-4).
 
-The route is how objects are handled. The path line (section 13, step R7) turns confirmed in-path tracks into obstacles on the ground plane and bends the walking line around them, and guidance (R5) follows the first leg of the line. The user hears only "Turn right a little", never what is in the way.
+The route is how objects are handled. The path line (section 13, step R7) finds the open floor in the picture from its edges and bends the walking line through it toward the target, and guidance (R5) turns its decision into "Bear left around the obstacle" while the target is straight ahead. The user hears only "Turn right a little", never what is in the way.
 
 ## 8. Threading and scheduling
 - **Main thread:** UI, camera, scheduler, orchestrator, tracker, geometry, audio scheduling, speech, voice.
@@ -375,7 +385,7 @@ Find mode is a "Find My" for blind users. The user names a target; a Gemini mode
 | Guidance | `find/guidance.ts` (R5, done) | Pure. `nextGuidance(state, { bearing, distanceM, distanceIsBound, pathDecision, state, label, nowMs })` returns the next sentence or nothing, and the state to carry. Direction zones (straight under 15, bear to 45, turn to 135, turn around beyond) reuse `stableDirection` with `directionHysteresisDeg` = 5. Spoken when the instruction changes (not within `guideSpeechCooldownMs`, 2.5 s of the last phrase), and an instruction that asks for action is repeated every `guidanceRepeatMs` (5 s); "Straight ahead" is not. The countdown (`countdownM` 10, 5, 3, 2) speaks only while within 45 degrees of the target, never from a distance that is only an upper bound (a clipped box), once per level per approach (a level is forgotten if the user moves back out beyond it by `countdownResetM`), and only when no instruction is due. An aligned target with a `pathDecision` of left or right gives "Bear left/right around the obstacle" (R7 supplies it; absent until then). Priority in one tick: a health warning (the audio engine), arrival, an instruction, the countdown, the tilt request, then the beacon. (FR-25, SR-2, SR-11) |
 | Beacon | `audio/beacon.ts`, `app/beaconDriver.ts` (R5, done) | `Beacon` uses the app's one AudioContext (from `AudioLink`) and the shared equal-power panner (`createPan` in `tones.ts`). A timer wakes the scheduler every `beacon.tickMs` (25 ms); it schedules every pulse that falls within `lookaheadMs` (120 ms) on the audio clock, so timing does not depend on the main thread. Gap: `pulseIntervalMs(distance)` runs from `maxIntervalMs` (1000) at `farM` (10) or unknown to `minIntervalMs` (150) at `nearM` (1), along `t ** curve` (curve 1 is a straight line). Pan: `sin(bearing)` clamped. Pitch: 880 Hz within 15 degrees, 660 Hz otherwise, and a low (330 Hz) double pulse beyond 90 degrees. It ducks to `duckGain` (0.2) while the speaker is busy and pauses (silent, nothing scheduled) while the current phrase is urgent (`Speaker.isUrgent`); after a pause or a stall it restarts from now, with no burst of missed pulses. Arrival: a rising three-note chime on its own, unducked output. A suspended or interrupted context (iOS does this around speech, the microphone and calls) has a frozen clock, so the beacon schedules nothing while it is stalled, asks for the context to be resumed about every half second (`AudioLink.resumeAudio`, which is also called on every `statechange`, when a phrase ends, and when the page becomes visible), and starts again from the current time when it runs, so there is no burst of stored pulses; the chime waits for the resume. At Start the page asks for a `playback` audio session (`navigator.audioSession`, iOS 16.4 and later) so the ringer switch does not silence the tones. `BeaconDriver` follows the `find` snapshot on the bus: it runs only in `guiding` with a bearing, follows each change, stops in every other state, and chimes once on guiding to arrived. The distance it uses is the memory's, so a clipped (upper-bound) distance keeps the pulse rate at that bound. (FR-26, SR-10) |
 | Find screen | `app/findView.ts`, `app/screens/FindScreen.tsx` + `FindScreen.css` (R6, done) | `findView.ts` is pure and tested: which screen a snapshot gives (home, looking, sweeping, found, guiding, arrived, not found, error), the arrow angle (the bearing, unwrapped so the arrow turns the short way across 180 degrees), the green state (under `alignedEnterDeg` 15, held to `alignedExitDeg` 20), the distance text ("6 m", "< 2.5 m" for an upper bound, "--" unknown), the direction line (the same hysteresis as speech), the eight-segment ring, and one live-region sentence per state (the state only, never the changing bearing). `FindScreen.tsx` draws it with inline SVG, shows a "Found" screen for `foundScreenMs` (1.5 s) before the first guiding view, and has a home view (Say a target, the quick picks). The screen takes no touches except on its buttons, so the Talk button beneath still hears a tap and a long press anywhere. The camera picture is a corner inset (a button over it enlarges it behind the screen, which then shows it through). Arrow turns have a 150 ms transition, none under reduced motion. There is no Walk/Find switch: Walk mode was removed in P1. (FR-27) |
-| Path line | `geometry/freeSpacePath.ts` (R7) | Pure. Confirmed tracks become inflated rectangles on the ground plane; a path from the user toward the target bearing bends around them; output is a short polyline for the Find screen. Designed in R7; this is the intended interface only. (FR-28) |
+| Path line | `geometry/freeSpacePath.ts`, `geometry/pathInput.ts`, `detection/pathStage.ts`, `app/screens/PathOverlay.tsx` + `overlayDraw.ts` (R7, done) | `freeSpacePath.ts` is a TypeScript port of a teammate's `path_estimation_opencv.py` (github.com/TarunM78/medtech-hack), verified pixel for pixel against the original with two changes noted in its header (a left-bias fix, target steering); its algorithm is not edited here, and its numbers live in `CONFIG.freeSpace.path`. Pure: blur, Canny edges, thickened into obstacles, everything else open floor, the open floor connected to the bottom of the frame, then a line walked up it (gaps nearest the target first, the line leaning toward the target). `pathStage.ts` runs in the detection worker on one frame in `everyNthFrame` (3): the frame is drawn into one reused `OffscreenCanvas` at `processWidth` (320 px, aspect kept), made gray into a reused buffer, and analysed with the horizon row from the camera pitch (`pathInput.ts`: calibrated field of view, tilt at the frame's capture time) and, in Find with the target in view, `targetX = 0.5 + bearing / hfov`. The result (points, decision, lookahead, region start, free-floor mask with its buffer transferred) rides on the frame result and goes on the bus as `path`; the session asks for it only while Find runs or `?debug` is on. The pipeline keeps the last 5 decisions; the Find runner gives guidance the most common one, if newer than 1.5 s and only while the target is within `pathAlignedDeg` (20) of straight ahead. `PathOverlay` is a canvas over the picture (same mapping as the detection boxes): free floor tinted green at 35%, the line 4 px yellow. (FR-28) |
 
 Reused unchanged: camera, frame scheduler, detection worker, tracker, geometry (`locate`, `cameraModel`, ground-plane distance), event bus, tones, speech, voice recognizer and control, health monitor, settings and calibration. The bearing of the target's box comes from `geometry/geometry.ts` with a synthetic class (ground contact on, no typical height), so the distance exists only when the box bottom is on the floor.
 
@@ -402,8 +412,9 @@ flowchart TD
   GUI -->|spoken line| SPK[Speech]
   HLT[Health warnings] -->|preempt| SPK
   HLT -->|silence| BEA
-  TRK[Tracks, silent] --> PTH[Path line]
-  PTH --> GUI
+  WRKP[Detection worker] -->|free-space path| PTH[Path line]
+  PTH -->|decision, only when roughly aligned| GUI
+  PTH --> SCR
 ```
 
 1. The user says "find <target>" or picks one. The controller speaks the target back.
