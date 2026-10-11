@@ -151,3 +151,18 @@
     min-width: 0;
   }
 }
+
+.sheet label.check {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 1.15rem;
+}
+
+.sheet label.check input {
+  width: 1.75rem;
+  min-height: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  accent-color: #4da3ff;
+}

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { EventBus } from '../alerts/bus'
 import { AlertPolicy } from '../alerts/policy'
-import type { TrackLookup } from '../audio/engine'
+import type { AlertTimes, TrackLookup } from '../audio/engine'
 import { CONFIG } from '../core/config'
 import type {
   AlertEvent,
@@ -11,12 +11,14 @@ import type {
   FrameResult,
   HealthState,
   OrientationSample,
+  TelemetryEvent,
   Track,
   VoiceIntent,
 } from '../core/types'
 import { Pipeline } from './pipeline'
 import type { PipelineLink, PipelineSession, PipelineTracker } from './pipeline'
 import type { SessionState } from './session'
+import type { VoiceSource } from '../voice/control'
 
 const A = CONFIG.alerts
 
@@ -92,10 +94,13 @@ class FakeLink implements PipelineLink {
   lookup: TrackLookup | null = null
   summarizer: (() => string) | null = null
   throwOnAlert = false
+  private outcomeListeners = new Set<
+    (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null, times?: AlertTimes) => void
+  >()
+  private healthListeners = new Set<(health: HealthState) => void>()
+  private voiceListeners = new Set<(intent: VoiceIntent, source: VoiceSource) => void>()
   recorded: number[] = []
   private intentListeners = new Set<(intent: VoiceIntent) => void>()
-  private healthListeners = new Set<(health: HealthState) => void>()
-  private outcomeListeners = new Set<(alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null) => void>()
 
   handleAlert(alert: AlertEvent) {
     this.alerts.push(alert)
@@ -107,7 +112,7 @@ class FakeLink implements PipelineLink {
   setTrackLookup(lookup: TrackLookup | null) {
     this.lookup = lookup
   }
-  onAlertOutcome(listener: (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null) => void) {
+  onAlertOutcome(listener: (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null, times?: AlertTimes) => void) {
     this.outcomeListeners.add(listener)
     return () => this.outcomeListeners.delete(listener)
   }
@@ -122,11 +127,21 @@ class FakeLink implements PipelineLink {
     this.healthListeners.add(listener)
     return () => this.healthListeners.delete(listener)
   }
+  onVoice(listener: (intent: VoiceIntent, source: VoiceSource) => void) {
+    this.voiceListeners.add(listener)
+    return () => this.voiceListeners.delete(listener)
+  }
+  report(alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null = null, times?: AlertTimes) {
+    for (const listener of [...this.outcomeListeners]) listener(alert, outcome, latencyMs, times)
+  }
+  reportHealth(health: HealthState) {
+    for (const listener of [...this.healthListeners]) listener(health)
+  }
+  reportVoice(intent: VoiceIntent, source: VoiceSource) {
+    for (const listener of [...this.voiceListeners]) listener(intent, source)
+  }
   say(intent: VoiceIntent) {
     for (const listener of [...this.intentListeners]) listener(intent)
-  }
-  report(alert: AlertEvent, outcome: AlertOutcome) {
-    for (const listener of [...this.outcomeListeners]) listener(alert, outcome, null)
   }
 }
 
@@ -170,7 +185,9 @@ function setup(options: { onBusError?: (topic: string, error: unknown) => void }
   bus.subscribe('alert', () => events.push('alert'))
   const outcomes: { id: string; outcome: AlertOutcome }[] = []
   bus.subscribe('alertOutcome', ({ alert, outcome }) => outcomes.push({ id: alert.id, outcome }))
-  return { session, link, tracker, clock, bus, pipeline, detach, send, events, outcomes }
+  const telemetry: TelemetryEvent[] = []
+  bus.subscribe('telemetry', (event) => telemetry.push(event))
+  return { session, link, tracker, clock, bus, pipeline, detach, send, events, outcomes, telemetry }
 }
 
 describe('the live path', () => {
@@ -389,5 +406,65 @@ describe('voice goes on the bus', () => {
     t.bus.subscribe('voice', (intent) => intents.push(intent))
     t.link.say('whats-around')
     expect(intents).toEqual(['whats-around'])
+  })
+})
+
+describe('telemetry', () => {
+  const kinds = (t: { telemetry: TelemetryEvent[] }) => t.telemetry.map((e) => (e.kind === 'alert' ? `alert:${e.outcome}` : e.kind))
+
+  test('a frame is logged with what the replay needs, before the alert it caused', () => {
+    const t = setup()
+    t.send([track()], 70)
+    expect(kinds(t)).toEqual(['frame', 'tracks', 'alert:queued'])
+    const frameEvent = t.telemetry[0]
+    expect(frameEvent).toMatchObject({ kind: 'frame', timeMs: 1000, captureTimeMs: 930, orientation: { timeMs: 930 } })
+    expect(t.telemetry[2]).toMatchObject({ kind: 'alert', timeMs: 1000, outcome: 'queued' })
+  })
+
+  test('the frame rate in the log counts frames from the last second', () => {
+    const t = setup()
+    for (let i = 0; i < 4; i++) {
+      t.clock.nowMs += 100
+      t.send([])
+    }
+    const fps = t.telemetry.filter((e) => e.kind === 'frame').map((e) => (e as { fps: number }).fps)
+    expect(fps).toEqual([1, 2, 3, 4])
+  })
+
+  test('a drop by the policy is logged with its reason', () => {
+    const t = setup()
+    const both = [track({ id: 1 }), track({ id: 2, classId: 2, label: 'backpack', distanceM: 3 })]
+    t.send(both)
+    t.clock.nowMs += 200
+    t.send(both) // the backpack waits behind the chair
+    t.clock.nowMs += 200
+    t.send([track()]) // and its track is gone
+    expect(t.telemetry.filter((e) => e.kind === 'drop')).toMatchObject([{ kind: 'drop', reason: 'track-gone', trackId: 2 }])
+  })
+
+  test('audio outcomes are logged with the tone and speech start times', () => {
+    const t = setup()
+    t.send([track()])
+    const alert = t.link.alerts[0]
+    t.clock.nowMs = 1300
+    t.link.report(alert, 'started', 250, { toneStartMs: 1250, speechStartMs: null })
+    t.clock.nowMs = 1900
+    t.link.report(alert, 'finished', null, { toneStartMs: 1250, speechStartMs: 1500 })
+    expect(t.telemetry.filter((e) => e.kind === 'alert' && e.outcome !== 'queued')).toMatchObject([
+      { timeMs: 1300, outcome: 'started', latencyMs: 250, toneStartMs: 1250, speechStartMs: null },
+      { timeMs: 1900, outcome: 'finished', toneStartMs: 1250, speechStartMs: 1500 },
+    ])
+  })
+
+  test('run state changes, health, and voice commands are logged', () => {
+    const t = setup()
+    t.session.setState('paused')
+    t.link.reportVoice('pause', 'long-press')
+    const health = { status: 'healthy', issues: [] } as unknown as HealthState
+    t.link.reportHealth(health)
+    t.session.setState('running')
+    expect(kinds(t)).toEqual(['run-state', 'voice', 'health', 'run-state'])
+    expect(t.telemetry[0]).toMatchObject({ state: 'paused' })
+    expect(t.telemetry[1]).toMatchObject({ intent: 'pause', source: 'long-press' })
   })
 })

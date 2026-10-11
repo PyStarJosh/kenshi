@@ -1,0 +1,51 @@
+/* Test mode: large, high-contrast text for screen recordings. Taps pass through to the Talk button. */
+.test-clock {
+  position: absolute;
+  top: max(0.5rem, env(safe-area-inset-top));
+  right: max(0.5rem, env(safe-area-inset-right));
+  padding: 0 0.75rem;
+  background: #000c;
+  color: #fff;
+  font: 700 clamp(2rem, 9vmin, 4rem) / 1.2 ui-monospace, monospace;
+  pointer-events: none;
+}
+
+.test-captions {
+  position: absolute;
+  left: max(0.75rem, env(safe-area-inset-left));
+  right: max(0.75rem, env(safe-area-inset-right));
+  bottom: 4.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+}
+
+.test-caption {
+  padding: 0.25rem 0.75rem;
+  background: #000d;
+  color: #fff;
+  font: 700 clamp(1.5rem, 6vmin, 3rem) / 1.2 system-ui, sans-serif;
+}
+
+/* Older captions shrink so the newest one reads first. */
+.test-caption:not(:last-child) {
+  font-size: clamp(1rem, 4vmin, 2rem);
+  opacity: 0.75;
+}
+
+.test-caption-urgent {
+  color: #ff8a80;
+}
+
+.test-caption-info {
+  color: #b3e5fc;
+}
+
+.test-caption-time {
+  font-family: ui-monospace, monospace;
+  color: #ffeb3b;
+}

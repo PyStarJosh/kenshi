@@ -33,3 +33,6 @@ field-tests/**/*.mov
 
 # Comparison output images (the report.md files stay tracked)
 results/**/frames/
+
+# Replay output (regenerate with web/scripts/replay.ts)
+field-tests/**/replay/

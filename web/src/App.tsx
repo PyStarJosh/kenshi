@@ -1,6 +1,8 @@
 import type { CSSProperties } from 'react'
 import { lazy, Suspense, useState, useSyncExternalStore } from 'react'
 import { useAudioLink } from './app/useAudioLink'
+import { useSettings } from './app/useSettings'
+import { useTelemetry } from './app/useTelemetry'
 import { usePipeline } from './app/usePipeline'
 import TalkButton from './app/screens/TalkButton'
 import { useSession } from './app/useSession'
@@ -9,6 +11,8 @@ const DebugOverlay = lazy(() => import('./app/screens/DebugOverlay.tsx'))
 const AudioTestPanel = lazy(() => import('./app/screens/AudioTestPanel.tsx'))
 const SettingsScreen = lazy(() => import('./app/screens/Settings.tsx'))
 const CalibrateScreen = lazy(() => import('./app/screens/Calibrate.tsx'))
+const TestOverlay = lazy(() => import('./app/screens/TestOverlay.tsx'))
+const SaveLogButton = lazy(() => import('./app/screens/SaveLogButton.tsx'))
 
 const debugEnabled = new URLSearchParams(window.location.search).has('debug')
 const DEFAULT_ASPECT = 16 / 9
@@ -19,6 +23,9 @@ export default function App() {
   const { session, snapshot, setVideo } = useSession()
   const audio = useAudioLink(session)
   const pipeline = usePipeline(session, audio)
+  const logger = useTelemetry(session, pipeline)
+  const logView = useSyncExternalStore(logger.subscribe, logger.getView)
+  const { testMode } = useSettings()
   const audioError = useSyncExternalStore(audio.subscribe, () => audio.getView().error)
   const voiceMessage = useSyncExternalStore(audio.subscribe, () => audio.getView().voiceMessage)
   const [view, setView] = useState<View>('main')
@@ -36,6 +43,11 @@ export default function App() {
         {debugEnabled && live && (
           <Suspense fallback={null}>
             <DebugOverlay session={session} snapshot={snapshot} pipeline={pipeline} />
+          </Suspense>
+        )}
+        {testMode && live && (
+          <Suspense fallback={null}>
+            <TestOverlay session={session} pipeline={pipeline} />
           </Suspense>
         )}
       </div>
@@ -74,6 +86,12 @@ export default function App() {
         <TalkButton link={audio} />
       )}
 
+      {testMode && state === 'paused' && logView.hasLog && (
+        <Suspense fallback={null}>
+          <SaveLogButton logger={logger} />
+        </Suspense>
+      )}
+
       {debugEnabled && (
         <Suspense fallback={null}>
           <AudioTestPanel link={audio} />
@@ -81,7 +99,7 @@ export default function App() {
       )}
 
       <p role="status" aria-live="polite" className="status">
-        {[message, audioError, voiceMessage].filter(Boolean).join(' ')}
+        {[message, audioError, voiceMessage, logView.message].filter(Boolean).join(' ')}
       </p>
 
       {view !== 'main' && (

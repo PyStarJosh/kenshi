@@ -69,6 +69,22 @@ export default function SettingsScreen({ onBack, onCalibrate }: Props) {
         </button>
       </div>
 
+      <div className="field">
+        <label className="check" htmlFor="test-mode">
+          <input
+            id="test-mode"
+            type="checkbox"
+            checked={settings.testMode}
+            onChange={(e) => settingsStore.update({ testMode: e.target.checked })}
+          />
+          Test mode
+        </label>
+        <p className="hint">
+          Records each walk so you can save the log, replay it, and score it. Shows the session clock and a large caption
+          for every spoken alert. Off by default; nothing is recorded while it is off.
+        </p>
+      </div>
+
       <div className="row">
         <button type="button" onClick={resetGeometry}>
           Reset eye height and field of view

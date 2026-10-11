@@ -209,16 +209,52 @@ export type AlertOutcome =
   | 'dropped-stale'
   | 'dropped-track-gone'
 
-/** Field-test log entries, one JSON object per line when exported. */
+/** Why the alert policy dropped an alert before it was spoken. */
+export type AlertDropReason = 'stale' | 'track-gone' | 'not-eligible' | 'superseded' | 'queue-full'
+
+/** Phone and browser details written once at the start of a field-test log. */
+export interface DeviceInfo {
+  userAgent: string
+  platform: string
+  language: string
+  hardwareConcurrency: number | null
+  /** Rough device memory in GB where the browser reports it; Safari does not. */
+  deviceMemoryGb: number | null
+  screenWidth: number
+  screenHeight: number
+  devicePixelRatio: number
+}
+
+/**
+ * Field-test log entries, one JSON object per line when exported. Every time is milliseconds on the session
+ * clock: zero is the Start tap, the same clock the Test mode overlay shows. Entries are in the order they
+ * happened, which is the order the replay tool re-applies them.
+ */
 export type TelemetryEvent =
   | {
       kind: 'session'
       timeMs: number
-      userAgent: string
+      /** Log format version. */
+      version: number
+      appVersion: string
+      gitCommit: string
+      /** Model file name, for example "yolo26n-416.onnx". */
+      model: string
+      /** The provider asked for ("auto", "webgpu", "wasm"). */
+      provider: string
+      /** The provider actually running. */
       backend: InferenceBackend | null
       inputSize: number
       crossOriginIsolated: boolean
+      /** Includes the eye height and horizontal field of view. */
       settings: Settings
+      device: DeviceInfo
+      /** The CONFIG in force, so a replay can use the exact settings of the walk. */
+      config: Record<string, unknown>
+      /** When the log was started, as wall-clock time (ISO 8601). */
+      startedAtIso: string
+      /** Present only in a replay's output: how the replay was run. */
+      replay?: { overrides: Record<string, unknown>; audio: 'logged' | 'simulated'; useLoggedConfig: boolean }
     }
   | {
       kind: 'frame'
@@ -226,6 +262,12 @@ export type TelemetryEvent =
       frameId: number
       timings: FrameTimings
       captureTimeMs: number
+      /** When the main thread received the detection result. */
+      receivedTimeMs: number
+      frameWidth: number
+      frameHeight: number
+      /** Mean frame brightness, 0 to 1. */
+      meanLuma: number
       fps: number
       /** Capture time to the end of the pipeline for this frame. */
       pipelineMs: number
@@ -233,8 +275,26 @@ export type TelemetryEvent =
       detections: Detection[]
       orientation: OrientationSample | null
     }
+  /** The phone's tilt, about ten times a second. */
+  | { kind: 'orientation'; timeMs: number; sample: OrientationSample }
   | { kind: 'tracks'; timeMs: number; frameId: number; tracks: Track[] }
-  | { kind: 'alert'; timeMs: number; alert: AlertEvent; outcome: AlertOutcome; latencyMs: number | null }
+  /**
+   * An alert's life. "queued" is the policy emitting it (time is when it was created); later outcomes carry
+   * the tone start and speech start times once the audio engine knows them.
+   */
+  | {
+      kind: 'alert'
+      timeMs: number
+      alert: AlertEvent
+      outcome: AlertOutcome
+      latencyMs: number | null
+      toneStartMs?: number | null
+      speechStartMs?: number | null
+    }
+  /** An alert the policy dropped before it reached the audio engine. */
+  | { kind: 'drop'; timeMs: number; alert: AlertEvent; trackId: number; reason: AlertDropReason }
+  /** The live run started, paused, or stopped; the replay resets its tracker and policy when it stops running. */
+  | { kind: 'run-state'; timeMs: number; state: 'idle' | 'starting' | 'running' | 'paused' }
   | { kind: 'health'; timeMs: number; health: HealthState }
   | { kind: 'voice'; timeMs: number; intent: VoiceIntent; source: 'speech' | 'tap-fallback' | 'long-press' }
   | { kind: 'error'; timeMs: number; source: string; message: string }
