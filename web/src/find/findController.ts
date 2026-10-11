@@ -9,7 +9,10 @@
 //          sweeping      lost -> sweeping
 //              |
 //              v
-//        sweepChecking -> guiding, or notFound -> idle;   any locate failure -> error -> idle;   cancel -> idle
+//        sweepChecking -> guiding, or notFound -> idle;   every look failed -> error -> idle;   cancel -> idle
+//
+// While sweeping, each frame taken about every 45 degrees is sent on its own as soon as it is captured, so the first
+// look that finds the target ends the search (guiding). sweepChecking only waits for the looks still out.
 //
 // A target the on-device detector already sees skips the network: request -> guiding with source 'yolo'.
 // All thresholds are in CONFIG.find. Nothing here says the way is clear or safe (SR-2), and "not found" is only ever
@@ -66,6 +69,12 @@ export interface FindContext {
   sweepCheckHeading: number | null
   /** A pause check was made during this stillness; the next one waits for the user to move again. */
   sweepDwellChecked: boolean
+  /** Ids of the per-frame looks still out; every sweep frame is its own request. */
+  sweepPending: number[]
+  /** How many of those looks came back without the target, and how many failed (and the last failure's code). */
+  sweepAnswered: number
+  sweepFailures: number
+  sweepLastCode: LocateClientErrorCode | null
   // Guiding
   rechecking: boolean
   failedRechecks: number
@@ -94,6 +103,10 @@ export function initialContext(): FindContext {
     sweepReminded: false,
     sweepCheckHeading: null,
     sweepDwellChecked: false,
+    sweepPending: [],
+    sweepAnswered: 0,
+    sweepFailures: 0,
+    sweepLastCode: null,
     rechecking: false,
     failedRechecks: 0,
     lastRecheckAt: 0,
@@ -117,18 +130,25 @@ export interface FrameMeta {
 export type FindEvent =
   | { type: 'request'; target: string; nowMs: number; heading: number | null; yolo: YoloSighting | null }
   | { type: 'cancel' }
-  | { type: 'tick'; nowMs: number; heading: number | null; yolo: YoloSighting | null; canLocate: boolean }
+  | {
+      type: 'tick'
+      nowMs: number
+      heading: number | null
+      yolo: YoloSighting | null
+      /** A paced call (the first check, a guiding re-check) would be allowed now. */
+      canLocate: boolean
+      /** An unpaced look (a pause look) would be allowed now: under the per-minute and concurrency caps. */
+      canLook: boolean
+    }
   | { type: 'located'; id: number; nowMs: number; heading: number | null; result: LocateResult; frames: FrameMeta[] }
   | { type: 'failed'; id: number; nowMs: number; code: LocateClientErrorCode }
 
 export type FindEffect =
   | { type: 'speak'; text: string }
-  /** Make a locate call: with the current frame, or with every frame captured in the sweep. */
-  | { type: 'locate'; id: number; frames: 'current' | 'sweep' }
-  /** Capture one sweep frame now, with a soft tick. */
-  | { type: 'capture' }
-  /** Throw away any sweep frames held. */
-  | { type: 'discardFrames' }
+  /** Look for the target in the current frame. A paced call waits for the gap since the last call; a pause look does not. */
+  | { type: 'locate'; id: number; paced: boolean }
+  /** Capture one sweep frame now, with a soft tick, and send it on its own as a look with this id (no gap). */
+  | { type: 'capture'; id: number }
 
 export interface FindEnv {
   hfovDeg: number
@@ -161,10 +181,10 @@ function toIdle(d: Draft): void {
   Object.assign(d.c, initialContext(), { privacyAnnounced, nextId })
 }
 
-function issueLocate(d: Draft, frames: 'current' | 'sweep'): void {
+function issueLocate(d: Draft, paced: boolean): void {
   d.c.nextId += 1
   d.c.pending = d.c.nextId
-  d.effects.push({ type: 'locate', id: d.c.nextId, frames })
+  d.effects.push({ type: 'locate', id: d.c.nextId, paced })
 }
 
 function startChecking(d: Draft, nowMs: number): void {
@@ -179,7 +199,7 @@ function startChecking(d: Draft, nowMs: number): void {
   say(d, nowMs, ...parts)
   c.state = 'checking'
   c.enteredAt = nowMs
-  issueLocate(d, 'current')
+  issueLocate(d, true)
 }
 
 function beginSweep(d: Draft, heading: number | null, nowMs: number): void {
@@ -194,7 +214,10 @@ function beginSweep(d: Draft, heading: number | null, nowMs: number): void {
   c.sweepReminded = false
   c.sweepCheckHeading = heading
   c.sweepDwellChecked = false
-  d.effects.push({ type: 'discardFrames' })
+  c.sweepPending = []
+  c.sweepAnswered = 0
+  c.sweepFailures = 0
+  c.sweepLastCode = null
 }
 
 function enterGuiding(d: Draft, memory: TargetMemory, bearingDeg: number, nowMs: number): void {
@@ -209,7 +232,7 @@ function enterGuiding(d: Draft, memory: TargetMemory, bearingDeg: number, nowMs:
   c.lastSpokenDirection = direction
   c.lastDirectionAt = nowMs
   c.pending = null
-  d.effects.push({ type: 'discardFrames' })
+  c.sweepPending = []
   say(d, nowMs, foundPhrase(c.target, direction))
 }
 
@@ -219,7 +242,7 @@ function toNotFound(d: Draft, nowMs: number): void {
   c.state = 'notFound'
   c.enteredAt = nowMs
   c.pending = null
-  d.effects.push({ type: 'discardFrames' })
+  c.sweepPending = []
 }
 
 function toError(d: Draft, code: LocateClientErrorCode, nowMs: number): void {
@@ -229,7 +252,7 @@ function toError(d: Draft, code: LocateClientErrorCode, nowMs: number): void {
   c.state = 'error'
   c.enteredAt = nowMs
   c.pending = null
-  d.effects.push({ type: 'discardFrames' })
+  c.sweepPending = []
 }
 
 function toLost(d: Draft, nowMs: number): void {
@@ -240,6 +263,7 @@ function toLost(d: Draft, nowMs: number): void {
   c.memory = null
   c.rechecking = false
   c.pending = null
+  c.sweepPending = []
 }
 
 /** Where a found result puts the target: its memory, from the frame's own heading and pitch. Null if it cannot be placed. */
@@ -282,7 +306,6 @@ function onRequest(d: Draft, e: Extract<FindEvent, { type: 'request' }>): void {
   const target = cleanTarget(e.target)
   if (target.length === 0) return
   toIdle(d)
-  d.effects.push({ type: 'discardFrames' })
   const { c } = d
   c.target = target
   c.noHeading = e.heading === null
@@ -304,12 +327,14 @@ function onRequest(d: Draft, e: Extract<FindEvent, { type: 'request' }>): void {
 
 function onLocated(d: Draft, e: Extract<FindEvent, { type: 'located' }>): void {
   const { c } = d
-  if (e.id !== c.pending) return // an answer to a search that was cancelled or replaced
-  c.pending = null
+  const sweepFrame = c.sweepPending.includes(e.id)
+  if (!sweepFrame && e.id !== c.pending) return // an answer to a search that was cancelled or replaced
+  if (sweepFrame) c.sweepPending = c.sweepPending.filter((id) => id !== e.id)
+  else c.pending = null
   const found = e.result.found && e.result.frameIndex !== null
   if (e.result.signHint) c.signHint = e.result.signHint
 
-  if (c.state === 'checking' || c.state === 'sweepChecking') {
+  if (c.state === 'checking') {
     if (found) {
       const meta = e.frames[e.result.frameIndex as number]
       if (c.noHeading && e.result.box !== null) {
@@ -326,7 +351,7 @@ function onLocated(d: Draft, e: Extract<FindEvent, { type: 'located' }>): void {
         return
       }
     }
-    if (c.state === 'checking' && !c.noHeading) {
+    if (!c.noHeading) {
       say(d, e.nowMs, FIND_PHRASES.notInView)
       beginSweep(d, e.heading, e.nowMs)
     } else {
@@ -335,12 +360,16 @@ function onLocated(d: Draft, e: Extract<FindEvent, { type: 'located' }>): void {
     return
   }
 
-  if (c.state === 'sweeping') {
-    // A look taken while the user paused during the sweep. Finding it ends the sweep; otherwise the sweep carries on.
+  if (c.state === 'sweeping' || c.state === 'sweepChecking') {
+    // A per-frame look, or a look taken while the user paused. Finding the target ends the search; a miss is counted,
+    // and once every look is back after the turn, the sweep is over.
     const memory = found ? memoryFrom(d, e.result, e.frames[e.result.frameIndex as number], e.nowMs) : null
     if (memory !== null) {
       enterGuiding(d, memory, bearing(memory, e.heading ?? memory.heading), e.nowMs)
+      return
     }
+    if (sweepFrame) c.sweepAnswered += 1
+    if (c.state === 'sweepChecking' && c.sweepPending.length === 0) resolveSweep(d, e.nowMs)
     return
   }
 
@@ -364,13 +393,23 @@ function failRecheck(d: Draft, nowMs: number): void {
 
 function onFailed(d: Draft, e: Extract<FindEvent, { type: 'failed' }>): void {
   const { c } = d
-  if (e.id !== c.pending) return
-  c.pending = null
-  if (c.state === 'checking' || c.state === 'sweepChecking') {
+  const sweepFrame = c.sweepPending.includes(e.id)
+  if (!sweepFrame && e.id !== c.pending) return
+  if (sweepFrame) c.sweepPending = c.sweepPending.filter((id) => id !== e.id)
+  else c.pending = null
+  if (c.state === 'checking') {
     toError(d, e.code, e.nowMs)
     return
   }
-  if (c.state === 'sweeping') return // a pause look failed: the sweep goes on, and its full-turn call still follows
+  if (c.state === 'sweeping' || c.state === 'sweepChecking') {
+    // One failed look costs one frame (the next overlaps it). Only if every look failed is Find unavailable.
+    if (sweepFrame) {
+      c.sweepFailures += 1
+      c.sweepLastCode = e.code
+    }
+    if (c.state === 'sweepChecking' && c.sweepPending.length === 0) resolveSweep(d, e.nowMs)
+    return
+  }
   if (c.state === 'guiding') {
     c.rechecking = false
     // Our own pacing limits say nothing about the target; try again later. Any other failure counts against it.
@@ -398,7 +437,9 @@ function tickSweep(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
       c.sweepFrames += 1
       c.sweepTurned += delta
       c.sweepLastHeading = e.heading
-      d.effects.push({ type: 'capture' })
+      c.nextId += 1
+      c.sweepPending = [...c.sweepPending, c.nextId]
+      d.effects.push({ type: 'capture', id: c.nextId })
       if (c.sweepFrames >= cfg.maxFrames || c.sweepTurned >= cfg.sweepFullTurnDeg) {
         finishSweep(d, now)
         return
@@ -420,22 +461,33 @@ function tickSweep(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
     c.sweepCheckHeading !== null &&
     !c.sweepDwellChecked &&
     c.pending === null &&
-    e.canLocate &&
+    e.canLook &&
     idleMs >= cfg.sweepDwellMs &&
     Math.abs(e.heading - c.sweepCheckHeading) >= cfg.sweepDwellMinTurnDeg
   ) {
     c.sweepDwellChecked = true
     c.sweepCheckHeading = e.heading
     say(d, now, FIND_PHRASES.checking)
-    issueLocate(d, 'current')
+    issueLocate(d, false)
   }
 }
 
+/** The turn is over (or the user stopped): wait for the looks still out, or finish at once if there are none. */
 function finishSweep(d: Draft, nowMs: number): void {
   d.c.state = 'sweepChecking'
   d.c.enteredAt = nowMs
+  if (d.c.sweepPending.length === 0) {
+    resolveSweep(d, nowMs)
+    return
+  }
   say(d, nowMs, FIND_PHRASES.checking)
-  issueLocate(d, 'sweep')
+}
+
+/** Every look is back and none found the target: not found, unless every look failed, which is an error. */
+function resolveSweep(d: Draft, nowMs: number): void {
+  const { c } = d
+  if (c.sweepAnswered === 0 && c.sweepFailures > 0 && c.sweepLastCode !== null) toError(d, c.sweepLastCode, nowMs)
+  else toNotFound(d, nowMs)
 }
 
 function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
@@ -483,7 +535,7 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
   ) {
     c.rechecking = true
     c.lastRecheckAt = now
-    issueLocate(d, 'current')
+    issueLocate(d, true)
   }
 }
 
@@ -530,7 +582,7 @@ export function reduce(ctx: FindContext, event: FindEvent, env: FindEnv, cfg: Fi
     case 'cancel':
       if (ctx.state !== 'idle') {
         toIdle(d)
-        d.effects.push({ type: 'discardFrames' }, { type: 'speak', text: FIND_PHRASES.stopped })
+        d.effects.push({ type: 'speak', text: FIND_PHRASES.stopped })
       }
       break
     case 'tick':

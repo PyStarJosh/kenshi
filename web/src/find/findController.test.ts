@@ -53,9 +53,44 @@ class Sim {
     return this.send({ type: 'request', target, nowMs: this.nowMs, heading: this.heading, yolo })
   }
 
-  tick(advanceMs = 0, patch: { yolo?: YoloSighting | null; canLocate?: boolean } = {}): FindEffect[] {
+  /** The heading each sweep frame was taken at, by the id of its look. */
+  captureHeadings = new Map<number, number | null>()
+
+  tick(advanceMs = 0, patch: { yolo?: YoloSighting | null; canLocate?: boolean; canLook?: boolean } = {}): FindEffect[] {
     this.nowMs += advanceMs
-    return this.send({ type: 'tick', nowMs: this.nowMs, heading: this.heading, yolo: null, canLocate: true, ...patch })
+    const effects = this.send({
+      type: 'tick',
+      nowMs: this.nowMs,
+      heading: this.heading,
+      yolo: null,
+      canLocate: true,
+      canLook: true,
+      ...patch,
+    })
+    for (const effect of effects) if (effect.type === 'capture') this.captureHeadings.set(effect.id, this.heading)
+    return effects
+  }
+
+  /** Turn to a heading in small steps, ticking each time. Returns every effect that came out. */
+  turnTo(to: number, stepDeg = 5, dtMs = 300): FindEffect[] {
+    const out: FindEffect[] = []
+    let heading = this.heading ?? 0
+    const direction = to >= heading ? 1 : -1
+    while (direction > 0 ? heading < to : heading > to) {
+      heading = direction > 0 ? Math.min(heading + stepDeg, to) : Math.max(heading - stepDeg, to)
+      this.heading = heading
+      out.push(...this.tick(dtMs))
+    }
+    return out
+  }
+
+  captureEffects(effects: FindEffect[]): Extract<FindEffect, { type: 'capture' }>[] {
+    return effects.filter((e): e is Extract<FindEffect, { type: 'capture' }> => e.type === 'capture')
+  }
+
+  /** The metadata of a sweep look: the frame was taken at the heading recorded for it. */
+  metaOf(id: number): FrameMeta[] {
+    return [{ heading: this.captureHeadings.get(id) ?? null, pitch: 0 }]
   }
 
   located(id: number, result: LocateResult, frames: FrameMeta[] = [{ heading: 0, pitch: 0 }]): FindEffect[] {
@@ -96,7 +131,7 @@ describe('starting a search', () => {
     const effects = sim.request('Chair')
     expect(sim.state).toBe('checking')
     expect(sim.said(effects)).toEqual([`${FIND_PHRASES.privacy} Looking for a chair.`])
-    expect(sim.locateEffects(effects)).toEqual([{ type: 'locate', id: 1, frames: 'current' }])
+    expect(sim.locateEffects(effects)).toEqual([{ type: 'locate', id: 1, paced: true }])
   })
 
   test('the privacy notice is never spoken a second time in the same session', () => {
@@ -224,11 +259,12 @@ describe('the YOLO shortcut', () => {
 })
 
 describe('the sweep', () => {
+  /** Request an exit, get "not in view" from the first look, and begin sweeping. */
   function startSweep(sim: Sim, heading = 0) {
     sim.heading = heading
-    const [locate] = sim.locateEffects(sim.request('exit'))
-    const effects = sim.located(locate.id, notFoundResult())
-    return { effects, locate }
+    const [first] = sim.locateEffects(sim.request('exit'))
+    const effects = sim.located(first.id, notFoundResult())
+    return { effects, first }
   }
 
   test('not in view: says to turn slowly to the right and starts sweeping', () => {
@@ -238,33 +274,29 @@ describe('the sweep', () => {
     expect(sim.said(effects)).toEqual([FIND_PHRASES.notInView])
   })
 
-  test('a full turn takes 8 frames, one about every 45 degrees, then sends them all in one call', () => {
+  test('a frame is taken about every 45 degrees and sent as its own look at once: 8 for a full turn, no batch call', () => {
     const sim = new Sim()
     startSweep(sim)
-    let captures = 0
-    let locateCalls: Extract<FindEffect, { type: 'locate' }>[] = []
-    for (let heading = 5; heading <= 360; heading += 5) {
-      sim.heading = heading
-      const effects = sim.tick(300)
-      captures += effects.filter((e) => e.type === 'capture').length
-      locateCalls = locateCalls.concat(sim.locateEffects(effects))
-    }
-    expect(captures).toBe(8)
-    expect(locateCalls).toHaveLength(1)
-    expect(locateCalls[0].frames).toBe('sweep')
+    const effects = sim.turnTo(360)
+    const captures = sim.captureEffects(effects)
+    expect(captures).toHaveLength(8)
+    expect(new Set(captures.map((c) => c.id)).size).toBe(8)
+    expect(sim.locateEffects(effects)).toEqual([]) // no one-call batch at the end any more
+    expect([...sim.captureHeadings.values()]).toEqual([45, 90, 135, 180, 225, 270, 315, 360])
     expect(sim.state).toBe('sweepChecking')
-    expect(sim.said().at(-1)).toBe(FIND_PHRASES.checking)
+    expect(sim.said(effects).at(-1)).toBe(FIND_PHRASES.checking)
   })
 
-  test('a frame is taken each time the heading has turned the configured step, and not before', () => {
+  test('each frame is captured the moment its 45 degrees is reached, not at the end of the turn', () => {
     const sim = new Sim()
     startSweep(sim)
     sim.heading = CFG.sweepStepDeg - 1
-    expect(sim.tick(100).some((e) => e.type === 'capture')).toBe(false)
+    expect(sim.captureEffects(sim.tick(100))).toEqual([])
     sim.heading = CFG.sweepStepDeg
-    expect(sim.tick(100).some((e) => e.type === 'capture')).toBe(true)
+    expect(sim.captureEffects(sim.tick(100))).toHaveLength(1)
     sim.heading = CFG.sweepStepDeg + 20
-    expect(sim.tick(100).some((e) => e.type === 'capture')).toBe(false)
+    expect(sim.captureEffects(sim.tick(100))).toEqual([])
+    expect(sim.state).toBe('sweeping')
   })
 
   test('turning faster ends the sweep after a full turn with fewer frames', () => {
@@ -273,7 +305,7 @@ describe('the sweep', () => {
     let captures = 0
     for (let step = 1; step <= 6; step++) {
       sim.heading = step * 60
-      captures += sim.tick(300).filter((e) => e.type === 'capture').length
+      captures += sim.captureEffects(sim.tick(300)).length
     }
     expect(captures).toBe(6)
     expect(sim.state).toBe('sweepChecking')
@@ -283,7 +315,7 @@ describe('the sweep', () => {
     const sim = new Sim()
     startSweep(sim)
     sim.heading = -50
-    expect(sim.tick(100).some((e) => e.type === 'capture')).toBe(true)
+    expect(sim.captureEffects(sim.tick(100))).toHaveLength(1)
   })
 
   test('reminds once if the user stops turning for 4 seconds, and not a second time', () => {
@@ -304,33 +336,56 @@ describe('the sweep', () => {
     }
   })
 
-  test('the sweep frames are found in one answer: the best frame\'s own heading places the target', () => {
+  test('the first look that finds the target ends the search at once, without finishing the turn', () => {
     const sim = new Sim()
     startSweep(sim)
-    const headings = [45, 90, 135, 180, 225, 270, 315, 360]
-    let sweepCall: Extract<FindEffect, { type: 'locate' }> | undefined
-    for (const heading of headings) {
-      sim.heading = heading
-      sweepCall ??= sim.locateEffects(sim.tick(300))[0]
-    }
-    expect(sweepCall).toBeDefined()
-    // Frame 3 was taken facing 180 and shows the exit in the middle; the user now faces 360, so it is behind them.
-    sim.located(sweepCall!.id, foundResult(3, 0.5), headings.map((heading) => ({ heading, pitch: 0 })))
+    const captures = sim.captureEffects(sim.turnTo(120)) // frames at 45 and 90
+    expect(captures).toHaveLength(2)
+    const effects = sim.located(captures[1].id, foundResult(0, 0.5), sim.metaOf(captures[1].id))
     expect(sim.state).toBe('guiding')
-    expect(sim.said().at(-1)).toBe('Exit found, behind you.')
+    expect(sim.said(effects)).toEqual(['Exit found, slightly left.']) // seen at 90, now facing 120: 30 degrees to the left
+    expect(sim.ctx.memory).toMatchObject({ source: 'gemini', heading: 90 })
+    expect(sim.ctx.sweepPending).toEqual([])
+  })
+
+  test('the other looks still out are ignored once it has been found', () => {
+    const sim = new Sim()
+    startSweep(sim)
+    const [first, second] = sim.captureEffects(sim.turnTo(100))
+    sim.located(second.id, foundResult(0, 0.5), sim.metaOf(second.id))
+    const memory = sim.ctx.memory
+    expect(sim.located(first.id, notFoundResult(), sim.metaOf(first.id))).toEqual([])
+    expect(sim.failed(first.id, 'network')).toEqual([])
+    expect(sim.state).toBe('guiding')
+    expect(sim.ctx.memory).toBe(memory)
+  })
+
+  test('answers may come back in any order: a miss for an earlier frame does not hide a hit for a later one', () => {
+    const sim = new Sim()
+    startSweep(sim)
+    const [a, b, c] = sim.captureEffects(sim.turnTo(140))
+    sim.located(c.id, notFoundResult(), sim.metaOf(c.id))
+    sim.located(a.id, notFoundResult(), sim.metaOf(a.id))
+    expect(sim.state).toBe('sweeping')
+    sim.located(b.id, foundResult(0, 0.5), sim.metaOf(b.id))
+    expect(sim.state).toBe('guiding')
+  })
+
+  test('the target heading comes from the frame it was found in, so it is behind you after turning on', () => {
+    const sim = new Sim()
+    startSweep(sim)
+    const captures = sim.captureEffects(sim.turnTo(360))
+    const frame180 = captures[3] // taken facing 180
+    const effects = sim.located(frame180.id, foundResult(0, 0.5), sim.metaOf(frame180.id))
+    expect(sim.said(effects)).toEqual(['Exit found, behind you.'])
     expect(sim.ctx.memory?.heading).toBe(180)
   })
 
   test('turning toward it changes the spoken direction', () => {
     const sim = new Sim()
     startSweep(sim)
-    const headings = [45, 90, 135, 180, 225, 270, 315, 360]
-    let sweepCall: Extract<FindEffect, { type: 'locate' }> | undefined
-    for (const heading of headings) {
-      sim.heading = heading
-      sweepCall ??= sim.locateEffects(sim.tick(300))[0]
-    }
-    sim.located(sweepCall!.id, foundResult(3, 0.5), headings.map((heading) => ({ heading, pitch: 0 })))
+    const captures = sim.captureEffects(sim.turnTo(360))
+    sim.located(captures[3].id, foundResult(0, 0.5), sim.metaOf(captures[3].id))
     sim.heading = 250 // turning toward 180
     expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs))).toEqual(['To your left.'])
     sim.heading = 205
@@ -339,7 +394,50 @@ describe('the sweep', () => {
     expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs))).toEqual(['Ahead.'])
   })
 
-  test('stopping altogether sends what there is after the give-up time, or gives up if there is nothing', () => {
+  test('after the full turn it waits for the looks still out, and finishes when the last one is back', () => {
+    const sim = new Sim()
+    startSweep(sim)
+    const captures = sim.captureEffects(sim.turnTo(360))
+    expect(sim.state).toBe('sweepChecking')
+    for (const capture of captures.slice(0, -1)) {
+      sim.located(capture.id, notFoundResult(), sim.metaOf(capture.id))
+      expect(sim.state).toBe('sweepChecking')
+    }
+    const last = captures.at(-1)!
+    const effects = sim.located(last.id, notFoundResult(), sim.metaOf(last.id))
+    expect(sim.state).toBe('notFound')
+    expect(sim.said(effects)[0]).toContain("I couldn't find an exit here.")
+  })
+
+  test('a failed look costs one frame, not the sweep', () => {
+    const sim = new Sim()
+    startSweep(sim)
+    const captures = sim.captureEffects(sim.turnTo(360))
+    sim.failed(captures[0].id, 'network')
+    for (const capture of captures.slice(1)) sim.located(capture.id, notFoundResult(), sim.metaOf(capture.id))
+    expect(sim.state).toBe('notFound')
+  })
+
+  test('if every look failed, Find is not available', () => {
+    const sim = new Sim()
+    startSweep(sim)
+    const captures = sim.captureEffects(sim.turnTo(360))
+    let effects: FindEffect[] = []
+    for (const capture of captures) effects = sim.failed(capture.id, 'network')
+    expect(sim.state).toBe('error')
+    expect(sim.said(effects)).toEqual([FIND_PHRASES.unavailable])
+  })
+
+  test('looks refused by our own limits say so', () => {
+    const sim = new Sim()
+    startSweep(sim)
+    const captures = sim.captureEffects(sim.turnTo(360))
+    let effects: FindEffect[] = []
+    for (const capture of captures) effects = sim.failed(capture.id, 'limit')
+    expect(sim.said(effects)).toEqual([FIND_MESSAGES.limit])
+  })
+
+  test('stopping altogether gives up after the give-up time: not found with no frames, or waits for the looks out', () => {
     const nothing = new Sim()
     startSweep(nothing)
     nothing.tick(CFG.sweepGiveUpMs)
@@ -348,29 +446,30 @@ describe('the sweep', () => {
     const some = new Sim()
     startSweep(some)
     some.heading = 50
-    some.tick(100)
-    const effects = some.tick(CFG.sweepGiveUpMs)
+    const [capture] = some.captureEffects(some.tick(100))
+    some.tick(CFG.sweepGiveUpMs)
     expect(some.state).toBe('sweepChecking')
-    expect(some.locateEffects(effects)[0].frames).toBe('sweep')
+    some.located(capture.id, notFoundResult(), some.metaOf(capture.id))
+    expect(some.state).toBe('notFound')
   })
 })
 
 describe('looking while the user pauses, and the detector during a search', () => {
-  /** Request a chair, get "not in view", and turn 50 degrees (one frame taken). */
+  /** Request a chair, get "not in view", and turn 30 degrees (less than a sweep step) and stop. */
   function turnedAndStill() {
     const sim = new Sim()
     const [first] = sim.locateEffects(sim.request('chair'))
     sim.located(first.id, notFoundResult())
-    sim.heading = 50
+    sim.heading = 30
     sim.tick(100)
     return sim
   }
 
-  test('staring for a moment after turning takes a fresh look at once, not at the end of the turn', () => {
+  test('staring for a moment after turning takes a fresh look at once, without a gap', () => {
     const sim = turnedAndStill()
     expect(sim.locateEffects(sim.tick(CFG.sweepDwellMs - 200))).toEqual([])
     const effects = sim.tick(400)
-    expect(sim.locateEffects(effects)).toEqual([expect.objectContaining({ type: 'locate', frames: 'current' })])
+    expect(sim.locateEffects(effects)).toEqual([expect.objectContaining({ type: 'locate', paced: false })])
     expect(sim.said(effects)).toEqual([FIND_PHRASES.checking])
     expect(sim.state).toBe('sweeping')
   })
@@ -383,12 +482,12 @@ describe('looking while the user pauses, and the detector during a search', () =
 
   test('turning again and pausing again looks again, but only after a real turn since the last look', () => {
     const sim = turnedAndStill()
-    const [first] = sim.locateEffects(sim.tick(CFG.sweepDwellMs + 100)) // look at 50
+    const [first] = sim.locateEffects(sim.tick(CFG.sweepDwellMs + 100)) // look at 30
     sim.located(first.id, notFoundResult())
-    sim.heading = 60 // moved, but only 10 degrees since the last look
+    sim.heading = 40 // moved, but only 10 degrees since the last look
     sim.tick(100)
     expect(sim.locateEffects(sim.tick(CFG.sweepDwellMs + 100))).toEqual([])
-    sim.heading = 40 + CFG.sweepDwellMinTurnDeg + 10 // 70 degrees from the last look
+    sim.heading = 30 + CFG.sweepDwellMinTurnDeg + 5 // 25 degrees from the last look
     sim.tick(100)
     expect(sim.locateEffects(sim.tick(CFG.sweepDwellMs + 100))).toHaveLength(1)
   })
@@ -400,19 +499,19 @@ describe('looking while the user pauses, and the detector during a search', () =
     expect(sim.locateEffects(sim.tick(CFG.sweepDwellMs + 500))).toEqual([])
   })
 
-  test('waits for the limiter, then looks', () => {
+  test('waits for the caps to allow it, then looks', () => {
     const sim = turnedAndStill()
-    expect(sim.locateEffects(sim.tick(CFG.sweepDwellMs + 100, { canLocate: false }))).toEqual([])
-    expect(sim.locateEffects(sim.tick(100, { canLocate: true }))).toHaveLength(1)
+    expect(sim.locateEffects(sim.tick(CFG.sweepDwellMs + 100, { canLook: false }))).toEqual([])
+    expect(sim.locateEffects(sim.tick(100, { canLook: true }))).toHaveLength(1)
   })
 
   test('a look that finds it ends the sweep and starts guiding', () => {
     const sim = turnedAndStill()
     const [look] = sim.locateEffects(sim.tick(CFG.sweepDwellMs + 100))
-    const effects = sim.located(look.id, foundResult(0, 0.5), [{ heading: 50, pitch: 0 }])
+    const effects = sim.located(look.id, foundResult(0, 0.5), [{ heading: 30, pitch: 0 }])
     expect(sim.state).toBe('guiding')
     expect(sim.said(effects)).toEqual(['Chair found, ahead.'])
-    expect(sim.ctx.memory).toMatchObject({ source: 'gemini', heading: 50 })
+    expect(sim.ctx.memory).toMatchObject({ source: 'gemini', heading: 30 })
   })
 
   test('a look that does not find it, or fails, lets the sweep carry on without an error', () => {
@@ -425,38 +524,30 @@ describe('looking while the user pauses, and the detector during a search', () =
     const [b] = failed.locateEffects(failed.tick(CFG.sweepDwellMs + 100))
     expect(failed.said(failed.failed(b.id, 'network'))).toEqual([])
     expect(failed.state).toBe('sweeping')
-    // and the full turn still goes on to make its single call
-    let sweepCall: Extract<FindEffect, { type: 'locate' }> | undefined
-    for (let heading = 95; heading <= 400; heading += 45) {
-      failed.heading = heading
-      sweepCall ??= failed.locateEffects(failed.tick(300)).find((e) => e.frames === 'sweep')
-    }
-    expect(sweepCall).toBeDefined()
+    // and the sweep still takes its per-frame looks
+    expect(failed.captureEffects(failed.turnTo(120)).length).toBeGreaterThan(0)
   })
 
-  test('the answer to a look is ignored if the sweep has already moved on to its own call', () => {
+  test('if the sweep finishes first, the answer to a pause look still out is ignored', () => {
     const sim = turnedAndStill()
     const [look] = sim.locateEffects(sim.tick(CFG.sweepDwellMs + 100))
-    let sweepCall: Extract<FindEffect, { type: 'locate' }> | undefined
-    for (let heading = 95; heading <= 400; heading += 45) {
-      sim.heading = heading
-      sweepCall ??= sim.locateEffects(sim.tick(300)).find((e) => e.frames === 'sweep')
-    }
-    expect(sweepCall).toBeDefined()
-    sim.located(look.id, foundResult())
-    expect(sim.state).toBe('sweepChecking')
+    const captures = sim.captureEffects(sim.turnTo(360))
+    for (const capture of captures) sim.located(capture.id, notFoundResult(), sim.metaOf(capture.id))
+    expect(sim.state).toBe('notFound')
+    expect(sim.located(look.id, foundResult())).toEqual([])
+    expect(sim.state).toBe('notFound')
   })
 
   test('the detector sees the target during the sweep: guiding at once, no waiting for the turn', () => {
     const sim = turnedAndStill()
     const effects = sim.tick(100, { yolo: { angleDeg: 12, distanceM: 3 } })
     expect(sim.state).toBe('guiding')
-    expect(sim.ctx.memory).toMatchObject({ source: 'yolo', heading: 62 })
+    expect(sim.ctx.memory).toMatchObject({ source: 'yolo', heading: 42 })
     expect(sim.said(effects)).toEqual(['Chair found, ahead.'])
-    expect(effects).toContainEqual({ type: 'discardFrames' })
+    expect(sim.ctx.sweepPending).toEqual([])
   })
 
-  test('also while the first look or the sweep call is still out, whose answers are then ignored', () => {
+  test('also while the first look or the last sweep looks are still out, whose answers are then ignored', () => {
     const first = new Sim()
     const [look] = first.locateEffects(first.request('chair'))
     first.tick(100, { yolo: { angleDeg: 0, distanceM: 2 } })
@@ -464,16 +555,14 @@ describe('looking while the user pauses, and the detector during a search', () =
     first.located(look.id, notFoundResult())
     expect(first.state).toBe('guiding')
 
-    const last = turnedAndStill()
-    let sweepCall: Extract<FindEffect, { type: 'locate' }> | undefined
-    for (let heading = 95; heading <= 400; heading += 45) {
-      last.heading = heading
-      sweepCall ??= last.locateEffects(last.tick(300)).find((e) => e.frames === 'sweep')
-    }
+    const last = new Sim()
+    const [start] = last.locateEffects(last.request('chair'))
+    last.located(start.id, notFoundResult())
+    const captures = last.captureEffects(last.turnTo(360))
     expect(last.state).toBe('sweepChecking')
     last.tick(100, { yolo: { angleDeg: -5, distanceM: 2 } })
     expect(last.state).toBe('guiding')
-    last.located(sweepCall!.id, notFoundResult())
+    last.located(captures[0].id, notFoundResult(), last.metaOf(captures[0].id))
     expect(last.state).toBe('guiding')
   })
 
@@ -486,58 +575,44 @@ describe('looking while the user pauses, and the detector during a search', () =
 })
 
 describe('not found', () => {
-  function sweepToEnd(sim: Sim) {
-    const [first] = sim.locateEffects(sim.request('exit'))
-    sim.located(first.id, notFoundResult('EXIT ->'))
-    let call: Extract<FindEffect, { type: 'locate' }> | undefined
-    for (let heading = 45; heading <= 360; heading += 45) {
-      sim.heading = heading
-      call ??= sim.locateEffects(sim.tick(300))[0]
-    }
-    return call!
+  /** A sweep whose looks all come back without it; the first look (before the sweep) carried this sign. */
+  function sweepAllMiss(sim: Sim, target: string, firstSign: string | null, lastSign: string | null = null) {
+    const [first] = sim.locateEffects(sim.request(target))
+    sim.located(first.id, notFoundResult(firstSign))
+    const captures = sim.captureEffects(sim.turnTo(360))
+    let effects: FindEffect[] = []
+    captures.forEach((capture, index) => {
+      const sign = index === captures.length - 1 ? lastSign : null
+      effects = sim.located(capture.id, notFoundResult(sign), sim.metaOf(capture.id))
+    })
+    return effects
   }
 
   test('says it could not find it, and reads the sign Gemini saw with its direction', () => {
     const sim = new Sim()
-    const call = sweepToEnd(sim)
-    sim.located(call.id, notFoundResult(null), [{ heading: 45, pitch: 0 }])
+    const effects = sweepAllMiss(sim, 'exit', 'EXIT ->')
     expect(sim.state).toBe('notFound')
-    expect(sim.said().at(-1)).toBe(
+    expect(sim.said(effects).at(-1)).toBe(
       "I couldn't find an exit here. Try another spot or ask for something else. A sign says exit, to the right.",
     )
   })
 
-  test('a sign from the final answer is used as well', () => {
+  test('a sign from the final look is used as well', () => {
     const sim = new Sim()
-    const [first] = sim.locateEffects(sim.request('door'))
-    sim.located(first.id, notFoundResult())
-    let call: Extract<FindEffect, { type: 'locate' }> | undefined
-    for (let heading = 45; heading <= 360; heading += 45) {
-      sim.heading = heading
-      call ??= sim.locateEffects(sim.tick(300))[0]
-    }
-    sim.located(call!.id, notFoundResult('<- Restrooms'))
-    expect(sim.said().at(-1)).toContain('A sign says restrooms, to the left.')
+    const effects = sweepAllMiss(sim, 'door', null, '<- Restrooms')
+    expect(sim.said(effects).at(-1)).toContain('A sign says restrooms, to the left.')
   })
 
   test('without a sign it is just the sentence, and it never says the thing is not there', () => {
     const sim = new Sim()
-    const [first] = sim.locateEffects(sim.request('chair'))
-    sim.located(first.id, notFoundResult())
-    let call: Extract<FindEffect, { type: 'locate' }> | undefined
-    for (let heading = 45; heading <= 360; heading += 45) {
-      sim.heading = heading
-      call ??= sim.locateEffects(sim.tick(300))[0]
-    }
-    sim.located(call!.id, notFoundResult())
-    expect(sim.said().at(-1)).toBe("I couldn't find a chair here. Try another spot or ask for something else.")
+    const effects = sweepAllMiss(sim, 'chair', null)
+    expect(sim.said(effects).at(-1)).toBe("I couldn't find a chair here. Try another spot or ask for something else.")
     expect(sim.said().join(' ')).not.toMatch(/not (here|there)/i)
   })
 
   test('goes back to idle after the hold time', () => {
     const sim = new Sim()
-    const call = sweepToEnd(sim)
-    sim.located(call.id, notFoundResult())
+    sweepAllMiss(sim, 'exit', null)
     sim.tick(CFG.resultHoldMs - 100)
     expect(sim.state).toBe('notFound')
     sim.tick(200)
@@ -606,7 +681,8 @@ describe('guiding, re-checks, and lost', () => {
 
     const next = sim.tick(100)
     expect(sim.state).toBe('sweeping')
-    expect(next).toContainEqual({ type: 'discardFrames' })
+    expect(next).toEqual([])
+    expect(sim.ctx.sweepPending).toEqual([])
     sim.heading = CFG.sweepStepDeg
     expect(sim.tick(100).some((e) => e.type === 'capture')).toBe(true)
   })
@@ -698,16 +774,13 @@ describe('errors and silence', () => {
     expect(sim.state).toBe('idle')
   })
 
-  test.each(['quota', 'timeout', 'network'] as const)('%s during the sweep check is the same sentence', (code) => {
+  test.each(['quota', 'timeout', 'network'] as const)('%s on every sweep look is the same sentence', (code) => {
     const sim = new Sim()
     const [first] = sim.locateEffects(sim.request('exit'))
     sim.located(first.id, notFoundResult())
-    let call: Extract<FindEffect, { type: 'locate' }> | undefined
-    for (let heading = 45; heading <= 360; heading += 45) {
-      sim.heading = heading
-      call ??= sim.locateEffects(sim.tick(300))[0]
-    }
-    const effects = sim.failed(call!.id, code)
+    const captures = sim.captureEffects(sim.turnTo(360))
+    let effects: FindEffect[] = []
+    for (const capture of captures) effects = sim.failed(capture.id, code)
     expect(sim.state).toBe('error')
     expect(sim.said(effects)).toEqual([FIND_PHRASES.unavailable])
   })
@@ -746,7 +819,7 @@ describe('errors and silence', () => {
 })
 
 describe('cancel', () => {
-  test('from every state returns to idle, says it stopped, and throws away sweep frames', () => {
+  test('from every state returns to idle, says it stopped, and forgets any looks still out', () => {
     const setups: [string, (sim: Sim) => void][] = [
       ['checking', (sim) => void sim.request('chair')],
       ['guiding', (sim) => sim.guideByGemini()],
@@ -770,7 +843,8 @@ describe('cancel', () => {
       const effects = sim.cancel()
       expect(sim.state, state).toBe('idle')
       expect(sim.said(effects), state).toEqual([FIND_PHRASES.stopped])
-      expect(effects, state).toContainEqual({ type: 'discardFrames' })
+      expect(sim.ctx.sweepPending, state).toEqual([])
+      expect(sim.ctx.pending, state).toBeNull()
     }
   })
 

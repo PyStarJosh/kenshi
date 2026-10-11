@@ -27,6 +27,17 @@ export interface LocatorDeps {
   timeoutMs?: number
   minGapMs?: number
   maxPerMinute?: number
+  /** Looks allowed in flight at once when they are not paced. */
+  maxConcurrent?: number
+}
+
+export interface LocateOptions {
+  /**
+   * Paced calls (the default) wait for the minimum gap since the last call and for any call in flight. Unpaced calls
+   * (a sweep frame, a pause look) skip both, though they still count toward the per-minute cap and the
+   * concurrency cap.
+   */
+  paced?: boolean
 }
 
 /** Size to scale a frame to so it is at most `width` wide; frames already narrower keep their size. */
@@ -88,10 +99,11 @@ export class CallLimiter {
     this.maxPerMinute = maxPerMinute
   }
 
-  check(nowMs: number): LimitCheck {
+  /** paced = false skips the minimum gap (the per-minute cap still applies). */
+  check(nowMs: number, paced = true): LimitCheck {
     this.calls = this.calls.filter((t) => nowMs - t < 60_000)
     const last = this.calls.at(-1)
-    if (last !== undefined && nowMs - last < this.minGapMs) {
+    if (paced && last !== undefined && nowMs - last < this.minGapMs) {
       return { ok: false, error: 'too_soon', retryAfterMs: this.minGapMs - (nowMs - last) }
     }
     if (this.calls.length >= this.maxPerMinute) {
@@ -141,7 +153,8 @@ export class Locator {
   private readonly now: () => number
   private readonly endpoint: string
   private readonly timeoutMs: number
-  private inFlight = false
+  private readonly maxConcurrent: number
+  private inFlight = 0
 
   constructor(deps: LocatorDeps = {}) {
     const find = CONFIG.find
@@ -151,31 +164,39 @@ export class Locator {
     this.now = deps.now ?? (() => performance.now())
     this.endpoint = deps.endpoint ?? '/api/locate'
     this.timeoutMs = deps.timeoutMs ?? find.requestTimeoutMs
+    this.maxConcurrent = deps.maxConcurrent ?? find.maxConcurrentCalls
   }
 
-  /** True when a call would be allowed right now: none running, the gap since the last one passed, under the cap. */
-  canLocate(): boolean {
-    return !this.inFlight && this.limiter.check(this.now()).ok
+  /**
+   * True when a call would be allowed right now. Paced: none running, the gap since the last one passed, under the
+   * per-minute cap. Unpaced: under the per-minute cap and the concurrency cap.
+   */
+  canLocate(paced = true): boolean {
+    const room = paced ? this.inFlight === 0 : this.inFlight < this.maxConcurrent
+    return room && this.limiter.check(this.now(), paced).ok
   }
 
   /** Ask where the target is. Every failure comes back as { ok: false }; nothing is thrown. */
-  async locate(target: string, captures: readonly Capture[]): Promise<LocateOutcome> {
+  async locate(target: string, captures: readonly Capture[], options: LocateOptions = {}): Promise<LocateOutcome> {
+    const paced = options.paced ?? true
     const { maxFrames, maxTargetChars } = CONFIG.find
     const name = target.trim()
     if (name.length === 0 || name.length > maxTargetChars) return failure('bad_request', 'The target name must be 1 to 60 characters.')
     if (captures.length < 1 || captures.length > maxFrames) return failure('bad_request', 'Send one to eight frames.')
 
-    const limit = this.limiter.check(this.now())
+    const limit = this.limiter.check(this.now(), paced)
     if (!limit.ok) return failure(limit.error, 'Too many searches too fast.', limit.retryAfterMs)
-    if (this.inFlight) return failure('too_soon', 'A search is already running.', this.timeoutMs)
-    this.inFlight = true
+    if (paced ? this.inFlight > 0 : this.inFlight >= this.maxConcurrent) {
+      return failure('too_soon', 'A search is already running.', this.timeoutMs)
+    }
+    this.inFlight += 1
     this.limiter.record(this.now())
     try {
       return await this.send({ target: name, frames: await this.encodeAll(captures) })
     } catch {
       return failure('bad_request', 'Could not prepare the pictures.')
     } finally {
-      this.inFlight = false
+      this.inFlight -= 1
     }
   }
 

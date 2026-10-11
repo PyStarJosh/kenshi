@@ -69,10 +69,12 @@ function setup() {
     tracks: [] as Track[],
     canLocate: true,
     outcome: { ok: true, result: foundResult() } as LocateOutcome,
+    /** Answers to give to the next calls, in order, before falling back to `outcome`. */
+    script: [] as LocateOutcome[],
     ticks: 0,
     bitmaps: [] as { close: ReturnType<typeof vi.fn> }[],
   }
-  const calls: { target: string; captures: Capture[] }[] = []
+  const calls: { target: string; captures: Capture[]; paced: boolean }[] = []
   const sample = (): OrientationSample => ({
     pitchDeg: state.pitch,
     rollDeg: 0,
@@ -93,9 +95,10 @@ function setup() {
       return bitmap as unknown as ImageBitmap
     },
     locator: {
-      locate: async (target, captures) => {
-        calls.push({ target, captures: [...captures] })
-        return state.outcome
+      locate: async (target, captures, options) => {
+        calls.push({ target, captures: [...captures], paced: options?.paced ?? true })
+        const scripted = state.script.shift()
+        return scripted ?? state.outcome
       },
       canLocate: () => state.canLocate,
     },
@@ -183,68 +186,94 @@ describe('a search from the quick-pick list or a voice command', () => {
 })
 
 describe('the sweep', () => {
-  async function sweepAround(t: ReturnType<typeof setup>) {
-    t.state.outcome = { ok: true, result: notFoundResult }
+  const miss: LocateOutcome = { ok: true, result: notFoundResult }
+
+  async function startSweep(t: ReturnType<typeof setup>) {
+    t.state.outcome = miss
     t.runner.request('exit')
     await t.flush()
     expect(t.runner.getSnapshot().state).toBe('sweeping')
+  }
+
+  async function turnAround(t: ReturnType<typeof setup>) {
     for (let heading = 45; heading <= 360; heading += 45) {
       t.state.heading = heading
       await t.frame()
     }
   }
 
-  test('captures a frame with a tick for each 45 degrees and sends all 8 in one call', async () => {
+  test('each 45 degrees takes a frame with a tick and sends it at once as its own look', async () => {
     const t = setup()
-    await sweepAround(t)
+    await startSweep(t)
+    await turnAround(t)
     expect(t.state.ticks).toBe(8)
-    expect(t.calls).toHaveLength(2) // the first look, then the sweep
-    expect(t.calls[1].captures).toHaveLength(8)
-    expect(t.calls[1].captures.map((c) => c.heading)).toEqual([45, 90, 135, 180, 225, 270, 315, 360])
+    expect(t.calls).toHaveLength(9) // the first look, then one look per frame
+    for (const call of t.calls.slice(1)) {
+      expect(call.captures).toHaveLength(1)
+      expect(call.paced).toBe(false) // sweep looks skip the gap between calls
+    }
+    expect(t.calls[0].paced).toBe(true)
+    expect(t.calls.slice(1).map((c) => c.captures[0].heading)).toEqual([45, 90, 135, 180, 225, 270, 315, 360])
     expect(t.runner.getSnapshot().state).toBe('notFound')
   })
 
-  test('every bitmap is closed after the sweep call', async () => {
+  test('every bitmap is closed once its look is done', async () => {
     const t = setup()
-    await sweepAround(t)
-    expect(t.state.bitmaps).toHaveLength(9) // one for the look, eight for the sweep
+    await startSweep(t)
+    await turnAround(t)
+    expect(t.state.bitmaps).toHaveLength(9)
     for (const bitmap of t.state.bitmaps) expect(bitmap.close).toHaveBeenCalledTimes(1)
   })
 
-  test('the last frame is in the call even though capturing is asynchronous', async () => {
+  test('the first look that finds it ends the search: no more frames are sent', async () => {
     const t = setup()
-    t.state.outcome = { ok: true, result: notFoundResult }
+    t.state.script = [miss, miss, { ok: true, result: foundResult(0, 0.5) }]
     t.runner.request('exit')
     await t.flush()
-    for (let heading = 45; heading <= 360; heading += 45) {
+    for (const heading of [45, 90]) {
       t.state.heading = heading
-      t.state.nowMs += 300
-      t.bus.publish('tracks', []) // no await between frames
+      await t.frame()
     }
-    await t.flush()
-    expect(t.calls.at(-1)?.captures).toHaveLength(8)
+    expect(t.runner.getSnapshot().state).toBe('guiding')
+    expect(t.alerts.at(-1)?.phrase).toBe('Exit found, ahead.')
+    const sent = t.calls.length
+    t.state.heading = 135
+    await t.frame()
+    expect(t.calls).toHaveLength(sent) // nothing more goes to Gemini
   })
 
-  test('staring after a turn takes one fresh look with a single frame', async () => {
+  test('a frame is not sent if the search was cancelled while it was being grabbed', async () => {
     const t = setup()
-    t.state.outcome = { ok: true, result: notFoundResult }
+    await startSweep(t)
+    t.state.heading = 50
+    t.state.nowMs += 300
+    t.bus.publish('tracks', []) // the capture starts...
+    t.runner.cancel() // ...and the user cancels before it finishes
+    await t.flush()
+    expect(t.calls).toHaveLength(1) // only the first look
+    for (const bitmap of t.state.bitmaps) expect(bitmap.close).toHaveBeenCalled()
+  })
+
+  test('staring after a turn takes one fresh look, also without waiting for the gap', async () => {
+    const t = setup()
+    t.state.outcome = miss
     t.runner.request('exit')
     await t.flush()
     expect(t.calls).toHaveLength(1)
-    t.state.heading = 60
-    await t.frame(100) // one sweep frame is taken
+    t.state.heading = 30 // less than a sweep step: no frame yet
+    await t.frame(100)
+    expect(t.calls).toHaveLength(1)
     await t.frame(CONFIG.find.sweepDwellMs + 200)
     expect(t.calls).toHaveLength(2)
     expect(t.calls[1].captures).toHaveLength(1)
-    expect(t.calls[1].captures[0].heading).toBe(60)
+    expect(t.calls[1].captures[0].heading).toBe(30)
+    expect(t.calls[1].paced).toBe(false)
     expect(t.runner.getSnapshot().state).toBe('sweeping')
   })
 
-  test('cancelling mid-sweep closes the held frames and says Find stopped', async () => {
+  test('cancelling mid-sweep leaves nothing open and says Find stopped', async () => {
     const t = setup()
-    t.state.outcome = { ok: true, result: notFoundResult }
-    t.runner.request('exit')
-    await t.flush()
+    await startSweep(t)
     t.state.heading = 50
     await t.frame()
     t.state.heading = 100
@@ -253,8 +282,7 @@ describe('the sweep', () => {
     await t.flush()
     expect(t.runner.getSnapshot().state).toBe('idle')
     expect(t.alerts.at(-1)?.phrase).toBe(FIND_PHRASES.stopped)
-    // The look's bitmap and the two sweep bitmaps: all closed.
-    expect(t.state.bitmaps).toHaveLength(3)
+    expect(t.state.bitmaps).toHaveLength(3) // the first look and two sweep frames
     for (const bitmap of t.state.bitmaps) expect(bitmap.close).toHaveBeenCalled()
   })
 })

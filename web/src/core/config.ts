@@ -263,8 +263,12 @@ export const CONFIG = {
     memoryMaxAgeMs: 60_000,
     // The free tier is small: at least this long between two requests, and at most this many in any 60 seconds.
     // Owner defaults; to be measured against the real limits. FR-22
+    // The gap applies to the first check and the guiding re-checks; the sweep's per-frame looks and the pause look
+    // skip it (they are the point of a sweep) but still count toward the per-minute cap and the concurrency cap.
     minGapMs: 6_000,
-    maxPerMinute: 8,
+    maxPerMinute: 12,
+    // Looks allowed in flight at once (a sweep frame every ~1.5 s with answers taking 2 to 4 s).
+    maxConcurrentCalls: 4,
 
     // ---- Find controller (R4). Every value below is a starting value; to be measured on the phone. FR-23, FR-25 ----
     // The sweep takes a frame each time the heading has turned this far, up to maxFrames frames or this much turn.
