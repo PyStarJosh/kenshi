@@ -1,7 +1,9 @@
 // Unlock: iOS plays Web Audio and speech only if they begin inside a user gesture, so this runs
 // synchronously in the Start tap, before anything is awaited.
 
-export const GREETING = 'Navigator on. It does not replace your cane. Hold the phone at eye level.'
+// Spoken only. The name is spelled Ken-shee so speech says KEN-shee (like the Mortal Kombat character); the written
+// name everywhere else stays Kenshi.
+export const GREETING = 'Ken-shee. Hold the phone at eye level.'
 
 type AudioContextConstructor = typeof AudioContext
 
