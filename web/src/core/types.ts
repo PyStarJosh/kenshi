@@ -119,6 +119,12 @@ export interface OrientationSample {
   pitchDeg: number
   /** Rotation about the camera axis. */
   rollDeg: number
+  /**
+   * Where the rear camera points on the ground, in degrees clockwise like a compass, unwrapped (turning right
+   * through north keeps counting up) and lightly smoothed. Its zero is arbitrary on iOS, so only differences
+   * mean anything. Absent when the device sends no alpha or the camera looks straight up or down.
+   */
+  headingDeg?: number
   timeMs: number
 }
 

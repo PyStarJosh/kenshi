@@ -33,14 +33,14 @@ web/                        Vite + React + TypeScript app
   src/core/                 types.ts (shared contracts), config.ts (every tunable number)
   src/camera/               camera stream, frame scheduler, wake lock
   src/detection/            worker, engine, protocol, preprocess, postprocess, classes.ts (generated)
-  src/sensors/              device orientation (adapter), attitude math; heading (R3)
+  src/sensors/              device orientation (adapter), attitude math, heading math (R3)
   src/geometry/             geometry.ts (clock, distance, elevation, path); freeSpacePath.ts (R7)
   src/tracking/             tracker, smoothing, time-to-contact
   src/alerts/               event bus, SR-2 wording test
   src/audio/                unlock, tones, speech, heartbeat, engine; beacon (R5)
   src/health/               health monitor
   src/voice/                recognizer, commands, control, gesture
-  src/find/                 locate client and messages (R2; the Locate types are in core/types.ts); scan sweep, target memory, controller, guidance (R3-R5)
+  src/find/                 locate client and messages (R2; the Locate types are in core/types.ts), target memory (R3); scan sweep, controller, guidance (R4-R5)
   src/app/                  session, audio link, pipeline, settings, calibration, screens (Find screen R6)
   scripts/copy-ort.mjs      copies onnxruntime-web WebAssembly files into public/ort (runs before dev and build)
   vercel.json               cross-origin isolation headers

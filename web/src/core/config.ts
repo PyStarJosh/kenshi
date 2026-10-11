@@ -126,6 +126,12 @@ export const CONFIG = {
   orientation: {
     // Smoothing factor for pitch and roll, 0..1 (higher follows the sensor faster). FR-3
     smoothing: 0.25,
+    // Smoothing factor for the camera heading, 0..1. Lighter than pitch so a quick turn is not lagged. Starting
+    // value; to be measured on the phone. FR-24
+    headingSmoothing: 0.4,
+    // Past this pitch up or down the camera's direction on the ground is too uncertain, and the last heading is
+    // held. FR-24
+    headingMaxPitchDeg: 75,
     // How long past readings are kept, so a frame can be paired with the tilt at its capture time. FR-3
     historyMs: 1000,
     // A reading that arrives after the requested time is used only if within this gap. FR-3
@@ -252,6 +258,9 @@ export const CONFIG = {
     requestTimeoutMs: 12_000,
     // An answer below this confidence counts as not found. Starting value; to be measured. SR-11
     minConfidence: 0.5,
+    // A remembered target direction is dropped after this long: a gyroscope heading drifts and has no north
+    // reference. Starting value; how fast it drifts is to be measured on the phone. FR-24
+    memoryMaxAgeMs: 60_000,
     // The free tier is small: at least this long between two requests, and at most this many in any 60 seconds.
     // Owner defaults; to be measured against the real limits. FR-22
     minGapMs: 6_000,
