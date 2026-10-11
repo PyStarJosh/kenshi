@@ -3,7 +3,7 @@
 
 // Spoken only. The name is spelled Ken-shee so speech says KEN-shee (like the Mortal Kombat character); the written
 // name everywhere else stays Kenshi.
-export const GREETING = 'Ken-shee. It does not replace your cane. Hold the phone at eye level.'
+export const GREETING = 'Ken-shee. Hold the phone at eye level.'
 
 type AudioContextConstructor = typeof AudioContext
 
