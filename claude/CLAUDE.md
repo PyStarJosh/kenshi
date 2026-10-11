@@ -104,7 +104,7 @@ Keep this section current when the structure changes.
 
 ## Security and privacy
 - Detection: frames never leave the phone.
-- Find: frames go to Google Gemini. On the free tier Google may use them to improve its products and human reviewers may read them. The app says so, and the user accepts, before the first Find. Send frames only on a Find request, never continuously.
+- Find: frames go to Google Gemini. On the free tier Google may use them to improve its products and human reviewers may read them. Owner decision (2026-10-11): the app has no in-app notice about this (FR-30 removed). Send frames only on a Find request, never continuously.
 - The Gemini key lives only in the Vercel environment variable GEMINI_API_KEY. The function validates its input, stores nothing, and logs no images or targets.
 - No secrets in the repo. Never open or print .env files.
 
