@@ -277,6 +277,22 @@ describe('Locator', () => {
     }
   })
 
+  test("the platform's own errors, which are not our JSON, are told by their status (not all 'no internet')", async () => {
+    const cases: [Response, LocateClientErrorCode][] = [
+      [new Response('FUNCTION_INVOCATION_TIMEOUT', { status: 504 }), 'timeout'],
+      [new Response('<html>Gateway Timeout</html>', { status: 504, headers: { 'content-type': 'text/html' } }), 'timeout'],
+      [new Response('Too Many Requests', { status: 429 }), 'quota'],
+      [new Response('FUNCTION_INVOCATION_FAILED', { status: 500 }), 'network'],
+      [new Response('<html>Server Error</html>', { status: 500, headers: { 'content-type': 'text/html' } }), 'network'],
+      [new Response(null, { status: 304 }), 'network'],
+      [json({ error: { code: 'x' } }, 504), 'timeout'],
+    ]
+    for (const [reply, code] of cases) {
+      const { locator } = setup({ reply: () => Promise.resolve(reply) })
+      expect(await locator.locate('chair', [capture()]), String(reply.status)).toMatchObject({ ok: false, error: code })
+    }
+  })
+
   test('a 200 that is not JSON or has the wrong shape is bad_response', async () => {
     const html = setup({ reply: () => Promise.resolve(new Response('not json', { status: 200 })) })
     expect(await html.locator.locate('chair', [capture()])).toMatchObject({ error: 'bad_response' })

@@ -119,6 +119,18 @@ export class CallLimiter {
 
 const CODES: readonly LocateErrorCode[] = ['bad_request', 'timeout', 'quota', 'auth', 'bad_response', 'network']
 
+/**
+ * The error for an HTTP status whose body is not our JSON: the platform's own errors (a function that ran out of time, a
+ * crash, a gateway error) come back as text or a page. 304 and other non-errors never reach here for a POST.
+ */
+export function codeForStatus(status: number): LocateErrorCode {
+  if (status === 408 || status === 504) return 'timeout'
+  if (status === 429) return 'quota'
+  if (status === 401 || status === 403) return 'auth'
+  if (status >= 200 && status < 300) return 'bad_response'
+  return 'network'
+}
+
 const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 
 /** True when the value has the shape of a LocateResult (a found result must carry a frame index and a box). */
@@ -229,16 +241,17 @@ export class Locator {
       body = await response.json()
     } catch {
       // A server with no functions (the static preview behind ngrok, or any plain file server) answers 404, 405, or
-      // the app's own HTML page. Say so plainly: it is a setup problem, not a network problem.
+      // the app's own HTML page with a 200. Say so plainly: it is a setup problem, not a network problem. Any other reply
+      // that is not JSON (a 500 or 504 page from the platform) is told by its status.
       const isPage = (response.headers.get('content-type') ?? '').includes('text/html')
-      if (response.status === 404 || response.status === 405 || isPage) {
+      if (response.status === 404 || response.status === 405 || (response.ok && isPage)) {
         return failure('auth', `No locate function at ${this.endpoint} on this server (HTTP ${response.status}). Use the deployed URL, or run npm run dev:api.`)
       }
-      return failure(response.ok ? 'bad_response' : 'network', 'The reply was not JSON.')
+      return failure(codeForStatus(response.status), `The server answered ${response.status} without JSON.`)
     }
     if (!response.ok) {
       const code = (body as { error?: unknown } | null)?.error
-      return failure(CODES.find((c) => c === code) ?? 'network', `The server answered ${response.status}.`)
+      return failure(CODES.find((c) => c === code) ?? codeForStatus(response.status), `The server answered ${response.status}.`)
     }
     if (!isLocateResult(body)) return failure('bad_response', 'The reply had the wrong shape.')
     return { ok: true, result: body }
