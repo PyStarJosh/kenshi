@@ -58,7 +58,13 @@ class Sim {
 
   tick(
     advanceMs = 0,
-    patch: { yolo?: YoloSighting | null; canLocate?: boolean; canLook?: boolean; pitch?: number | null } = {},
+    patch: {
+      yolo?: YoloSighting | null
+      canLocate?: boolean
+      canLook?: boolean
+      pitch?: number | null
+      pathDecision?: 'left' | 'right' | 'straight' | null
+    } = {},
   ): FindEffect[] {
     this.nowMs += advanceMs
     const effects = this.send({
@@ -245,7 +251,7 @@ describe('the YOLO shortcut', () => {
     const early = sim.tick(100, { yolo: { angleDeg: 60, distanceM: 4 } })
     expect(sim.said(early)).toEqual([]) // changed, but too soon after the last phrase
     const later = sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 60, distanceM: 4 } })
-    expect(sim.said(later)).toEqual(['To your right.'])
+    expect(sim.said(later)).toEqual(['Turn right.'])
     const same = sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 60, distanceM: 4 } })
     expect(sim.said(same)).toEqual([]) // unchanged: no repeat
   })
@@ -397,11 +403,11 @@ describe('the sweep', () => {
     const captures = sim.captureEffects(sim.turnTo(360))
     sim.located(captures[3].id, foundResult(0, 0.5), sim.metaOf(captures[3].id))
     sim.heading = 250 // turning toward 180
-    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs))).toEqual(['To your left.'])
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs))).toEqual(['Turn left.'])
     sim.heading = 205
-    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs))).toEqual(['Slightly left.'])
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs))).toEqual(['Bear left.'])
     sim.heading = 181
-    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs))).toEqual(['Ahead.'])
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs))).toEqual(['Straight ahead.'])
   })
 
   test('after the full turn it waits for the looks still out, and finishes when the last one is back', () => {
@@ -710,8 +716,70 @@ describe('guiding, re-checks, and lost', () => {
     const sim = new Sim()
     sim.guideByGemini()
     sim.heading = -100 // the target is now 100 degrees to the right
-    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs))).toEqual(['To your right.'])
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs))).toEqual(['Turn right.'])
     expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs))).toEqual([])
+  })
+})
+
+describe('guidance through the controller', () => {
+  test('the distance counts down as the target is crossed at 10, 5, 3 and 2 meters while facing it', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 12, trackId: 3 })
+    const said: string[] = []
+    for (const distanceM of [11, 9.5, 8, 4.5, 2.5, 1.5]) {
+      said.push(...sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 0, distanceM, trackId: 3 } })))
+    }
+    expect(said).toEqual(['chair, about 10 meters.', 'chair, about 5 meters.', 'chair, about 3 meters.', 'chair, about 2 meters.'])
+  })
+
+  test('a distance that is only an upper bound (the base is out of the frame) is never counted down', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 12, trackId: 3 })
+    const said: string[] = []
+    for (const distanceM of [9.5, 4.5, 2.5]) {
+      said.push(...sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 0, distanceM, trackId: 3, clipped: true } })))
+    }
+    expect(said.filter((s) => s.includes('meters'))).toEqual([])
+  })
+
+  test('with the path line saying go around, it says which way, and still only when it changes or is due again', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 12, trackId: 3 })
+    const yolo = { angleDeg: 0, distanceM: 12, trackId: 3 }
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo, pathDecision: 'left' }))).toEqual(['Bear left around the obstacle.'])
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo, pathDecision: 'left' }))).toEqual([])
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo, pathDecision: 'left' }))).toEqual(['Bear left around the obstacle.']) // 5 s on
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo, pathDecision: null }))).toEqual(['Straight ahead.'])
+  })
+
+  test('an instruction that asks the user to turn is repeated every 5 seconds until they do', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 12, trackId: 3 })
+    const yolo = { angleDeg: 100, distanceM: 12, trackId: 3 }
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo }))).toEqual(['Turn right.'])
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo }))).toEqual([])
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo }))).toEqual(['Turn right.'])
+  })
+
+  test('behind it says to turn around', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 0, distanceM: 12, trackId: 3 })
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 170, distanceM: 12, trackId: 3 } }))).toEqual(['Turn around.'])
+  })
+
+  test('arrival is said instead of whatever instruction is also due', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 25, distanceM: 4, trackId: 3 }) // "found, slightly right": bear right is the current instruction
+    sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 4, distanceM: 0.5, trackId: 3 } }) // now straight ahead and close
+    const arrival = sim.tick(CFG.arrivalHoldMs, { yolo: { angleDeg: 4, distanceM: 0.5, trackId: 3 } })
+    expect(sim.state).toBe('arrived')
+    expect(sim.said(arrival)).toEqual(['Chair ahead, within reach.'])
+  })
+
+  test('the first words after "found" are not a repeat of what was just said', () => {
+    const sim = new Sim()
+    sim.request('chair', { angleDeg: 25, distanceM: 12, trackId: 3 })
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 25, distanceM: 12, trackId: 3 } }))).toEqual([])
   })
 })
 
@@ -826,15 +894,15 @@ describe('keeping hold of a target (reliability)', () => {
 
   test('a direction word does not flap while the bearing wobbles around its boundary', () => {
     const sim = new Sim()
-    sim.request('chair', { angleDeg: 0, distanceM: 4 })
+    sim.request('chair', { angleDeg: 0, distanceM: 12 })
     const said: string[][] = []
     for (const angle of [14, 17, 13, 18, 12, 19, 14, 16]) {
-      said.push(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: angle, distanceM: 4 } })))
+      said.push(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: angle, distanceM: 12 } })))
     }
     expect(said.flat()).toEqual([]) // never leaves "ahead" until it is clearly past the boundary
-    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 22, distanceM: 4 } }))).toEqual(['Slightly right.'])
-    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 13, distanceM: 4 } }))).toEqual([]) // not back yet
-    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 9, distanceM: 4 } }))).toEqual(['Ahead.'])
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 22, distanceM: 12 } }))).toEqual(['Bear right.'])
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 13, distanceM: 12 } }))).toEqual([]) // not back yet
+    expect(sim.said(sim.tick(CFG.guideSpeechCooldownMs, { yolo: { angleDeg: 9, distanceM: 12 } }))).toEqual(['Straight ahead.'])
   })
 
   test('a target that slides out of the bottom of the frame as you walk up is not lost: you are asked to tilt down', () => {

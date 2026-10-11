@@ -3,6 +3,7 @@
 // same check timer. Audio settings come from the settings store.
 // AlertEvents arrive through handleAlert (the pipeline delivers them from the event bus); the pipeline also
 // supplies the live track lookup and listens for alert outcomes.
+import { Beacon } from '../audio/beacon'
 import { AudioEngine } from '../audio/engine'
 import type { AlertTiming, TrackLookup } from '../audio/engine'
 import { createBrowserSpeaker } from '../audio/speech'
@@ -51,6 +52,7 @@ export class AudioLink {
   private ctx: AudioContext | null = null
   private tones: TonePlayer | null = null
   private engine: AudioEngine | null = null
+  private beacon: Beacon | null = null
   private voice = new VoiceControl({
     recognizer: createBrowserRecognizer(),
     say: (text) => this.say(text),
@@ -135,6 +137,12 @@ export class AudioLink {
         onLatency: (alert, stage, ms) => this.recordLatency(alert, stage, ms),
       })
       this.engine.applySettings(settingsStore.getSnapshot())
+      // The beacon shares this one AudioContext and the speaker, so it can duck under speech and pause for a warning.
+      this.beacon = new Beacon({
+        ctx,
+        speaker: this.speech.speaker,
+        volume: () => settingsStore.getSnapshot().toneVolume,
+      })
     }
     if (greet) this.speech.speaker.speak({ text: GREETING, urgent: false })
     this.syncContextState()
@@ -187,6 +195,11 @@ export class AudioLink {
   /** Tell the link whether a Find is running, so a long press cancels it instead of pausing. */
   setFindActive(isActive: () => boolean): void {
     this.findActive = isActive
+  }
+
+  /** The Find beacon, or null until the audio has been unlocked (the Start tap). */
+  getBeacon(): Beacon | null {
+    return this.beacon
   }
 
   /** A soft tick, for example when the Find sweep captures a frame. */

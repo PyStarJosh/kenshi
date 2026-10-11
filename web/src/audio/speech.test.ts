@@ -55,6 +55,26 @@ function setup() {
 }
 
 describe('Speaker', () => {
+  test('isUrgent is true only while an urgent phrase is waiting or playing', () => {
+    const s = setup()
+    expect(s.speaker.isUrgent()).toBe(false)
+    s.speaker.speak(s.request('Detection stalled.', true))
+    expect(s.speaker.isBusy()).toBe(true)
+    expect(s.speaker.isUrgent()).toBe(true)
+    s.last().onend?.()
+    expect(s.speaker.isUrgent()).toBe(false)
+    s.speaker.speak(s.request('Chair found, ahead.', false))
+    expect(s.speaker.isBusy()).toBe(true)
+    expect(s.speaker.isUrgent()).toBe(false)
+  })
+
+  test('a normal phrase that is cut off by an urgent one hands over: urgent while the warning plays', () => {
+    const s = setup()
+    s.speaker.speak(s.request('Bear right.', false))
+    s.speaker.speak(s.request('Low light.', true))
+    expect(s.speaker.isUrgent()).toBe(true)
+  })
+
   test('speaks at once when idle, at the set rate and voice, and timestamps the start', () => {
     const s = setup()
     const voice = { name: 'Ava', lang: 'en-US', localService: true }

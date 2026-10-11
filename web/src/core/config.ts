@@ -322,9 +322,47 @@ export const CONFIG = {
     // The detector must lose a followed target for this long before it counts as lost or another object is followed.
     yoloLostMs: 1_000,
     // A direction word changes only when the bearing is this far past its boundary, so it does not flap.
-    directionHysteresisDeg: 4,
+    directionHysteresisDeg: 5,
     // Automatic retries of the first check after a transient failure (network, timeout, unusable reply).
     checkRetryMax: 1,
+
+    // ---- Guidance (R5). Starting values; to be measured on the phone. FR-25 ----
+    // An instruction that asks the user to do something (turn, bear, go around) is said again this often until they do.
+    guidanceRepeatMs: 5_000,
+    // The distance is counted down as the target is crossed at these distances (meters), while roughly facing it. A
+    // level is announced again only if the user has moved back out beyond it by countdownResetM.
+    countdownM: [10, 5, 3, 2] as readonly number[],
+    countdownResetM: 0.5,
+  },
+
+  // The beacon (R5, FR-26): short pulses while guiding. All starting values; to be measured on the phone with AirPods.
+  beacon: {
+    // Time between pulses: slowest at beaconFarM or farther (or an unknown distance), fastest at beaconNearM or nearer;
+    // between them it follows a curve: t = (distance - near) / (far - near) raised to beaconCurve (1 is a straight
+    // line, above 1 speeds up more late). FR-26
+    farM: 10,
+    nearM: 1,
+    maxIntervalMs: 1000,
+    minIntervalMs: 150,
+    curve: 1,
+    // Pitch: higher when facing the target (within alignedDeg), a plain one off to the side, and a low double pulse when
+    // it is behind (more than behindDeg off), because stereo alone cannot tell front from back.
+    alignedHz: 880,
+    frontHz: 660,
+    behindHz: 330,
+    alignedDeg: 15,
+    behindDeg: 90,
+    pulseMs: 60,
+    behindGapMs: 110,
+    // Loudness as a share of the tone volume setting, and how much of it is left while speech is playing.
+    gain: 0.5,
+    duckGain: 0.2,
+    // The scheduler wakes this often and schedules pulses up to lookaheadMs ahead on the audio clock.
+    tickMs: 25,
+    lookaheadMs: 120,
+    // Arrival chime: a short rising three-note phrase.
+    chimeHz: [523.25, 659.25, 783.99] as readonly number[],
+    chimeNoteMs: 110,
   },
 }
 
