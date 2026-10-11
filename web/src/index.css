@@ -163,3 +163,45 @@ body {
   outline: 0.25rem solid #4da3ff;
   outline-offset: 0.25rem;
 }
+
+/* Test mode: Save test log sits above the Talk button while detection is paused or stopped. */
+.save-log {
+  position: absolute;
+  z-index: 5;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: center;
+}
+
+.save-log button {
+  min-height: 4rem;
+  padding: 0 2rem;
+  border: 0.25rem solid #fff;
+  border-radius: 1rem;
+  background: #000c;
+  color: #fff;
+  font: inherit;
+  font-size: 1.5rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.save-log button:disabled {
+  opacity: 0.5;
+}
+
+.save-log button:focus-visible {
+  outline: 0.25rem solid #4da3ff;
+  outline-offset: 0.25rem;
+}
+
+.save-log p {
+  margin: 0;
+  padding: 0 0.5rem;
+  background: #000c;
+}

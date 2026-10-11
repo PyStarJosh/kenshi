@@ -24,12 +24,18 @@ export interface AlertTiming {
   frameToSpeechMs: number | null
 }
 
+/** Absolute times (performance.now clock) at which an alert's tone and speech began; null if they did not. */
+export interface AlertTimes {
+  toneStartMs: number | null
+  speechStartMs: number | null
+}
+
 export interface AudioEngineDeps {
   tones: TonePlayerLike
   speaker: Pick<Speaker, 'speak' | 'isBusy' | 'setRate' | 'setEnabled'>
   getTrack: TrackLookup
   now: () => number
-  onOutcome: (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null) => void
+  onOutcome: (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null, times: AlertTimes) => void
   onError: (message: string) => void
 }
 
@@ -77,6 +83,7 @@ export class AudioEngine {
     const { deps } = this
     const urgent = alert.priority === 'urgent'
     let toneStarted = false
+    const times: AlertTimes = { toneStartMs: null, speechStartMs: null }
     deps.speaker.speak({
       text: alert.phrase,
       urgent,
@@ -84,7 +91,7 @@ export class AudioEngine {
         const nowMs = deps.now()
         const verdict = screenAlert(alert, nowMs, deps.getTrack)
         if (verdict !== 'ok') {
-          deps.onOutcome(alert, verdict, null)
+          deps.onOutcome(alert, verdict, null, times)
           return null
         }
         this.timing = { alertId: alert.id, alertToToneMs: null, frameToToneMs: null, frameToSpeechMs: null }
@@ -93,16 +100,18 @@ export class AudioEngine {
         const distanceM = alert.trackId === null ? null : (deps.getTrack(alert.trackId)?.distanceM ?? null)
         const tone = deps.tones.play(alertTone(alert.priority, alert.pan, distanceM), this.settings.toneVolume)
         toneStarted = true
+        times.toneStartMs = tone.startMs
         this.timing.alertToToneMs = tone.startMs - alert.createdTimeMs
         this.timing.frameToToneMs = tone.startMs - alert.frameTimeMs
-        deps.onOutcome(alert, 'started', this.timing.frameToToneMs)
+        deps.onOutcome(alert, 'started', this.timing.frameToToneMs, times)
         return Math.max(0, tone.endMs - nowMs) + CONFIG.audio.toneToSpeechGapMs
       },
       onStart: (timeMs) => {
+        times.speechStartMs = timeMs
         if (this.timing?.alertId === alert.id) this.timing.frameToSpeechMs = timeMs - alert.frameTimeMs
-        if (!toneStarted) deps.onOutcome(alert, 'started', timeMs - alert.frameTimeMs)
+        if (!toneStarted) deps.onOutcome(alert, 'started', timeMs - alert.frameTimeMs, times)
       },
-      onDone: (outcome, detail) => this.reportDone(alert, outcome, detail),
+      onDone: (outcome, detail) => this.reportDone(alert, outcome, times, detail),
     })
   }
 
@@ -144,13 +153,13 @@ export class AudioEngine {
     this.deps.tones.play(heartbeatTone(), this.settings.heartbeatVolume)
   }
 
-  private reportDone(alert: AlertEvent, outcome: SpeechOutcome, detail?: string): void {
+  private reportDone(alert: AlertEvent, outcome: SpeechOutcome, times: AlertTimes, detail?: string): void {
     // "dropped" was already reported with its reason by prepare().
     if (outcome === 'dropped') return
     if (outcome === 'failed') {
       this.deps.onError(`Speech failed: ${detail ?? 'unknown error'}`)
       return
     }
-    this.deps.onOutcome(alert, SPEECH_TO_ALERT_OUTCOME[outcome], null)
+    this.deps.onOutcome(alert, SPEECH_TO_ALERT_OUTCOME[outcome], null, times)
   }
 }

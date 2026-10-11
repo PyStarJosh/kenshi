@@ -252,10 +252,16 @@ export const CONFIG = {
   },
 
   telemetry: {
-    // Log one frame entry out of this many; 1 logs every frame. FR-19
+    // Log one frame entry out of this many; 1 logs every frame (a replay needs every frame). FR-19
     frameLogEvery: 1,
-    // Cap on buffered entries before the oldest are dropped. FR-19, NFR-10
-    maxBufferedEntries: 50000,
+    // Tilt samples are logged this often. FR-19
+    orientationSampleMs: 100,
+    // Track snapshots are logged at most this often (they are for reading, not for replay). FR-19
+    trackSnapshotMs: 500,
+    // Cap on the log held in memory, in bytes of JSON text. Recording stops when it is reached. FR-19, NFR-10
+    maxBytes: 20_000_000,
+    // The spotter is warned when the log reaches this fraction of the cap. FR-19
+    warnAtFraction: 0.8,
   },
 
   describe: {

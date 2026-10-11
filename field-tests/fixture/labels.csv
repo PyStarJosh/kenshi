@@ -1,0 +1,4 @@
+walk_id,obstacle_id,spoken_name,t_visible_s,t_reached_s,in_path,notes
+walk-fixture,backpack-1,backpack,0.5,4.2,yes,synthetic
+walk-fixture,chair-1,chair,5.1,9,no,synthetic
+walk-fixture,person-1,person,9.1,13.3,yes,synthetic

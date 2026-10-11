@@ -7,8 +7,20 @@
 //                                            +---- bus "alertOutcome" <-+
 import { EventBus } from '../alerts/bus'
 import type { AlertReason, DropRecord, PolicyResult } from '../alerts/policy'
-import type { TrackLookup } from '../audio/engine'
-import type { AlertEvent, AlertOutcome, EventMap, FrameResult, OrientationSample, Settings, Track } from '../core/types'
+import type { AlertTimes, TrackLookup } from '../audio/engine'
+import type {
+  AlertEvent,
+  AlertOutcome,
+  EventMap,
+  FrameResult,
+  HealthState,
+  OrientationSample,
+  Settings,
+  TelemetryEvent,
+  Track,
+  VoiceIntent,
+} from '../core/types'
+import type { VoiceSource } from '../voice/control'
 import type { SessionState } from './session'
 
 export interface PipelineSession {
@@ -23,7 +35,12 @@ export interface PipelineLink {
   handleAlert(alert: AlertEvent): void
   setSummarizer(summarizer: (() => string) | null): void
   setTrackLookup(lookup: TrackLookup | null): void
-  onAlertOutcome(listener: (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null) => void): () => void
+  onAlertOutcome(
+    listener: (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null, times?: AlertTimes) => void,
+  ): () => void
+  /** Health state after every check, and voice commands; both are only logged, so a link may leave them out. */
+  onHealth?(listener: (health: HealthState) => void): () => void
+  onVoice?(listener: (intent: VoiceIntent, source: VoiceSource) => void): () => void
 }
 
 export interface PipelineTracker {
@@ -56,6 +73,8 @@ export interface PipelineDeps {
 }
 
 const CAPTION_LIMIT = 6
+// Frames from the last second give the frame rate that goes in the log.
+const FPS_WINDOW_MS = 1000
 
 // Drops that the shared AlertOutcome type can express are also announced on the bus.
 const DROP_OUTCOME: Partial<Record<DropRecord['reason'], AlertOutcome>> = {
@@ -70,6 +89,7 @@ export class Pipeline {
   private byId = new Map<number, Track>()
   private captions: Caption[] = []
   private lastState: SessionState | null = null
+  private recentCaptures: number[] = []
 
   constructor(deps: PipelineDeps) {
     this.deps = deps
@@ -93,20 +113,35 @@ export class Pipeline {
       const state = session.getSnapshot().state
       if (state === this.lastState) return
       this.lastState = state
+      this.telemetry({ kind: 'run-state', timeMs: this.deps.now(), state })
       if (state !== 'running') this.reset() // after a pause or a stop the old tracks no longer exist
     }
     syncState()
     link.setTrackLookup((id) => this.byId.get(id) ?? null)
     link.setSummarizer(() => policy.summarize(this.tracks))
-    const stops = [
+    const stops: ((() => void) | undefined)[] = [
       session.onResult((result) => this.process(result)),
       session.subscribe(syncState),
-      link.onAlertOutcome((alert, outcome) => this.bus.publish('alertOutcome', { alert, outcome, timeMs: this.deps.now() })),
+      link.onAlertOutcome((alert, outcome, latencyMs, times) => {
+        const timeMs = this.deps.now()
+        this.bus.publish('alertOutcome', { alert, outcome, timeMs })
+        this.telemetry({
+          kind: 'alert',
+          timeMs,
+          alert,
+          outcome,
+          latencyMs,
+          toneStartMs: times?.toneStartMs ?? null,
+          speechStartMs: times?.speechStartMs ?? null,
+        })
+      }),
+      link.onHealth?.((health) => this.telemetry({ kind: 'health', timeMs: this.deps.now(), health })),
+      link.onVoice?.((intent, source) => this.telemetry({ kind: 'voice', timeMs: this.deps.now(), intent, source })),
       this.bus.subscribe('alert', (alert) => link.handleAlert(alert)),
       this.bus.subscribe('alertOutcome', ({ alert, outcome, timeMs }) => policy.notifyOutcome(alert.id, outcome, timeMs)),
     ]
     return () => {
-      for (const stop of stops) stop()
+      for (const stop of stops) stop?.()
       link.setTrackLookup(null)
       link.setSummarizer(null)
     }
@@ -115,7 +150,8 @@ export class Pipeline {
   private process(result: FrameResult): void {
     const { session, tracker, policy, getSettings, now } = this.deps
     // Pair the frame with the tilt at the moment it was captured, not the moment it finished.
-    const tracks = tracker.update(result, session.getOrientationAt(result.captureTimeMs), getSettings())
+    const orientation = session.getOrientationAt(result.captureTimeMs)
+    const tracks = tracker.update(result, orientation, getSettings())
     this.tracks = tracks
     this.byId = new Map(tracks.map((t) => [t.id, t]))
     this.bus.publish('frame', result)
@@ -123,14 +159,43 @@ export class Pipeline {
 
     const nowMs = now()
     const { emitted, drops } = policy.update(tracks, nowMs, result.captureTimeMs)
+    // The log gets the frame before anything it caused, so a replay sees the same order.
+    this.logFrame(result, orientation, tracks, nowMs)
     for (const drop of drops) {
+      this.telemetry({ kind: 'drop', timeMs: nowMs, alert: drop.alert, trackId: drop.trackId, reason: drop.reason })
       const outcome = DROP_OUTCOME[drop.reason]
       if (outcome) this.bus.publish('alertOutcome', { alert: drop.alert, outcome, timeMs: nowMs })
     }
     for (const { alert, reason } of emitted) {
       this.captions = [...this.captions, { alert, reason, atMs: nowMs }].slice(-CAPTION_LIMIT)
+      this.telemetry({ kind: 'alert', timeMs: nowMs, alert, outcome: 'queued', latencyMs: null })
       this.bus.publish('alert', alert)
     }
+  }
+
+  /** Hand the log (when Test mode has one running) a record of what happened. Free when nobody listens. */
+  private telemetry(event: TelemetryEvent): void {
+    this.bus.publish('telemetry', event)
+  }
+
+  private logFrame(result: FrameResult, orientation: OrientationSample | null, tracks: Track[], nowMs: number): void {
+    this.recentCaptures = [...this.recentCaptures.filter((t) => result.captureTimeMs - t < FPS_WINDOW_MS), result.captureTimeMs]
+    this.telemetry({
+      kind: 'frame',
+      timeMs: nowMs,
+      frameId: result.frameId,
+      timings: result.timings,
+      captureTimeMs: result.captureTimeMs,
+      receivedTimeMs: result.receivedTimeMs,
+      frameWidth: result.frameWidth,
+      frameHeight: result.frameHeight,
+      meanLuma: result.meanLuma,
+      fps: this.recentCaptures.length,
+      pipelineMs: this.deps.now() - result.captureTimeMs,
+      detections: result.detections,
+      orientation,
+    })
+    this.telemetry({ kind: 'tracks', timeMs: nowMs, frameId: result.frameId, tracks })
   }
 
   private reset(): void {
@@ -138,5 +203,6 @@ export class Pipeline {
     this.deps.policy.reset()
     this.tracks = []
     this.byId.clear()
+    this.recentCaptures = []
   }
 }

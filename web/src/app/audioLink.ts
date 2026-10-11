@@ -4,22 +4,25 @@
 // AlertEvents arrive through handleAlert (the pipeline delivers them from the event bus); the pipeline also
 // supplies the live track lookup and the "what's around me" summarizer, and listens for alert outcomes.
 import { AudioEngine } from '../audio/engine'
-import type { AlertTiming, TrackLookup } from '../audio/engine'
+import type { AlertTimes, AlertTiming, TrackLookup } from '../audio/engine'
 import { createBrowserSpeaker } from '../audio/speech'
 import { listeningTone, TonePlayer } from '../audio/tones'
 import { GREETING, unlockAudioContext } from '../audio/unlock'
 import { CONFIG } from '../core/config'
-import type { AlertEvent, AlertOutcome, AlertPriority, HealthState } from '../core/types'
+import type { AlertEvent, AlertOutcome, AlertPriority, HealthState, VoiceIntent } from '../core/types'
 import { HealthMonitor } from '../health/monitor'
 import type { HealthAnnouncement, RunState } from '../health/monitor'
 import { VOICE_PHRASES } from '../voice/commands'
 import { VoiceControl } from '../voice/control'
+import type { VoiceSource } from '../voice/control'
 import { createBrowserRecognizer } from '../voice/recognizer'
 import type { Session, SessionState } from './session'
 import { settingsStore } from './settings'
 
 /** The "what's around me" summary phrase, from the alert policy (A5). Null until that is wired in. */
 export type Summarizer = () => string
+
+export type OutcomeListener = (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null, times: AlertTimes) => void
 
 export interface AudioLinkView {
   unlocked: boolean
@@ -63,13 +66,18 @@ export class AudioLink {
     getSpeechRate: () => settingsStore.getSnapshot().speechRate,
     setSpeechRate: (speechRate) => settingsStore.update({ speechRate }),
     lastAlertPhrase: () => this.lastAlertPhrase,
-    onIntent: (intent, source) => this.update({ lastVoice: `${intent} (${source})` }),
+    onIntent: (intent, source) => {
+      for (const listener of this.voiceListeners) listener(intent, source)
+      this.update({ lastVoice: `${intent} (${source})` })
+    },
     onError: (message) => this.update({ voiceMessage: message }),
   })
   private session: Session | null = null
   private testTracks = new Map<number, { distanceM: number }>()
   private trackLookup: TrackLookup | null = null
-  private outcomeListeners = new Set<(alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null) => void>()
+  private outcomeListeners = new Set<OutcomeListener>()
+  private healthListeners = new Set<(health: HealthState) => void>()
+  private voiceListeners = new Set<(intent: VoiceIntent, source: VoiceSource) => void>()
   private testCount = 0
   private simulateHealthy = false
   private listeners = new Set<() => void>()
@@ -114,7 +122,7 @@ export class AudioLink {
         // alert whose track is gone is dropped as track-gone (SR-3).
         getTrack: (id) => this.testTracks.get(id) ?? this.trackLookup?.(id) ?? null,
         now: () => performance.now(),
-        onOutcome: (alert, outcome, latencyMs) => this.recordOutcome(alert, outcome, latencyMs),
+        onOutcome: (alert, outcome, latencyMs, times) => this.recordOutcome(alert, outcome, latencyMs, times),
         onError: (message) => this.reportError(message),
       })
       this.engine.applySettings(settingsStore.getSnapshot())
@@ -171,9 +179,21 @@ export class AudioLink {
   }
 
   /** Hear what happened to every alert (started, finished, preempted, dropped). Returns a stop function. */
-  onAlertOutcome(listener: (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null) => void): () => void {
+  onAlertOutcome(listener: OutcomeListener): () => void {
     this.outcomeListeners.add(listener)
     return () => this.outcomeListeners.delete(listener)
+  }
+
+  /** Hear the health state after every check (every few hundred ms). Returns a stop function. */
+  onHealth(listener: (health: HealthState) => void): () => void {
+    this.healthListeners.add(listener)
+    return () => this.healthListeners.delete(listener)
+  }
+
+  /** Hear each voice command and where it came from. Returns a stop function. */
+  onVoice(listener: (intent: VoiceIntent, source: VoiceSource) => void): () => void {
+    this.voiceListeners.add(listener)
+    return () => this.voiceListeners.delete(listener)
   }
 
   /** Where "what's around me" gets its phrase; the pipeline sets it from the alert policy. */
@@ -226,6 +246,7 @@ export class AudioLink {
       for (const announcement of announcements) this.engine.announceHealth(announcement)
       this.engine.tickHeartbeat()
     }
+    for (const listener of this.healthListeners) listener(health)
     this.update({ health, timing: this.engine?.getTiming() ?? null, voice: this.speech.speaker.getVoice()?.name ?? null })
   }
 
@@ -235,9 +256,9 @@ export class AudioLink {
     this.update({ unlocked: this.ctx !== null, contextState: state })
   }
 
-  private recordOutcome(alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null): void {
+  private recordOutcome(alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null, times: AlertTimes): void {
     if (alert.trackId !== null && outcome !== 'started') this.testTracks.delete(alert.trackId)
-    for (const listener of this.outcomeListeners) listener(alert, outcome, latencyMs)
+    for (const listener of this.outcomeListeners) listener(alert, outcome, latencyMs, times)
     const latency = latencyMs === null ? '' : ` after ${latencyMs.toFixed(0)} ms`
     this.update({ lastOutcome: `${alert.id} ${outcome}${latency}` })
   }
