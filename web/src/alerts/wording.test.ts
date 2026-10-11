@@ -6,12 +6,10 @@ import { GREETING } from '../audio/unlock'
 import { FIND_MESSAGES } from '../find/messages'
 import { HEALTH_PHRASES } from '../health/monitor'
 import { VOICE_PHRASES } from '../voice/commands'
-import { SUMMARY_NONE } from './phrases'
 
 const BANNED = /\b(clear|clearly|safe|safely|safety|free|all good|no obstacles?|nothing there|nothing ahead)\b/i
 
 const sources: [string, Record<string, string> | string][] = [
-  ['alert phrases', { none: SUMMARY_NONE }],
   ['voice phrases', VOICE_PHRASES],
   ['health phrases', HEALTH_PHRASES],
   ['status messages', MESSAGES],
@@ -30,10 +28,6 @@ describe('SR-2 wording', () => {
     for (const bad of ['The path is clear.', 'It is safe to walk.', 'All good.', 'No obstacles ahead.', 'Path free.']) {
       expect(bad).toMatch(BANNED)
     }
-  })
-
-  test('the none-detected answer states a limit', () => {
-    expect(SUMMARY_NONE).toMatch(/miss things/)
   })
 
   test('the greeting says the app name as Ken-shee, not Navigator', () => {

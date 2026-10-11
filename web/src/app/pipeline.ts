@@ -1,17 +1,15 @@
-// Pipeline: the one orchestrator of the live path (S3). Each frame result goes through the tracker (A4),
-// whose tracks go to the alert policy (A5); alerts leave on the event bus, and the audio link (U1) listens.
-// The audio link reports what became of each alert, which tells the policy when the next one may go.
-// The same link supplies the health monitor's state and the user's voice commands, which go on the bus too,
-// and it gets the live tracks and the "what's around me" summarizer. Modules meet only through types.ts,
-// the bus, and the small interfaces below.
+// Pipeline: the one orchestrator of the live path. Each frame result goes through the tracker (A4); the
+// tracks go on the event bus for the route (R7) and nothing announces them: the detector is silent, so the
+// user is never read a list of objects. Alerts that other modules put on the bus (Find guidance, R4/R5) are
+// handed to the audio link (U1), which reports what became of each one. The same link supplies the health
+// monitor's state and the user's voice commands, which go on the bus too. Modules meet only through
+// types.ts, the bus, and the small interfaces below.
 //
-//   session result -> tracker -> tracks -> policy -> bus "alert" -> audio link
-//                                            ^                          |
-//                                            +---- bus "alertOutcome" <-+
+//   session result -> tracker -> bus "frame", bus "tracks"
+//   bus "alert" -> audio link -> bus "alertOutcome"
 //   audio link -> bus "health", bus "voice"
 //   a frame counts as healthy (health monitor) only after it went through the whole chain
 import { EventBus } from '../alerts/bus'
-import type { AlertReason, DropRecord, PolicyResult } from '../alerts/policy'
 import type { TrackLookup } from '../audio/engine'
 import type {
   AlertEvent,
@@ -36,7 +34,6 @@ export interface PipelineSession {
 
 export interface PipelineLink {
   handleAlert(alert: AlertEvent): void
-  setSummarizer(summarizer: (() => string) | null): void
   setTrackLookup(lookup: TrackLookup | null): void
   onAlertOutcome(listener: (alert: AlertEvent, outcome: AlertOutcome) => void): () => void
   /** A frame result that went through the whole pipeline; the health monitor counts only those. */
@@ -50,36 +47,13 @@ export interface PipelineTracker {
   reset(): void
 }
 
-export interface PipelinePolicy {
-  update(tracks: readonly Track[], nowMs: number, frameTimeMs: number): PolicyResult
-  notifyOutcome(alertId: string, outcome: AlertOutcome, nowMs: number): void
-  summarize(tracks: readonly Track[]): string
-  reset(): void
-}
-
-/** An alert as shown in the debug overlay, with why it was raised. */
-export interface Caption {
-  alert: AlertEvent
-  reason: AlertReason
-  atMs: number
-}
-
 export interface PipelineDeps {
   session: PipelineSession
   link: PipelineLink
   tracker: PipelineTracker
-  policy: PipelinePolicy
   getSettings: () => Pick<Settings, 'eyeHeightM' | 'horizontalFovDeg'>
   now: () => number
   bus?: EventBus<EventMap>
-}
-
-const CAPTION_LIMIT = 6
-
-// Drops that the shared AlertOutcome type can express are also announced on the bus.
-const DROP_OUTCOME: Partial<Record<DropRecord['reason'], AlertOutcome>> = {
-  stale: 'dropped-stale',
-  'track-gone': 'dropped-track-gone',
 }
 
 export class Pipeline {
@@ -87,7 +61,6 @@ export class Pipeline {
   private deps: PipelineDeps
   private tracks: Track[] = []
   private byId = new Map<number, Track>()
-  private captions: Caption[] = []
   private lastState: SessionState | null = null
 
   constructor(deps: PipelineDeps) {
@@ -100,14 +73,9 @@ export class Pipeline {
     return this.tracks
   }
 
-  /** The latest alerts the policy sent, oldest first. */
-  getCaptions(): readonly Caption[] {
-    return this.captions
-  }
-
   /** Start listening to the session and connect the audio link. Returns a function that undoes it. */
   attach(): () => void {
-    const { session, link, policy } = this.deps
+    const { session, link } = this.deps
     const syncState = () => {
       const state = session.getSnapshot().state
       if (state === this.lastState) return
@@ -116,7 +84,6 @@ export class Pipeline {
     }
     syncState()
     link.setTrackLookup((id) => this.byId.get(id) ?? null)
-    link.setSummarizer(() => policy.summarize(this.tracks))
     const stops: ((() => void) | undefined)[] = [
       session.onResult((result) => this.process(result)),
       session.subscribe(syncState),
@@ -124,12 +91,10 @@ export class Pipeline {
       link.onVoiceIntent((intent) => this.bus.publish('voice', intent)),
       link.onHealth((health) => this.bus.publish('health', health)),
       this.bus.subscribe('alert', (alert) => link.handleAlert(alert)),
-      this.bus.subscribe('alertOutcome', ({ alert, outcome, timeMs }) => policy.notifyOutcome(alert.id, outcome, timeMs)),
     ]
     return () => {
       for (const stop of stops) stop?.()
       link.setTrackLookup(null)
-      link.setSummarizer(null)
     }
   }
 
@@ -141,7 +106,7 @@ export class Pipeline {
   }
 
   private run(result: FrameResult): void {
-    const { session, tracker, policy, getSettings, now } = this.deps
+    const { session, tracker, getSettings } = this.deps
     // Pair the frame with the tilt at the moment it was captured, not the moment it finished.
     const orientation = session.getOrientationAt(result.captureTimeMs)
     const tracks = tracker.update(result, orientation, getSettings())
@@ -149,22 +114,10 @@ export class Pipeline {
     this.byId = new Map(tracks.map((t) => [t.id, t]))
     this.bus.publish('frame', result)
     this.bus.publish('tracks', tracks)
-
-    const nowMs = now()
-    const { emitted, drops } = policy.update(tracks, nowMs, result.captureTimeMs)
-    for (const drop of drops) {
-      const outcome = DROP_OUTCOME[drop.reason]
-      if (outcome) this.bus.publish('alertOutcome', { alert: drop.alert, outcome, timeMs: nowMs })
-    }
-    for (const { alert, reason } of emitted) {
-      this.captions = [...this.captions, { alert, reason, atMs: nowMs }].slice(-CAPTION_LIMIT)
-      this.bus.publish('alert', alert)
-    }
   }
 
   private reset(): void {
     this.deps.tracker.reset()
-    this.deps.policy.reset()
     this.tracks = []
     this.byId.clear()
   }

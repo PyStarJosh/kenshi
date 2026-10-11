@@ -3,7 +3,7 @@ import { VoiceControl } from './control'
 import type { VoiceControlDeps } from './control'
 import type { ListenResult } from './recognizer'
 
-function setup(options: { supported?: boolean; paused?: boolean; rate?: number; last?: string | null } = {}) {
+function setup(options: { supported?: boolean; paused?: boolean; rate?: number } = {}) {
   const log: string[] = []
   let resolveListen: ((result: ListenResult) => void) | null = null
   let listening = false
@@ -30,7 +30,6 @@ function setup(options: { supported?: boolean; paused?: boolean; rate?: number; 
     say: (text) => log.push(`say: ${text}`),
     holdSpeech: (held) => log.push(`hold ${held}`),
     earcon: (phase) => log.push(`earcon ${phase}`),
-    whatsAround: () => log.push('around'),
     pauseDetection: () => log.push('pause'),
     resumeDetection: () => log.push('resume'),
     isPaused: () => options.paused ?? false,
@@ -39,7 +38,6 @@ function setup(options: { supported?: boolean; paused?: boolean; rate?: number; 
       rate = value
       log.push(`rate ${value}`)
     },
-    lastAlertPhrase: () => (options.last === undefined ? null : options.last),
     onIntent: (intent, source) => log.push(`intent ${intent} ${source}`),
     onError: (message) => log.push(`error: ${message}`),
   }
@@ -67,21 +65,20 @@ describe('VoiceControl', () => {
     expect(log).toEqual(['hold false', 'earcon stop', 'intent pause speech', 'pause', 'say: Paused.'])
   })
 
-  test('unknown text apologizes, then runs around', async () => {
+  test('unknown text only apologizes', async () => {
     const { control, log, finishListen } = setup()
     control.tap()
     log.length = 0
     await finishListen({ kind: 'text', text: 'banana' })
-    expect(log.slice(2)).toEqual(["say: Sorry, I didn't catch that.", 'intent whats-around tap-fallback', 'around'])
+    expect(log.slice(2)).toEqual(["say: Sorry, I didn't catch that."])
   })
 
-  test('silence runs around', async () => {
+  test('silence does nothing: the tap never reads out objects', async () => {
     const { control, log, finishListen } = setup()
     control.tap()
     log.length = 0
     await finishListen({ kind: 'silence' })
-    expect(log).toContain('around')
-    expect(log).not.toContain("say: Voice commands unavailable. Tap to hear what's around you.")
+    expect(log).toEqual(['hold false', 'earcon stop'])
   })
 
   test('a second tap while listening cancels without running anything', async () => {
@@ -94,17 +91,13 @@ describe('VoiceControl', () => {
     expect(log).toEqual(['cancel', 'hold false', 'earcon stop'])
   })
 
-  test('unsupported recognition: the tap runs around at once, and says so only the first time', () => {
+  test('unsupported recognition: the tap says so, and only the first time', () => {
     const { control, log } = setup({ supported: false })
     control.tap()
-    expect(log).toEqual([
-      "say: Voice commands unavailable. Tap to hear what's around you.",
-      'intent whats-around tap-fallback',
-      'around',
-    ])
+    expect(log).toEqual(['say: Voice commands are not available on this device.'])
     log.length = 0
     control.tap()
-    expect(log).toEqual(['intent whats-around tap-fallback', 'around'])
+    expect(log).toEqual([])
   })
 
   test('a denied microphone falls back, reports the error, and skips listening next time', async () => {
@@ -113,11 +106,10 @@ describe('VoiceControl', () => {
     log.length = 0
     await finishListen({ kind: 'failed', message: 'Microphone access was denied.', permanent: true })
     expect(log).toContain('error: Microphone access was denied.')
-    expect(log).toContain('around')
+    expect(log).toContain('say: Voice commands are not available on this device.')
     log.length = 0
     control.tap()
     expect(log).not.toContain('listen')
-    expect(log).toContain('around')
   })
 
   test('a temporary failure (offline) still falls back but listens again next time', async () => {
@@ -136,17 +128,6 @@ describe('VoiceControl', () => {
     const paused = setup({ paused: true })
     paused.control.longPress()
     expect(paused.log).toContain('resume')
-  })
-
-  test('repeat says the last alert, or that there is none', async () => {
-    const withAlert = setup({ last: 'Backpack, 1 o\'clock, about 2 meters.' })
-    withAlert.control.tap()
-    await withAlert.finishListen({ kind: 'text', text: 'repeat' })
-    expect(withAlert.log).toContain('say: Backpack, 1 o\'clock, about 2 meters.')
-    const none = setup()
-    none.control.tap()
-    await none.finishListen({ kind: 'text', text: 'repeat' })
-    expect(none.log).toContain('say: Nothing to repeat yet.')
   })
 
   test('slower and faster change the rate and stop at the limits', async () => {

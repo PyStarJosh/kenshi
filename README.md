@@ -1,6 +1,6 @@
 # Kenshi
 
-A real-time guide for blind and low-vision people that runs on an iPhone in Safari. Walk mode speaks obstacle alerts using an on-device detector (frames stay on the phone). Find mode, being built, is a "Find My" for blind users: name a target and the app guides you to it; in Find mode camera frames are sent to Google Gemini through one Vercel function. Kenshi complements the white cane; it never replaces it. See `docs/SRS.md` and `docs/SDS.md` for what we build and how, and `PROGRESS.md` for the current state.
+A real-time guide for blind and low-vision people that runs on an iPhone in Safari. It is a "Find My" for blind users, being built: name a target and the app guides you to it. Camera frames are sent to Google Gemini through one Vercel function, only on a Find request. An on-device detector runs silently (frames stay on the phone); it never announces objects, and its boxes only make the walking route bend around them. Kenshi complements the white cane; it never replaces it. See `docs/SRS.md` and `docs/SDS.md` for what we build and how, and `PROGRESS.md` for the current state.
 
 ## Setup
 

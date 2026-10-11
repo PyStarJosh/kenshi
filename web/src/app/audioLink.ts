@@ -2,7 +2,7 @@
 // readings go into the monitor, its state and warnings go to the engine, and the heartbeat ticks on the
 // same check timer. Audio settings come from the settings store.
 // AlertEvents arrive through handleAlert (the pipeline delivers them from the event bus); the pipeline also
-// supplies the live track lookup and the "what's around me" summarizer, and listens for alert outcomes.
+// supplies the live track lookup and listens for alert outcomes.
 import { AudioEngine } from '../audio/engine'
 import type { AlertTiming, TrackLookup } from '../audio/engine'
 import { createBrowserSpeaker } from '../audio/speech'
@@ -12,16 +12,12 @@ import { CONFIG } from '../core/config'
 import type { AlertEvent, AlertOutcome, AlertPriority, FrameResult, HealthState, VoiceIntent } from '../core/types'
 import { HealthMonitor } from '../health/monitor'
 import type { HealthAnnouncement, RunState } from '../health/monitor'
-import { VOICE_PHRASES } from '../voice/commands'
 import { VoiceControl } from '../voice/control'
 import { createBrowserRecognizer } from '../voice/recognizer'
 import { LatencyStats } from './latency'
 import type { LatencyView } from './latency'
 import type { Session, SessionState } from './session'
 import { settingsStore } from './settings'
-
-/** The "what's around me" summary phrase, from the alert policy (A5). Null until that is wired in. */
-export type Summarizer = () => string
 
 export type OutcomeListener = (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null) => void
 
@@ -55,20 +51,16 @@ export class AudioLink {
   private ctx: AudioContext | null = null
   private tones: TonePlayer | null = null
   private engine: AudioEngine | null = null
-  private summarizer: Summarizer | null = null
-  private lastAlertPhrase: string | null = null
   private voice = new VoiceControl({
     recognizer: createBrowserRecognizer(),
     say: (text) => this.say(text),
     holdSpeech: (held) => this.speech.speaker.setHeld(held),
     earcon: (phase) => this.tones?.play(listeningTone(phase), settingsStore.getSnapshot().toneVolume),
-    whatsAround: () => this.say(this.summarizer ? this.summarizer() : VOICE_PHRASES.aroundSoon),
     pauseDetection: () => this.session?.pause(),
     resumeDetection: () => void this.session?.resume(),
     isPaused: () => this.session?.getSnapshot().state === 'paused',
     getSpeechRate: () => settingsStore.getSnapshot().speechRate,
     setSpeechRate: (speechRate) => settingsStore.update({ speechRate }),
-    lastAlertPhrase: () => this.lastAlertPhrase,
     onIntent: (intent, source) => {
       this.update({ lastVoice: `${intent} (${source})` })
       for (const listener of this.intentListeners) listener(intent)
@@ -179,7 +171,6 @@ export class AudioLink {
   handleAlert(alert: AlertEvent): void {
     // Urgent alerts preempt listening (SR-4): the mic closes and the tone and phrase play at once.
     if (alert.priority === 'urgent') this.voice.cancelForUrgent()
-    if (alert.kind === 'obstacle') this.lastAlertPhrase = alert.phrase
     this.engine?.handleAlert(alert)
   }
 
@@ -204,11 +195,6 @@ export class AudioLink {
   onAlertOutcome(listener: OutcomeListener): () => void {
     this.outcomeListeners.add(listener)
     return () => this.outcomeListeners.delete(listener)
-  }
-
-  /** Where "what's around me" gets its phrase; the pipeline sets it from the alert policy. */
-  setSummarizer(summarizer: Summarizer | null): void {
-    this.summarizer = summarizer
   }
 
   /** ?debug test panel: an alert with a fake track at the given distance. */

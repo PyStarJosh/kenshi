@@ -124,7 +124,7 @@ export interface OrientationSample {
 
 export type AlertPriority = 'urgent' | 'normal' | 'info'
 
-/** What the alert is about. Only "obstacle" alerts carry a track. */
+/** What the alert is about. Only "obstacle" alerts carry a track; Find guidance (R5) adds its own kinds. */
 export type AlertKind = 'obstacle' | 'summary' | 'health' | 'status' | 'help'
 
 /** A request to the audio engine to play a tone and/or speak a phrase. */
@@ -140,7 +140,7 @@ export interface AlertEvent {
   pan: number | null
   /** Capture time of the frame that caused this alert. Staleness is measured from here. */
   frameTimeMs: number
-  /** When the policy created the alert. */
+  /** When the alert was created. */
   createdTimeMs: number
 }
 
@@ -187,10 +187,8 @@ export interface Settings {
 }
 
 export type VoiceIntent =
-  | 'whats-around'
   | 'pause'
   | 'resume'
-  | 'repeat'
   | 'slower'
   | 'faster'
   | 'help'
