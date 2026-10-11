@@ -1,8 +1,10 @@
 // Device orientation: asks permission (iOS needs a tap), then provides smoothed camera pitch and roll
-// for the current screen orientation. Without a reading, geometry falls back to "level" and says so.
+// for the current screen orientation, and the camera heading. Without a reading, geometry falls back to
+// "level" and says so. The one listener below feeds all three, so there is no second permission or listener.
 import { CONFIG } from '../core/config'
 import type { OrientationSample } from '../core/types'
 import { cameraAttitude, smoothAngle } from './attitude'
+import { cameraForward, headingFromForward, HeadingTracker } from './heading'
 
 /** idle: not listening. waiting: listening, no reading yet. ready: readings arrive. */
 export type OrientationStatus = 'idle' | 'waiting' | 'ready' | 'denied' | 'unavailable'
@@ -22,6 +24,7 @@ export class OrientationSensor {
   private listeners = new Set<(status: OrientationStatus) => void>()
   private denied = false
   private smoothed: { pitchDeg: number; rollDeg: number } | null = null
+  private heading = new HeadingTracker(CONFIG.orientation.headingSmoothing)
   private history: OrientationSample[] = []
   private noDataTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -64,6 +67,7 @@ export class OrientationSensor {
     if (this.noDataTimer) clearTimeout(this.noDataTimer)
     this.noDataTimer = null
     this.smoothed = null
+    this.heading.reset()
     this.history = []
     this.setStatus(this.denied ? 'denied' : 'idle')
   }
@@ -107,19 +111,28 @@ export class OrientationSensor {
   }
 
   private onEvent = (event: Event): void => {
-    const { beta, gamma } = event as DeviceOrientationEvent
+    const { alpha, beta, gamma } = event as DeviceOrientationEvent
     if (beta === null || gamma === null || beta === undefined || gamma === undefined) return
     const reading = cameraAttitude(beta, gamma, this.deps.screenAngle())
-    const alpha = CONFIG.orientation.smoothing
+    const factor = CONFIG.orientation.smoothing
     const previous = this.smoothed
     this.smoothed = previous
       ? {
-          pitchDeg: smoothAngle(previous.pitchDeg, reading.pitchDeg, alpha),
-          rollDeg: smoothAngle(previous.rollDeg, reading.rollDeg, alpha),
+          pitchDeg: smoothAngle(previous.pitchDeg, reading.pitchDeg, factor),
+          rollDeg: smoothAngle(previous.rollDeg, reading.rollDeg, factor),
         }
       : reading
+    const headingDeg =
+      typeof alpha === 'number'
+        ? this.heading.update(
+            headingFromForward(
+              cameraForward(alpha, beta, gamma),
+              Math.cos((CONFIG.orientation.headingMaxPitchDeg * Math.PI) / 180),
+            ),
+          )
+        : null
     const timeMs = this.deps.now()
-    this.history.push({ ...this.smoothed, timeMs })
+    this.history.push(headingDeg === null ? { ...this.smoothed, timeMs } : { ...this.smoothed, headingDeg, timeMs })
     while (this.history.length > 0 && timeMs - this.history[0].timeMs > CONFIG.orientation.historyMs) {
       this.history.shift()
     }

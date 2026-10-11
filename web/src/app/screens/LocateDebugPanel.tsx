@@ -1,6 +1,6 @@
 // Locate test panel (?debug): sends the current camera frame and a typed target to /api/locate and shows the raw
-// outcome as JSON, with the round-trip time. For checking Find's function on the deployed URL (step R2). Heading is
-// 0 until the heading sensor exists (R3); pitch comes from the tilt sensor.
+// outcome as JSON, with the round-trip time. For checking Find's function on the deployed URL (step R2). Heading and
+// pitch come from the orientation sensor at the moment of the frame; heading is 0 if the sensor has none.
 import { useState } from 'react'
 import { createBitmapGrabber } from '../../camera/scheduler'
 import { Locator } from '../../find/locateClient'
@@ -34,7 +34,9 @@ export default function LocateDebugPanel({ session, getVideo }: Props) {
         return
       }
       const tilt = session.getOrientationLatest(performance.now())
-      const outcome = await locator.locate(target, [{ bitmap, heading: 0, pitch: tilt?.pitchDeg ?? 0 }])
+      const outcome = await locator.locate(target, [
+        { bitmap, heading: tilt?.headingDeg ?? 0, pitch: tilt?.pitchDeg ?? 0 },
+      ])
       bitmap.close()
       const roundTripMs = Math.round(performance.now() - started)
       setOutput(`${JSON.stringify(outcome, null, 2)}\nround trip ${roundTripMs} ms`)

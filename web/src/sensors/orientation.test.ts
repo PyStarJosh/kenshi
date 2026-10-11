@@ -20,9 +20,9 @@ function setup(overrides: Partial<OrientationDeps> = {}) {
     sensor,
     handlers,
     /** Deliver a reading at a given time. Sideways and level is beta 0, gamma -90. */
-    emit(beta: number | null, gamma: number | null, atMs: number) {
+    emit(beta: number | null, gamma: number | null, atMs: number, alpha: number | null = null) {
       time = atMs
-      for (const handler of [...handlers]) handler({ beta, gamma } as unknown as Event)
+      for (const handler of [...handlers]) handler({ alpha, beta, gamma } as unknown as Event)
     },
   }
 }
@@ -136,6 +136,58 @@ describe('readings', () => {
     // The first reading was pruned, so only the later one remains (and it is too far after time 0).
     expect(t.sensor.at(0)).toBeNull()
     expect(t.sensor.at(CONFIG.orientation.historyMs + 100)).not.toBeNull()
+  })
+})
+
+describe('heading', () => {
+  // Landscape held level (beta 0, gamma -90): the camera forward vector is (cos(alpha), sin(alpha)), so heading = 90 - alpha.
+  test('a reading with alpha carries a heading, and one without alpha carries none', () => {
+    const t = setup()
+    t.sensor.start()
+    t.emit(0, -90, 10)
+    expect(t.sensor.latest(10)!.headingDeg).toBeUndefined()
+    t.emit(0, -90, 20, 0)
+    expect(t.sensor.latest(20)!.headingDeg).toBeCloseTo(90, 6)
+    expect(t.sensor.latest(20)!.pitchDeg).toBeCloseTo(0, 6)
+  })
+
+  test('turning the phone to the right raises the heading by the same angle', () => {
+    const t = setup()
+    t.sensor.start()
+    t.emit(0, -90, 0, 90) // heading 0
+    t.emit(0, -90, 16, 0) // alpha fell by 90: turned right
+    for (let i = 2; i < 60; i++) t.emit(0, -90, i * 16, 0) // let the smoothing settle
+    expect(t.sensor.latest(59 * 16)!.headingDeg!).toBeCloseTo(90, 3)
+  })
+
+  test('heading is paired with the frame like pitch: at() returns the heading at that moment', () => {
+    const t = setup()
+    t.sensor.start()
+    t.emit(0, -90, 100, 350) // heading 100
+    t.emit(0, -90, 200, 340) // heading 110, smoothed to 104
+    expect(t.sensor.at(100)!.headingDeg).toBeCloseTo(100, 6)
+    expect(t.sensor.at(200)!.headingDeg).toBeGreaterThan(t.sensor.at(100)!.headingDeg!)
+  })
+
+  test('heading does not change when only the tilt does', () => {
+    const t = setup()
+    t.sensor.start()
+    // Facing east (alpha 0), then tilting the camera up and down by changing gamma with alpha fixed.
+    for (const [i, gamma] of [-90, -80, -70, -100, -110].entries()) t.emit(0, gamma, i * 16, 0)
+    for (const sample of [0, 16, 32, 48, 64].map((ms) => t.sensor.at(ms)!)) {
+      expect(sample.headingDeg).toBeCloseTo(90, 6)
+    }
+  })
+
+  test('stop clears the heading, so the next start does not continue from the old turn', () => {
+    const t = setup()
+    t.sensor.start()
+    t.emit(0, -90, 0, 0)
+    t.emit(0, -90, 16, 300)
+    t.sensor.stop()
+    t.sensor.start()
+    t.emit(0, -90, 5000, 180) // raw heading 270
+    expect(t.sensor.latest(5000)!.headingDeg).toBeCloseTo(270, 6)
   })
 })
 

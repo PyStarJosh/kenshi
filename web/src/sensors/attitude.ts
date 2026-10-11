@@ -6,11 +6,13 @@
 // for pitch and roll, and alpha does not affect it:
 //   up part of the device x axis (right edge):  -cos(beta) * sin(gamma)
 //   up part of the device y axis (top edge):     sin(beta)
-//   up part of the device z axis (out of screen): cos(beta) * cos(gamma)
-// The rear camera looks along -z.
+// Pitch is the camera's forward vector (the device -z axis) taken from heading.ts, the same vector the
+// heading comes from, so the two share one source of truth.
 //
 // Held sideways (landscape) the angles are well behaved. Held upright (portrait) with the camera
 // level, beta is near 90 degrees where the Euler angles are ill-conditioned, so roll is noisy there.
+
+import { cameraForward, pitchFromForward } from './heading'
 
 export interface Attitude {
   /** Camera axis angle above the horizon in degrees; negative looks down. */
@@ -37,7 +39,6 @@ export function cameraAttitude(betaDeg: number, gammaDeg: number, screenAngle: n
   const gamma = toRad(gammaDeg)
   const xUp = -Math.cos(beta) * Math.sin(gamma)
   const yUp = Math.sin(beta)
-  const zUp = Math.cos(beta) * Math.cos(gamma)
 
   // Which device axis is "up" and which is "right" in the picture the user sees.
   let imageUp: number
@@ -61,7 +62,8 @@ export function cameraAttitude(betaDeg: number, gammaDeg: number, screenAngle: n
       break
   }
 
-  const pitchDeg = toDeg(Math.asin(Math.max(-1, Math.min(1, -zUp))))
+  // Alpha turns the camera about the vertical, so it cannot change the pitch: any value (0) gives the same.
+  const pitchDeg = pitchFromForward(cameraForward(0, betaDeg, gammaDeg))
   const rollDeg = toDeg(Math.atan2(-imageRight, imageUp))
   return { pitchDeg, rollDeg }
 }

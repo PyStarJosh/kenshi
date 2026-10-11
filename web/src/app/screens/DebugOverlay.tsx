@@ -91,10 +91,10 @@ export default function DebugOverlay({ session, snapshot, pipeline }: Props) {
         <dd>
           {ms(view.inferenceP50)} / {ms(view.inferenceP95)} ms
         </dd>
-        <dt>pitch / roll</dt>
+        <dt>heading / pitch / roll</dt>
         <dd>
           {tilt
-            ? `${tilt.pitchDeg.toFixed(1)} / ${tilt.rollDeg.toFixed(1)} deg`
+            ? `${tilt.headingDeg === undefined ? 'none' : tilt.headingDeg.toFixed(1)} / ${tilt.pitchDeg.toFixed(1)} / ${tilt.rollDeg.toFixed(1)} deg`
             : `none (${snapshot.orientation}), level assumed`}
         </dd>
         <dt>fov / eye height</dt>
