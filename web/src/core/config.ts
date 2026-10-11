@@ -242,9 +242,10 @@ export const CONFIG = {
     // Frames per request: one for a look, up to eight for a scan sweep. FR-22, FR-23
     maxFrames: 8,
     // Width of a frame sent to Gemini, in pixels (height keeps the aspect). Starting value; to be measured. FR-22, NFR-14
-    imageWidthPx: 640,
-    // JPEG quality (0 to 1) for those frames. Starting value; to be measured. NFR-14
-    jpegQuality: 0.7,
+    imageWidthPx: 720,
+    // JPEG quality (0 to 1) for those frames. Raised from 0.7 and 640 px (owner request): a frame is about 50% larger
+    // (36 KB to 54 KB for the test photo) with no added delay seen in four calls. Starting value; to be measured. NFR-14
+    jpegQuality: 0.8,
     // Limits web/api/locate.ts enforces (a test keeps them equal to these): one base64 frame, the whole body
     // (Vercel allows 4.5 MB), the target name, and the largest heading and pitch magnitudes in degrees. FR-22
     maxFrameChars: 600_000,
@@ -255,16 +256,20 @@ export const CONFIG = {
     // The function gives up on Gemini after this long (owner spec), and the app gives up on the function a little
     // later, so the function's own error arrives first. FR-22, NFR-14
     geminiTimeoutMs: 8_000,
-    requestTimeoutMs: 12_000,
+    requestTimeoutMs: 14_000,
     // An answer below this confidence counts as not found. Starting value; to be measured. SR-11
-    minConfidence: 0.5,
+    minConfidence: 0.6,
     // A remembered target direction is dropped after this long: a gyroscope heading drifts and has no north
     // reference. Starting value; how fast it drifts is to be measured on the phone. FR-24
     memoryMaxAgeMs: 60_000,
     // The free tier is small: at least this long between two requests, and at most this many in any 60 seconds.
     // Owner defaults; to be measured against the real limits. FR-22
+    // The gap applies to the first check and the guiding re-checks; the sweep's per-frame looks and the pause look
+    // skip it (they are the point of a sweep) but still count toward the per-minute cap and the concurrency cap.
     minGapMs: 6_000,
-    maxPerMinute: 8,
+    maxPerMinute: 12,
+    // Looks allowed in flight at once (a sweep frame every ~1.5 s with answers taking 2 to 4 s).
+    maxConcurrentCalls: 4,
 
     // ---- Find controller (R4). Every value below is a starting value; to be measured on the phone. FR-23, FR-25 ----
     // The sweep takes a frame each time the heading has turned this far, up to maxFrames frames or this much turn.
@@ -299,6 +304,27 @@ export const CONFIG = {
     directionBehindDeg: 135,
     // Find speech that waits behind other speech is dropped after this long (a direction this old is wrong). SR-3
     speechStaleMs: 6_000,
+
+    // ---- Reliability (R4 follow-up). Starting values; to be measured on the phone. ----
+    // Arrival must hold this long before it is announced, so one noisy reading cannot trigger it.
+    arrivalHoldMs: 600,
+    // When the target's base is out of the bottom of the frame its distance is only an upper bound (the nearest floor
+    // in view), so "within reach" is judged against this larger distance instead.
+    arrivalClippedM: 1.75,
+    // A target last seen cut off at the bottom, now ahead and unseen, is probably just below the view: re-checks that
+    // fail are not held against it for this long, and the user is asked to tilt the phone down.
+    belowViewAngleDeg: 30,
+    belowViewMaxMs: 6_000,
+    // Tilting down to about this pitch or steeper puts the floor near the user in view (and gives a real distance).
+    tiltPitchDeg: -25,
+    tiltPromptCooldownMs: 8_000,
+    tiltPromptMax: 2,
+    // The detector must lose a followed target for this long before it counts as lost or another object is followed.
+    yoloLostMs: 1_000,
+    // A direction word changes only when the bearing is this far past its boundary, so it does not flap.
+    directionHysteresisDeg: 4,
+    // Automatic retries of the first check after a transient failure (network, timeout, unusable reply).
+    checkRetryMax: 1,
   },
 }
 

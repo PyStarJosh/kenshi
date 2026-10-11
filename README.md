@@ -31,7 +31,7 @@ Find sends camera frames to Google Gemini through one Vercel function, `web/api/
 - **Try it:** `node scripts/try-locate.mjs public/samples/bus.jpg bus http://localhost:3000` prints the status, the time, and the reply. With `?debug` on the app, the Locate panel sends the current camera frame and a typed target and shows the JSON.
 - **On a phone:** the ngrok tunnel to `npm run dev` or `vite preview` (ports 5173 and 4173) serves the app only, with no `/api/locate`, so Find and the Locate panel report "No locate function ... on this server". Use the deployed URL, or run `npm run dev:api` and tunnel port 3000 (`ngrok http 3000`).
 - **Free-tier privacy:** on Google's free tier, Google may use the pictures you send to improve its products, and human reviewers may read them. Kenshi sends pictures only when you start a Find, and only after you accept a notice saying so (FR-30). The function stores nothing and logs no images or targets.
-- **Limits:** the app waits at least 6 seconds between searches and allows 8 per minute. The free tier has its own limits, which change; when it is out the app says the search service is busy.
+- **Limits:** the first check and the re-checks while guiding wait at least 6 seconds after the previous call. A sweep sends each 45 degree frame on its own as soon as it is taken, so those go out back to back, up to 4 at once. All calls together are capped at 12 per minute. The free tier has its own limits, which change; when it is out the app says the search service is busy.
 
 ### Python tooling
 

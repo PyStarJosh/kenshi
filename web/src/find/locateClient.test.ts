@@ -58,9 +58,9 @@ describe('scaledSize', () => {
     expect(scaledSize(10000, 2, 100)).toEqual({ width: 100, height: 1 })
   })
 
-  test('the default width is the owner\'s 640', () => {
-    expect(CONFIG.find.imageWidthPx).toBe(640)
-    expect(CONFIG.find.jpegQuality).toBe(0.7)
+  test('the default is 720 px wide at quality 0.8', () => {
+    expect(CONFIG.find.imageWidthPx).toBe(720)
+    expect(CONFIG.find.jpegQuality).toBe(0.8)
   })
 })
 
@@ -89,9 +89,20 @@ describe('CallLimiter', () => {
     expect(limiter.check(60_000)).toEqual({ ok: true })
   })
 
-  test('the defaults are 6 s and 8 per minute', () => {
+  test('an unpaced check skips the gap but not the per-minute cap', () => {
+    const limiter = new CallLimiter(6000, 3)
+    limiter.record(0)
+    expect(limiter.check(1000, true)).toMatchObject({ ok: false, error: 'too_soon' })
+    expect(limiter.check(1000, false)).toEqual({ ok: true })
+    limiter.record(1000)
+    limiter.record(2000)
+    expect(limiter.check(3000, false)).toMatchObject({ ok: false, error: 'limit' })
+  })
+
+  test('the defaults: a 6 s gap for paced calls, 12 per minute, 4 looks at once', () => {
     expect(CONFIG.find.minGapMs).toBe(6000)
-    expect(CONFIG.find.maxPerMinute).toBe(8)
+    expect(CONFIG.find.maxPerMinute).toBe(12)
+    expect(CONFIG.find.maxConcurrentCalls).toBe(4)
   })
 })
 
@@ -184,6 +195,40 @@ describe('Locator', () => {
     await locator.locate('chair', [capture()])
     clock.nowMs += 1000
     expect(await locator.locate('chair', [capture()])).toMatchObject({ error: 'too_soon' })
+  })
+
+  test('unpaced looks go out back to back, up to the concurrency cap', async () => {
+    const releases: ((r: Response) => void)[] = []
+    const { locator, fetchImpl, clock } = setup({
+      minGapMs: 6000,
+      maxPerMinute: 20,
+      reply: () => new Promise<Response>((resolve) => releases.push(resolve)),
+    })
+    const looks = []
+    for (let i = 0; i < 4; i++) {
+      clock.nowMs += 100 // far inside the 6 s gap
+      looks.push(locator.locate('chair', [capture()], { paced: false }))
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(i + 1))
+    }
+    clock.nowMs += 100
+    expect(locator.canLocate(false)).toBe(false)
+    expect(await locator.locate('chair', [capture()], { paced: false })).toMatchObject({ ok: false, error: 'too_soon' })
+    for (const release of releases) release(json(found))
+    expect((await Promise.all(looks)).every((o) => o.ok)).toBe(true)
+    expect(locator.canLocate(false)).toBe(true)
+  })
+
+  test('a paced call still waits for the gap and for any look in flight', async () => {
+    const releases: ((r: Response) => void)[] = []
+    const { locator, clock } = setup({ reply: () => new Promise<Response>((resolve) => releases.push(resolve)) })
+    const look = locator.locate('chair', [capture()], { paced: false })
+    await vi.waitFor(() => expect(releases).toHaveLength(1))
+    clock.nowMs += 10_000 // the gap has passed, but a look is out
+    expect(locator.canLocate(true)).toBe(false)
+    expect(await locator.locate('chair', [capture()])).toMatchObject({ ok: false, error: 'too_soon' })
+    releases[0](json(found))
+    await look
+    expect(locator.canLocate(true)).toBe(true)
   })
 
   test('a call made while another is running is refused', async () => {

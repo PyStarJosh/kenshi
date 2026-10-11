@@ -9,7 +9,10 @@
 //          sweeping      lost -> sweeping
 //              |
 //              v
-//        sweepChecking -> guiding, or notFound -> idle;   any locate failure -> error -> idle;   cancel -> idle
+//        sweepChecking -> guiding, or notFound -> idle;   every look failed -> error -> idle;   cancel -> idle
+//
+// While sweeping, each frame taken about every 45 degrees is sent on its own as soon as it is captured, so the first
+// look that finds the target ends the search (guiding). sweepChecking only waits for the looks still out.
 //
 // A target the on-device detector already sees skips the network: request -> guiding with source 'yolo'.
 // All thresholds are in CONFIG.find. Nothing here says the way is clear or safe (SR-2), and "not found" is only ever
@@ -27,6 +30,7 @@ import {
   lookingFor,
   lostPhrase,
   notFoundPhrase,
+  stableDirection,
 } from './phrases'
 import type { Direction } from './phrases'
 import { FIND_MESSAGES } from './messages'
@@ -66,12 +70,29 @@ export interface FindContext {
   sweepCheckHeading: number | null
   /** A pause check was made during this stillness; the next one waits for the user to move again. */
   sweepDwellChecked: boolean
+  /** Ids of the per-frame looks still out; every sweep frame is its own request. */
+  sweepPending: number[]
+  /** How many of those looks came back without the target, and how many failed (and the last failure's code). */
+  sweepAnswered: number
+  sweepFailures: number
+  sweepLastCode: LocateClientErrorCode | null
   // Guiding
   rechecking: boolean
   failedRechecks: number
   lastRecheckAt: number
   lastSpokenDirection: Direction | null
   lastDirectionAt: number
+  /** The detector's track being followed, so a second object of the same kind is not swapped in. */
+  followId: number | null
+  /** The last time the detector saw the followed target. */
+  yoloSeenAt: number
+  /** Since when the arrival conditions have held without a break, or null. */
+  arrivalSince: number | null
+  /** How many times the user was asked to tilt the phone down for this target, and when last. */
+  tiltPrompts: number
+  lastTiltAt: number
+  /** Automatic retries made of the first check. */
+  checkRetries: number
 }
 
 export function initialContext(): FindContext {
@@ -94,11 +115,21 @@ export function initialContext(): FindContext {
     sweepReminded: false,
     sweepCheckHeading: null,
     sweepDwellChecked: false,
+    sweepPending: [],
+    sweepAnswered: 0,
+    sweepFailures: 0,
+    sweepLastCode: null,
     rechecking: false,
     failedRechecks: 0,
     lastRecheckAt: 0,
     lastSpokenDirection: null,
     lastDirectionAt: 0,
+    followId: null,
+    yoloSeenAt: 0,
+    arrivalSince: null,
+    tiltPrompts: 0,
+    lastTiltAt: -Infinity,
+    checkRetries: 0,
   }
 }
 
@@ -106,6 +137,10 @@ export function initialContext(): FindContext {
 export interface YoloSighting {
   angleDeg: number
   distanceM: number | null
+  /** The detector's id for the track, so the same object is followed from frame to frame. */
+  trackId?: number
+  /** The box runs off the bottom of the frame: its base is out of view, so distanceM is only an upper bound. */
+  clipped?: boolean
 }
 
 /** The heading and pitch a sent frame was taken at; null where the phone gave none. */
@@ -117,18 +152,27 @@ export interface FrameMeta {
 export type FindEvent =
   | { type: 'request'; target: string; nowMs: number; heading: number | null; yolo: YoloSighting | null }
   | { type: 'cancel' }
-  | { type: 'tick'; nowMs: number; heading: number | null; yolo: YoloSighting | null; canLocate: boolean }
+  | {
+      type: 'tick'
+      nowMs: number
+      heading: number | null
+      yolo: YoloSighting | null
+      /** A paced call (the first check, a guiding re-check) would be allowed now. */
+      canLocate: boolean
+      /** An unpaced look (a pause look) would be allowed now: under the per-minute and concurrency caps. */
+      canLook: boolean
+      /** The camera pitch now (negative looks down), or null without a tilt reading. */
+      pitch: number | null
+    }
   | { type: 'located'; id: number; nowMs: number; heading: number | null; result: LocateResult; frames: FrameMeta[] }
   | { type: 'failed'; id: number; nowMs: number; code: LocateClientErrorCode }
 
 export type FindEffect =
   | { type: 'speak'; text: string }
-  /** Make a locate call: with the current frame, or with every frame captured in the sweep. */
-  | { type: 'locate'; id: number; frames: 'current' | 'sweep' }
-  /** Capture one sweep frame now, with a soft tick. */
-  | { type: 'capture' }
-  /** Throw away any sweep frames held. */
-  | { type: 'discardFrames' }
+  /** Look for the target in the current frame. A paced call waits for the gap since the last call; a pause look does not. */
+  | { type: 'locate'; id: number; paced: boolean }
+  /** Capture one sweep frame now, with a soft tick, and send it on its own as a look with this id (no gap). */
+  | { type: 'capture'; id: number }
 
 export interface FindEnv {
   hfovDeg: number
@@ -161,10 +205,10 @@ function toIdle(d: Draft): void {
   Object.assign(d.c, initialContext(), { privacyAnnounced, nextId })
 }
 
-function issueLocate(d: Draft, frames: 'current' | 'sweep'): void {
+function issueLocate(d: Draft, paced: boolean): void {
   d.c.nextId += 1
   d.c.pending = d.c.nextId
-  d.effects.push({ type: 'locate', id: d.c.nextId, frames })
+  d.effects.push({ type: 'locate', id: d.c.nextId, paced })
 }
 
 function startChecking(d: Draft, nowMs: number): void {
@@ -179,7 +223,8 @@ function startChecking(d: Draft, nowMs: number): void {
   say(d, nowMs, ...parts)
   c.state = 'checking'
   c.enteredAt = nowMs
-  issueLocate(d, 'current')
+  c.checkRetries = 0
+  issueLocate(d, true)
 }
 
 function beginSweep(d: Draft, heading: number | null, nowMs: number): void {
@@ -194,7 +239,10 @@ function beginSweep(d: Draft, heading: number | null, nowMs: number): void {
   c.sweepReminded = false
   c.sweepCheckHeading = heading
   c.sweepDwellChecked = false
-  d.effects.push({ type: 'discardFrames' })
+  c.sweepPending = []
+  c.sweepAnswered = 0
+  c.sweepFailures = 0
+  c.sweepLastCode = null
 }
 
 function enterGuiding(d: Draft, memory: TargetMemory, bearingDeg: number, nowMs: number): void {
@@ -209,7 +257,10 @@ function enterGuiding(d: Draft, memory: TargetMemory, bearingDeg: number, nowMs:
   c.lastSpokenDirection = direction
   c.lastDirectionAt = nowMs
   c.pending = null
-  d.effects.push({ type: 'discardFrames' })
+  c.sweepPending = []
+  c.arrivalSince = null
+  c.tiltPrompts = 0
+  c.lastTiltAt = -Infinity
   say(d, nowMs, foundPhrase(c.target, direction))
 }
 
@@ -219,7 +270,7 @@ function toNotFound(d: Draft, nowMs: number): void {
   c.state = 'notFound'
   c.enteredAt = nowMs
   c.pending = null
-  d.effects.push({ type: 'discardFrames' })
+  c.sweepPending = []
 }
 
 function toError(d: Draft, code: LocateClientErrorCode, nowMs: number): void {
@@ -229,7 +280,7 @@ function toError(d: Draft, code: LocateClientErrorCode, nowMs: number): void {
   c.state = 'error'
   c.enteredAt = nowMs
   c.pending = null
-  d.effects.push({ type: 'discardFrames' })
+  c.sweepPending = []
 }
 
 function toLost(d: Draft, nowMs: number): void {
@@ -240,6 +291,7 @@ function toLost(d: Draft, nowMs: number): void {
   c.memory = null
   c.rechecking = false
   c.pending = null
+  c.sweepPending = []
 }
 
 /** Where a found result puts the target: its memory, from the frame's own heading and pitch. Null if it cannot be placed. */
@@ -263,6 +315,7 @@ function memoryFrom(d: Draft, result: LocateResult, meta: FrameMeta | undefined,
     distanceM: distance,
     nowMs,
     source: 'gemini',
+    clipped: result.box.y1 >= 1 - CONFIG.geometry.edgeTouchMargin,
   })
 }
 
@@ -274,7 +327,10 @@ function guideFromYolo(d: Draft, yolo: YoloSighting, heading: number, nowMs: num
     distanceM: yolo.distanceM === null ? null : roundDistance(yolo.distanceM),
     seenAt: nowMs,
     source: 'yolo',
+    clipped: yolo.clipped ?? false,
   }
+  d.c.followId = yolo.trackId ?? null
+  d.c.yoloSeenAt = nowMs
   enterGuiding(d, memory, bearing(memory, heading), nowMs)
 }
 
@@ -282,7 +338,6 @@ function onRequest(d: Draft, e: Extract<FindEvent, { type: 'request' }>): void {
   const target = cleanTarget(e.target)
   if (target.length === 0) return
   toIdle(d)
-  d.effects.push({ type: 'discardFrames' })
   const { c } = d
   c.target = target
   c.noHeading = e.heading === null
@@ -304,12 +359,14 @@ function onRequest(d: Draft, e: Extract<FindEvent, { type: 'request' }>): void {
 
 function onLocated(d: Draft, e: Extract<FindEvent, { type: 'located' }>): void {
   const { c } = d
-  if (e.id !== c.pending) return // an answer to a search that was cancelled or replaced
-  c.pending = null
+  const sweepFrame = c.sweepPending.includes(e.id)
+  if (!sweepFrame && e.id !== c.pending) return // an answer to a search that was cancelled or replaced
+  if (sweepFrame) c.sweepPending = c.sweepPending.filter((id) => id !== e.id)
+  else c.pending = null
   const found = e.result.found && e.result.frameIndex !== null
   if (e.result.signHint) c.signHint = e.result.signHint
 
-  if (c.state === 'checking' || c.state === 'sweepChecking') {
+  if (c.state === 'checking') {
     if (found) {
       const meta = e.frames[e.result.frameIndex as number]
       if (c.noHeading && e.result.box !== null) {
@@ -326,7 +383,7 @@ function onLocated(d: Draft, e: Extract<FindEvent, { type: 'located' }>): void {
         return
       }
     }
-    if (c.state === 'checking' && !c.noHeading) {
+    if (!c.noHeading) {
       say(d, e.nowMs, FIND_PHRASES.notInView)
       beginSweep(d, e.heading, e.nowMs)
     } else {
@@ -335,12 +392,16 @@ function onLocated(d: Draft, e: Extract<FindEvent, { type: 'located' }>): void {
     return
   }
 
-  if (c.state === 'sweeping') {
-    // A look taken while the user paused during the sweep. Finding it ends the sweep; otherwise the sweep carries on.
+  if (c.state === 'sweeping' || c.state === 'sweepChecking') {
+    // A per-frame look, or a look taken while the user paused. Finding the target ends the search; a miss is counted,
+    // and once every look is back after the turn, the sweep is over.
     const memory = found ? memoryFrom(d, e.result, e.frames[e.result.frameIndex as number], e.nowMs) : null
     if (memory !== null) {
       enterGuiding(d, memory, bearing(memory, e.heading ?? memory.heading), e.nowMs)
+      return
     }
+    if (sweepFrame) c.sweepAnswered += 1
+    if (c.state === 'sweepChecking' && c.sweepPending.length === 0) resolveSweep(d, e.nowMs)
     return
   }
 
@@ -353,8 +414,21 @@ function onLocated(d: Draft, e: Extract<FindEvent, { type: 'located' }>): void {
       c.failedRechecks = 0
       return
     }
+    // A target last seen cut off at the bottom and now ahead is probably just below the view: not seeing it says
+    // nothing against it yet.
+    if (c.memory !== null && belowView(c, bearing(c.memory, e.heading ?? c.memory.heading), e.nowMs, d.cfg)) return
     failRecheck(d, e.nowMs)
   }
+}
+
+/** The target was last seen with its base out of the bottom of the frame, is roughly ahead, and that was recent. */
+function belowView(c: FindContext, bearingDeg: number, nowMs: number, cfg: FindConfig): boolean {
+  return (
+    c.memory !== null &&
+    c.memory.clipped === true &&
+    Math.abs(bearingDeg) <= cfg.belowViewAngleDeg &&
+    nowMs - c.memory.seenAt <= cfg.belowViewMaxMs
+  )
 }
 
 function failRecheck(d: Draft, nowMs: number): void {
@@ -364,19 +438,35 @@ function failRecheck(d: Draft, nowMs: number): void {
 
 function onFailed(d: Draft, e: Extract<FindEvent, { type: 'failed' }>): void {
   const { c } = d
-  if (e.id !== c.pending) return
-  c.pending = null
-  if (c.state === 'checking' || c.state === 'sweepChecking') {
+  const sweepFrame = c.sweepPending.includes(e.id)
+  if (!sweepFrame && e.id !== c.pending) return
+  if (sweepFrame) c.sweepPending = c.sweepPending.filter((id) => id !== e.id)
+  else c.pending = null
+  if (c.state === 'checking') {
+    // A hiccup (network, timeout, an unusable reply) gets one more try, quietly, before Find gives up.
+    const transient = e.code === 'network' || e.code === 'timeout' || e.code === 'bad_response'
+    if (transient && c.checkRetries < d.cfg.checkRetryMax) {
+      c.checkRetries += 1
+      issueLocate(d, false)
+      return
+    }
     toError(d, e.code, e.nowMs)
     return
   }
-  if (c.state === 'sweeping') return // a pause look failed: the sweep goes on, and its full-turn call still follows
+  if (c.state === 'sweeping' || c.state === 'sweepChecking') {
+    // One failed look costs one frame (the next overlaps it). Only if every look failed is Find unavailable.
+    if (sweepFrame) {
+      c.sweepFailures += 1
+      c.sweepLastCode = e.code
+    }
+    if (c.state === 'sweepChecking' && c.sweepPending.length === 0) resolveSweep(d, e.nowMs)
+    return
+  }
   if (c.state === 'guiding') {
+    // A failed call (our own pacing limits, the network, a timeout) says nothing about the target: try again later.
+    // Only an answer that does not find it counts toward lost.
     c.rechecking = false
-    // Our own pacing limits say nothing about the target; try again later. Any other failure counts against it.
-    if (e.code === 'too_soon' || e.code === 'limit') return
     c.lastRecheckAt = e.nowMs
-    failRecheck(d, e.nowMs)
   }
 }
 
@@ -398,7 +488,9 @@ function tickSweep(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
       c.sweepFrames += 1
       c.sweepTurned += delta
       c.sweepLastHeading = e.heading
-      d.effects.push({ type: 'capture' })
+      c.nextId += 1
+      c.sweepPending = [...c.sweepPending, c.nextId]
+      d.effects.push({ type: 'capture', id: c.nextId })
       if (c.sweepFrames >= cfg.maxFrames || c.sweepTurned >= cfg.sweepFullTurnDeg) {
         finishSweep(d, now)
         return
@@ -420,22 +512,33 @@ function tickSweep(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
     c.sweepCheckHeading !== null &&
     !c.sweepDwellChecked &&
     c.pending === null &&
-    e.canLocate &&
+    e.canLook &&
     idleMs >= cfg.sweepDwellMs &&
     Math.abs(e.heading - c.sweepCheckHeading) >= cfg.sweepDwellMinTurnDeg
   ) {
     c.sweepDwellChecked = true
     c.sweepCheckHeading = e.heading
     say(d, now, FIND_PHRASES.checking)
-    issueLocate(d, 'current')
+    issueLocate(d, false)
   }
 }
 
+/** The turn is over (or the user stopped): wait for the looks still out, or finish at once if there are none. */
 function finishSweep(d: Draft, nowMs: number): void {
   d.c.state = 'sweepChecking'
   d.c.enteredAt = nowMs
+  if (d.c.sweepPending.length === 0) {
+    resolveSweep(d, nowMs)
+    return
+  }
   say(d, nowMs, FIND_PHRASES.checking)
-  issueLocate(d, 'sweep')
+}
+
+/** Every look is back and none found the target: not found, unless every look failed, which is an error. */
+function resolveSweep(d: Draft, nowMs: number): void {
+  const { c } = d
+  if (c.sweepAnswered === 0 && c.sweepFailures > 0 && c.sweepLastCode !== null) toError(d, c.sweepLastCode, nowMs)
+  else toNotFound(d, nowMs)
 }
 
 function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
@@ -443,15 +546,26 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
   const now = e.nowMs
   if (c.memory === null || e.heading === null) return
 
-  // The detector follows a target it can see, frame by frame, so bearing and distance stay smooth.
-  if (c.memory.source === 'yolo' && e.yolo !== null) {
+  // The detector follows a target it can see, frame by frame, so bearing and distance stay smooth. It keeps to the
+  // object it started with: another of the same kind is taken up only after the first has been gone for a moment.
+  const sighting =
+    c.memory.source === 'yolo' &&
+    e.yolo !== null &&
+    (c.followId === null || e.yolo.trackId === undefined || e.yolo.trackId === c.followId || now - c.yoloSeenAt >= cfg.yoloLostMs)
+      ? e.yolo
+      : null
+  if (sighting !== null) {
     c.memory = {
       ...c.memory,
-      heading: e.heading + e.yolo.angleDeg,
-      distanceM: e.yolo.distanceM === null ? c.memory.distanceM : roundDistance(e.yolo.distanceM),
+      heading: e.heading + sighting.angleDeg,
+      distanceM: sighting.distanceM === null ? c.memory.distanceM : roundDistance(sighting.distanceM),
       seenAt: now,
+      clipped: sighting.clipped ?? false,
     }
+    c.followId = sighting.trackId ?? c.followId
+    c.yoloSeenAt = now
     c.failedRechecks = 0
+    c.lastRecheckAt = now // a followed target needs no re-check; the clock starts when the detector loses it
   }
   if (isStale(c.memory, now, cfg.memoryMaxAgeMs)) {
     toLost(d, now)
@@ -459,31 +573,60 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
   }
 
   const bearingDeg = bearing(c.memory, e.heading)
-  if (c.memory.distanceM !== null && c.memory.distanceM <= cfg.arrivalDistanceM && Math.abs(bearingDeg) < cfg.arrivalAngleDeg) {
-    c.state = 'arrived'
-    c.enteredAt = now
-    say(d, now, arrivedPhrase(c.target))
-    return
+
+  // Arrived: near enough and straight ahead, and it has stayed that way for a moment. When the target's base is out
+  // of the frame its distance is only an upper bound (the nearest floor in view), so it is judged against a larger
+  // distance; tilting the phone down brings the floor, and so a real distance, into view.
+  const limitM = c.memory.clipped === true ? cfg.arrivalClippedM : cfg.arrivalDistanceM
+  if (c.memory.distanceM !== null && c.memory.distanceM <= limitM && Math.abs(bearingDeg) < cfg.arrivalAngleDeg) {
+    c.arrivalSince ??= now
+    if (now - c.arrivalSince >= cfg.arrivalHoldMs) {
+      c.state = 'arrived'
+      c.enteredAt = now
+      say(d, now, arrivedPhrase(c.target))
+      return
+    }
+  } else {
+    c.arrivalSince = null
   }
 
-  const direction = classifyDirection(bearingDeg, cfg)
+  const direction = stableDirection(c.lastSpokenDirection, bearingDeg, cfg)
   if (direction !== c.lastSpokenDirection && now - c.lastDirectionAt >= cfg.guideSpeechCooldownMs) {
     c.lastSpokenDirection = direction
     c.lastDirectionAt = now
     say(d, now, directionPhrase(direction))
   }
 
-  const followedByDetector = c.memory.source === 'yolo' && e.yolo !== null
+  // Seen cut off at the bottom, and ahead: ask once or twice to tilt the phone down, which keeps it in view and gives
+  // the app a real distance. Not needed when the phone is already tilted that far.
+  const below = belowView(c, bearingDeg, now, cfg)
+  if (
+    below &&
+    (e.pitch === null || e.pitch > cfg.tiltPitchDeg) &&
+    c.tiltPrompts < cfg.tiltPromptMax &&
+    now - c.lastTiltAt >= cfg.tiltPromptCooldownMs &&
+    now - c.lastDirectionAt >= cfg.guideSpeechCooldownMs
+  ) {
+    c.tiltPrompts += 1
+    c.lastTiltAt = now
+    say(d, now, FIND_PHRASES.tiltDown)
+  }
+
+  // Ask Gemini again when the target should be in view and the detector is not holding it. The detector gets a moment
+  // to find it again after a flicker, and a target that has probably slipped below the view is not looked for.
+  const detectorHolds = c.memory.source === 'yolo' && now - c.yoloSeenAt < cfg.yoloLostMs
+  const slippedBelow = c.memory.source === 'yolo' && below
   if (
     inView(bearingDeg, env.hfovDeg) &&
-    !followedByDetector &&
+    !detectorHolds &&
+    !slippedBelow &&
     !c.rechecking &&
     e.canLocate &&
     now - c.lastRecheckAt >= cfg.recheckIntervalMs
   ) {
     c.rechecking = true
     c.lastRecheckAt = now
-    issueLocate(d, 'current')
+    issueLocate(d, true)
   }
 }
 
@@ -530,7 +673,7 @@ export function reduce(ctx: FindContext, event: FindEvent, env: FindEnv, cfg: Fi
     case 'cancel':
       if (ctx.state !== 'idle') {
         toIdle(d)
-        d.effects.push({ type: 'discardFrames' }, { type: 'speak', text: FIND_PHRASES.stopped })
+        d.effects.push({ type: 'speak', text: FIND_PHRASES.stopped })
       }
       break
     case 'tick':
