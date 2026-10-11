@@ -15,7 +15,7 @@ Kenshi: a real-time guide for blind and low-vision people that runs on an iPhone
 - Guidance: a Find My-style screen (big arrow, distance, green when aligned), an audio beacon in the AirPods (pulses speed up as the target gets closer, panned toward it), and GPS-style spoken directions.
 - Path line: web/src/geometry/freeSpacePath.ts (step R7) draws a walking line that bends around tracked obstacles. Spoken guidance follows the first leg of that line, so the route avoids objects without the app naming them.
 - Install: web manifest and icons so it can be added to the Home Screen. No service worker.
-- Spoken phrases: only Find guidance ("Turn right a little", "Straight ahead, about 3 meters"), voice replies, status, and health warnings. No object phrases.
+- Spoken phrases: only Find guidance ("Turn right", "Bear left", "Straight ahead", "Turn around", "chair, about 5 meters"), voice replies, status, and health warnings. No object phrases.
 - Audio: Find speech and the beacon through AirPods in transparency mode. A quiet heartbeat tick while healthy; a distinct warning the moment detection degrades.
 - Controls: tap anywhere to talk (find <target>, where is the <target>, take me to <target>, stop, pause, resume, slower, faster, help). A tap that hears nothing does nothing. A long press cancels a running Find, and otherwise pauses or resumes. "Stop" cancels Find; pause is "pause", "hold on", or "wait". The quick-pick buttons (Exit, Door, Elevator, Stairs, Restroom sign, Chair, Trash can, Person) always work, even when speech recognition does not.
 - Geometry: device orientation (pitch and roll), a calibrated horizontal field of view, and the user's eye height give ground-plane distance; box-size distance is the fallback.
@@ -37,7 +37,7 @@ web/                        Vite + React + TypeScript app
   src/geometry/             geometry.ts (clock, distance, elevation, path); freeSpacePath.ts (R7)
   src/tracking/             tracker, smoothing, time-to-contact
   src/alerts/               event bus, SR-2 wording test
-  src/audio/                unlock, tones, speech, heartbeat, engine; beacon (R5)
+  src/audio/                unlock, tones, speech, heartbeat, engine, beacon (R5)
   src/health/               health monitor
   src/voice/                recognizer, commands, control, gesture
   src/find/                 locate client and messages (R2; the Locate types are in core/types.ts), target memory (R3), the Find controller (a pure reducer), phrases and targets (R4); guidance (R5)

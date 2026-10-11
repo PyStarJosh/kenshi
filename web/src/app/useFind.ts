@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createBitmapGrabber } from '../camera/scheduler'
 import { sharedLocator } from '../find/locateClient'
 import type { AudioLink } from './audioLink'
+import { BeaconDriver } from './beaconDriver'
 import { FindRunner } from './findRunner'
 import type { Pipeline } from './pipeline'
 import type { Session } from './session'
@@ -39,10 +40,13 @@ export function useFind(
   useEffect(() => {
     link.setFindActive(() => runner.isActive())
     const detach = runner.attach()
+    // The beacon follows the Find snapshot on the bus: pulses while guiding, a chime on arrival, silence otherwise.
+    const detachBeacon = new BeaconDriver(pipeline.bus, () => link.getBeacon()).attach()
     return () => {
+      detachBeacon()
       detach()
       link.setFindActive(() => false)
     }
-  }, [runner, link])
+  }, [runner, link, pipeline])
   return runner
 }

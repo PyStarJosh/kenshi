@@ -102,13 +102,13 @@ export interface TonePlayerLike {
 /** Fade in and out over this long so notes do not click. */
 const RAMP_S = 0.005
 
-interface PanControl {
+export interface PanControl {
   node: AudioNode
   set(pan: number, atTime: number): void
 }
 
 /** StereoPannerNode where available, an equal-power PannerNode otherwise (older Safari). */
-function createPan(ctx: AudioContext): PanControl {
+export function createPan(ctx: AudioContext): PanControl {
   if (typeof ctx.createStereoPanner === 'function') {
     const node = ctx.createStereoPanner()
     return { node, set: (pan, at) => node.pan.setValueAtTime(pan, at) }

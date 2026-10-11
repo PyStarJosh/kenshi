@@ -24,15 +24,14 @@ import type { FrameDims } from '../geometry/geometry'
 import {
   arrivedPhrase,
   classifyDirection,
-  directionPhrase,
   FIND_PHRASES,
   foundPhrase,
   lookingFor,
   lostPhrase,
   notFoundPhrase,
-  stableDirection,
 } from './phrases'
-import type { Direction } from './phrases'
+import { initialGuidance, nextGuidance, seedGuidance } from './guidance'
+import type { GuidanceState, PathDecision } from './guidance'
 import { FIND_MESSAGES } from './messages'
 import type { LocateClientErrorCode } from './locateClient'
 import { bearing, boxCenterX, estimateTargetDistance, inView, isStale, observe, remember } from './targetMemory'
@@ -80,8 +79,8 @@ export interface FindContext {
   rechecking: boolean
   failedRechecks: number
   lastRecheckAt: number
-  lastSpokenDirection: Direction | null
-  lastDirectionAt: number
+  /** What guidance last said and when, the direction zone it is in, and the countdown levels announced. */
+  guidance: GuidanceState
   /** The detector's track being followed, so a second object of the same kind is not swapped in. */
   followId: number | null
   /** The last time the detector saw the followed target. */
@@ -122,8 +121,7 @@ export function initialContext(): FindContext {
     rechecking: false,
     failedRechecks: 0,
     lastRecheckAt: 0,
-    lastSpokenDirection: null,
-    lastDirectionAt: 0,
+    guidance: initialGuidance(),
     followId: null,
     yoloSeenAt: 0,
     arrivalSince: null,
@@ -163,6 +161,8 @@ export type FindEvent =
       canLook: boolean
       /** The camera pitch now (negative looks down), or null without a tilt reading. */
       pitch: number | null
+      /** What the path line (R7) says about the way ahead, or absent when there is no path line yet. */
+      pathDecision?: PathDecision
     }
   | { type: 'located'; id: number; nowMs: number; heading: number | null; result: LocateResult; frames: FrameMeta[] }
   | { type: 'failed'; id: number; nowMs: number; code: LocateClientErrorCode }
@@ -254,8 +254,7 @@ function enterGuiding(d: Draft, memory: TargetMemory, bearingDeg: number, nowMs:
   c.failedRechecks = 0
   c.rechecking = false
   c.lastRecheckAt = nowMs
-  c.lastSpokenDirection = direction
-  c.lastDirectionAt = nowMs
+  c.guidance = seedGuidance(direction, nowMs)
   c.pending = null
   c.sweepPending = []
   c.arrivalSince = null
@@ -590,12 +589,23 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
     c.arrivalSince = null
   }
 
-  const direction = stableDirection(c.lastSpokenDirection, bearingDeg, cfg)
-  if (direction !== c.lastSpokenDirection && now - c.lastDirectionAt >= cfg.guideSpeechCooldownMs) {
-    c.lastSpokenDirection = direction
-    c.lastDirectionAt = now
-    say(d, now, directionPhrase(direction))
-  }
+  // What to say about the way to go: an instruction (turn, bear, straight, around) or the distance countdown. A box cut
+  // off at the bottom gives only an upper bound for the distance, which must not be read out as if it were measured.
+  const guided = nextGuidance(
+    c.guidance,
+    {
+      bearing: bearingDeg,
+      distanceM: c.memory.distanceM,
+      distanceIsBound: c.memory.clipped === true,
+      pathDecision: e.pathDecision ?? null,
+      state: c.state,
+      label: c.target,
+      nowMs: now,
+    },
+    cfg,
+  )
+  c.guidance = guided.state
+  if (guided.say !== null) say(d, now, guided.say)
 
   // Seen cut off at the bottom, and ahead: ask once or twice to tilt the phone down, which keeps it in view and gives
   // the app a real distance. Not needed when the phone is already tilted that far.
@@ -605,7 +615,8 @@ function tickGuiding(d: Draft, e: Extract<FindEvent, { type: 'tick' }>): void {
     (e.pitch === null || e.pitch > cfg.tiltPitchDeg) &&
     c.tiltPrompts < cfg.tiltPromptMax &&
     now - c.lastTiltAt >= cfg.tiltPromptCooldownMs &&
-    now - c.lastDirectionAt >= cfg.guideSpeechCooldownMs
+    guided.say === null &&
+    now - c.guidance.spokenAt >= cfg.guideSpeechCooldownMs
   ) {
     c.tiltPrompts += 1
     c.lastTiltAt = now

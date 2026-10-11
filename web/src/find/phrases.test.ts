@@ -41,18 +41,20 @@ describe('stableDirection', () => {
     expect(stableDirection(null, 30)).toBe('slightly-right')
   })
 
-  test('moving outward needs to be past the boundary by the margin; moving back needs the same', () => {
+  test('moving outward needs to be past the boundary by the margin (5 degrees); moving back needs the same', () => {
     expect(stableDirection('ahead', 16)).toBe('ahead')
-    expect(stableDirection('ahead', 19)).toBe('ahead')
-    expect(stableDirection('ahead', 20)).toBe('slightly-right')
+    expect(stableDirection('ahead', 20)).toBe('ahead')
+    expect(stableDirection('ahead', 21)).toBe('slightly-right')
     expect(stableDirection('slightly-right', 14)).toBe('slightly-right')
-    expect(stableDirection('slightly-right', 12)).toBe('slightly-right')
-    expect(stableDirection('slightly-right', 11)).toBe('ahead')
-    expect(stableDirection('slightly-left', -49)).toBe('slightly-left')
-    expect(stableDirection('slightly-left', -50)).toBe('left')
+    expect(stableDirection('slightly-right', 11)).toBe('slightly-right')
+    expect(stableDirection('slightly-right', 10)).toBe('ahead')
+    expect(stableDirection('slightly-left', -50)).toBe('slightly-left')
+    expect(stableDirection('slightly-left', -51)).toBe('left')
     expect(stableDirection('left', -43)).toBe('left')
+    expect(stableDirection('left', -41)).toBe('left')
     expect(stableDirection('left', -40)).toBe('slightly-left')
     expect(stableDirection('behind', 133)).toBe('behind')
+    expect(stableDirection('behind', 131)).toBe('behind')
     expect(stableDirection('behind', 130)).toBe('right')
   })
 

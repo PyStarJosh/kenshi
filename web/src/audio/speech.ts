@@ -99,6 +99,11 @@ export class Speaker {
     return this.current !== null
   }
 
+  /** True while an urgent phrase (a health warning) is waiting for its lead-in or being spoken. */
+  isUrgent(): boolean {
+    return this.current?.request.urgent === true
+  }
+
   /**
    * While held (the microphone is open), the current phrase stops and normal phrases are dropped,
    * so the app does not hear itself. Urgent phrases still speak (SR-4).
