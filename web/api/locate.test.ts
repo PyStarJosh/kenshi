@@ -423,6 +423,14 @@ describe('the handler', () => {
     }
   })
 
+  test('a failure is logged with the model, frame count and elapsed time, and the request asks for a short answer', async () => {
+    fetchMock.mockResolvedValue(new Response('{}', { status: 503 }))
+    await post(body('chair', frames(2)))
+    const line = String((console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0])
+    expect(line).toMatch(/^locate: network model=gemini-3\.1-flash-lite frames=2 ms=\d+ gemini=503$/)
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).generation_config).toMatchObject({ max_output_tokens: 300, temperature: 0 })
+  })
+
   test('never leaks the key, the target, or image data into a reply or a log line', async () => {
     fetchMock.mockResolvedValue(new Response(`{"error":{"message":"bad ${KEY}"}}`, { status: 500 }))
     const response = await post(body('secret target'))
