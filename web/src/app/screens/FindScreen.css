@@ -1,0 +1,236 @@
+/* The Find screen fills the display over the Talk button. It lets touches through, except on its own buttons, so a tap
+   (listen) and a long press (cancel Find) work anywhere. Sizes use rem and clamp so large text and both orientations fit. */
+.find-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right))
+    calc(3.5rem + env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+  background: #10151a;
+  color: #fff;
+  pointer-events: none;
+  overflow-wrap: anywhere;
+  transition: background-color 0.15s;
+}
+
+.find-screen.find-aligned {
+  background: #0b7a39;
+}
+
+/* The camera picture is enlarged behind: show it through a tint instead of hiding it. */
+.find-screen.find-see-through {
+  background: #000a;
+  text-shadow: 0 0 0.4rem #000;
+}
+
+.find-screen.find-see-through.find-aligned {
+  background: #0b7a39b0;
+}
+
+.find-screen button {
+  pointer-events: auto;
+  touch-action: manipulation;
+  font: inherit;
+  cursor: pointer;
+}
+
+.find-screen button:focus-visible {
+  outline: 0.25rem solid #4da3ff;
+  outline-offset: 0.2rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.find-title {
+  margin: 0;
+  /* Leave room for the camera inset in the top corner. */
+  padding-right: clamp(7.5rem, 30vmin, 14.5rem);
+  font-size: clamp(2rem, 9vmin, 4rem);
+  line-height: 1.1;
+}
+
+.find-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  text-align: center;
+}
+
+.find-visual {
+  flex: 0 1 auto;
+  width: min(100%, 55vmin);
+  max-height: 40dvh;
+  min-height: 0;
+}
+
+.find-dim {
+  opacity: 0.35;
+}
+
+.arrow {
+  fill: #fff;
+  transform-origin: 50px 50px;
+  transition: transform 0.15s linear;
+}
+
+.ring-on {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 9;
+  stroke-linecap: round;
+}
+
+.ring-off {
+  fill: none;
+  stroke: #fff4;
+  stroke-width: 9;
+  stroke-linecap: round;
+}
+
+.check-ring {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 5;
+}
+
+.check-mark {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 10;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.find-readout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.find-readout p {
+  margin: 0;
+}
+
+.find-distance {
+  font-size: clamp(4rem, 22vmin, 9rem);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.find-direction {
+  font-size: clamp(1.6rem, 6vmin, 2.75rem);
+  font-weight: 600;
+}
+
+.find-headline {
+  font-size: clamp(1.75rem, 8vmin, 3.25rem);
+  font-weight: 700;
+}
+
+.find-stop {
+  min-height: max(60px, 4.5rem);
+  border: 0.25rem solid #fff;
+  border-radius: 1rem;
+  background: #000a;
+  color: #fff;
+  font-size: clamp(1.75rem, 7vmin, 2.75rem);
+  font-weight: 800;
+}
+
+/* Home: a way to say the target, and the quick picks. */
+.find-home {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow-y: auto;
+  pointer-events: auto;
+}
+
+.find-say {
+  min-height: max(60px, 4.5rem);
+  border: 0.25rem solid #fff;
+  border-radius: 1rem;
+  background: #fff;
+  color: #10151a;
+  font-size: clamp(1.5rem, 6vmin, 2.5rem);
+  font-weight: 800;
+}
+
+.find-picks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.6rem;
+}
+
+.find-picks button {
+  min-height: max(60px, 4rem);
+  padding: 0.4rem 0.75rem;
+  border: 0.2rem solid #fff;
+  border-radius: 0.9rem;
+  background: transparent;
+  color: #fff;
+  font-size: clamp(1.25rem, 4.5vmin, 1.9rem);
+  font-weight: 700;
+}
+
+/* Held sideways: the picture (or arrow) on the left, the numbers and words on the right, Stop below. */
+@media (orientation: landscape) {
+  .find-body {
+    flex-direction: row;
+    gap: 1.5rem;
+  }
+
+  .find-visual {
+    width: auto;
+    height: 100%;
+    max-height: none;
+    max-width: 45%;
+    aspect-ratio: 1;
+  }
+
+  .find-screen {
+    padding-bottom: calc(2.75rem + env(safe-area-inset-bottom));
+  }
+
+  .find-distance {
+    font-size: clamp(3rem, 20vh, 8rem);
+  }
+
+  .find-direction {
+    font-size: clamp(1.4rem, 8vh, 2.5rem);
+  }
+
+  .find-headline {
+    font-size: clamp(1.5rem, 9vh, 3rem);
+  }
+
+  .find-title {
+    font-size: clamp(1.75rem, 11vh, 3.5rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arrow,
+  .find-screen {
+    transition: none;
+  }
+}

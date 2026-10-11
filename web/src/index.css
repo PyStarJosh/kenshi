@@ -41,6 +41,52 @@ body {
   aspect-ratio: var(--ar);
 }
 
+/* Live: the picture is a small inset in the top corner, above the Find screen; tapping it (the button over it) makes it
+   fill the screen behind the Find screen, which then lets it show through. */
+.stage-inset {
+  --inset: clamp(6.5rem, 28vmin, 14rem);
+  position: absolute;
+  z-index: 4;
+  top: max(0.5rem, env(safe-area-inset-top));
+  right: max(0.5rem, env(safe-area-inset-right));
+  width: var(--inset);
+  border: 0.15rem solid #fff;
+  border-radius: 0.6rem;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.stage-large {
+  z-index: 2;
+}
+
+.inset-toggle {
+  position: absolute;
+  z-index: 5;
+  top: max(0.5rem, env(safe-area-inset-top));
+  right: max(0.5rem, env(safe-area-inset-right));
+  width: clamp(6.5rem, 28vmin, 14rem);
+  aspect-ratio: var(--ar, 1.7778);
+  border: 0;
+  border-radius: 0.6rem;
+  background: transparent;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Enlarged, the button shrinks to a corner target of its own, at least 60 px. */
+.inset-toggle-large {
+  width: max(60px, 4rem);
+  aspect-ratio: 1;
+  border: 0.15rem solid #fff;
+  background: #0008;
+}
+
+.inset-toggle:focus-visible {
+  outline: 0.25rem solid #4da3ff;
+  outline-offset: 0.2rem;
+}
+
 .stage-off {
   position: absolute;
   width: 1px;
@@ -128,6 +174,7 @@ body {
   color: #fff;
   font-size: 1.125rem;
   text-align: center;
+  z-index: 6;
   /* Taps pass through to the Talk button underneath. */
   pointer-events: none;
 }

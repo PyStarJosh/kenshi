@@ -16,7 +16,16 @@ function setup(withBeacon = true) {
   }
   const detach = new BeaconDriver(bus, () => (withBeacon ? beacon : null)).attach()
   const snap = (patch: Partial<FindSnapshot>) =>
-    bus.publish('find', { state: 'idle', target: null, bearingDeg: null, distanceM: null, source: null, ...patch })
+    bus.publish('find', {
+      state: 'idle',
+      target: null,
+      bearingDeg: null,
+      distanceM: null,
+      distanceIsBound: false,
+      source: null,
+      sweepFrames: 0,
+      ...patch,
+    })
   return { bus, calls, detach, snap }
 }
 

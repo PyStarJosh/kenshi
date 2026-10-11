@@ -41,7 +41,7 @@ web/                        Vite + React + TypeScript app
   src/health/               health monitor
   src/voice/                recognizer, commands, control, gesture
   src/find/                 locate client and messages (R2; the Locate types are in core/types.ts), target memory (R3), the Find controller (a pure reducer), phrases and targets (R4); guidance (R5)
-  src/app/                  session, audio link, pipeline, Find runner (the adapter for the Find controller), settings, calibration, screens (quick-pick panel R4, Find screen R6)
+  src/app/                  session, audio link, pipeline, Find runner (the adapter for the Find controller), settings, calibration, screens (Find screen R6), findView (its pure view model)
   scripts/copy-ort.mjs      copies onnxruntime-web WebAssembly files into public/ort (runs before dev and build)
   vercel.json               cross-origin isolation headers
 docs/                       SRS.md, SDS.md, DEMO.md (R8)

@@ -43,40 +43,6 @@ interface Grabbed extends Capture {
 /** How often the controller is ticked besides once per detected frame, so timers run on a still camera. */
 const TICK_MS = 250
 
-/** How far to turn, for the screen only: "20 degrees left". It changes with every degree, so it is not a live region. */
-export function describeBearing(snapshot: FindSnapshot): string {
-  if (snapshot.state !== 'guiding' || snapshot.bearingDeg === null) return ''
-  return `${Math.abs(snapshot.bearingDeg)} degrees ${snapshot.bearingDeg >= 0 ? 'right' : 'left'}`
-}
-
-/**
- * A short line for the status text: what Find is doing. It names the state and not the changing bearing, because it
- * sits in a live region, and a screen reader would otherwise read out every degree over the app's own speech.
- */
-export function describeSnapshot(snapshot: FindSnapshot): string {
-  const target = snapshot.target ?? ''
-  switch (snapshot.state) {
-    case 'idle':
-      return ''
-    case 'checking':
-      return `Looking for ${target}...`
-    case 'sweeping':
-      return `Turn slowly to your right to look for ${target}.`
-    case 'sweepChecking':
-      return `Checking the pictures for ${target}...`
-    case 'guiding':
-      return `Guiding to ${target}.`
-    case 'lost':
-      return `Lost the ${target}. Scanning.`
-    case 'arrived':
-      return `${target}: within reach.`
-    case 'notFound':
-      return `Could not find ${target} here.`
-    case 'error':
-      return "Find isn't available right now."
-  }
-}
-
 export class FindRunner {
   private readonly deps: FindRunnerDeps
   private ctx: FindContext = initialContext()
@@ -171,7 +137,9 @@ export class FindRunner {
       prev.target === next.target &&
       prev.bearingDeg === next.bearingDeg &&
       prev.distanceM === next.distanceM &&
-      prev.source === next.source
+      prev.distanceIsBound === next.distanceIsBound &&
+      prev.source === next.source &&
+      prev.sweepFrames === next.sweepFrames
     ) {
       return
     }

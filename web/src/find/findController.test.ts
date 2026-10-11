@@ -1146,7 +1146,15 @@ describe('no heading', () => {
 describe('the snapshot', () => {
   test('idle shows nothing; guiding shows the target, the bearing and where it came from', () => {
     const sim = new Sim()
-    expect(snapshotOf(sim.ctx, 0)).toEqual({ state: 'idle', target: null, bearingDeg: null, distanceM: null, source: null })
+    expect(snapshotOf(sim.ctx, 0)).toEqual({
+      state: 'idle',
+      target: null,
+      bearingDeg: null,
+      distanceM: null,
+      distanceIsBound: false,
+      source: null,
+      sweepFrames: 0,
+    })
     sim.guideByGemini({}, 0.75)
     const snapshot = snapshotOf(sim.ctx, 0)
     expect(snapshot).toMatchObject({ state: 'guiding', target: 'chair', source: 'gemini' })

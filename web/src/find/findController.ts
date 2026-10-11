@@ -712,6 +712,8 @@ export function snapshotOf(ctx: FindContext, heading: number | null): FindSnapsh
     target: ctx.state === 'idle' ? null : ctx.target,
     bearingDeg: guiding && heading !== null ? bearing(ctx.memory as TargetMemory, heading) : null,
     distanceM: ctx.memory?.distanceM ?? null,
+    distanceIsBound: ctx.memory?.clipped === true,
     source: ctx.memory?.source ?? null,
+    sweepFrames: ctx.state === 'sweeping' || ctx.state === 'sweepChecking' ? ctx.sweepFrames : 0,
   }
 }

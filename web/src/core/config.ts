@@ -329,6 +329,14 @@ export const CONFIG = {
     // Automatic retries of the first check after a transient failure (network, timeout, unusable reply).
     checkRetryMax: 1,
 
+    // ---- The Find screen (R6). FR-27 ----
+    // The whole background turns green inside alignedEnterDeg of straight ahead, and stays green until the bearing passes
+    // alignedExitDeg, so it does not flicker at the edge.
+    alignedEnterDeg: 15,
+    alignedExitDeg: 20,
+    // The "Found: Exit" screen stays up this long before the guiding view.
+    foundScreenMs: 1_500,
+
     // ---- Guidance (R5). Starting values; to be measured on the phone. FR-25 ----
     // An instruction that asks the user to do something (turn, bear, go around) is said again this often until they do.
     guidanceRepeatMs: 5_000,
