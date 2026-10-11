@@ -1,12 +1,9 @@
 import { describe, expect, test } from 'vitest'
 import { EventBus } from '../alerts/bus'
-import { AlertPolicy } from '../alerts/policy'
 import type { TrackLookup } from '../audio/engine'
-import { CONFIG } from '../core/config'
 import type {
   AlertEvent,
   AlertOutcome,
-  ClassInfo,
   EventMap,
   FrameResult,
   HealthState,
@@ -18,17 +15,6 @@ import { Pipeline } from './pipeline'
 import type { PipelineLink, PipelineSession, PipelineTracker } from './pipeline'
 import type { SessionState } from './session'
 
-const A = CONFIG.alerts
-
-const klass = (id: number, label: string): ClassInfo => ({
-  id,
-  label,
-  spokenName: label,
-  typicalHeightM: null,
-  groundContact: true,
-  alertable: true,
-})
-const CLASSES = [klass(0, 'person'), klass(1, 'chair'), klass(2, 'backpack')]
 
 function track(overrides: Partial<Track> = {}): Track {
   return {
@@ -90,7 +76,6 @@ class FakeSession implements PipelineSession {
 class FakeLink implements PipelineLink {
   alerts: AlertEvent[] = []
   lookup: TrackLookup | null = null
-  summarizer: (() => string) | null = null
   throwOnAlert = false
   private outcomeListeners = new Set<(alert: AlertEvent, outcome: AlertOutcome) => void>()
   private healthListeners = new Set<(health: HealthState) => void>()
@@ -100,9 +85,6 @@ class FakeLink implements PipelineLink {
   handleAlert(alert: AlertEvent) {
     this.alerts.push(alert)
     if (this.throwOnAlert) throw new Error('speaker broke')
-  }
-  setSummarizer(summarizer: (() => string) | null) {
-    this.summarizer = summarizer
   }
   setTrackLookup(lookup: TrackLookup | null) {
     this.lookup = lookup
@@ -156,7 +138,6 @@ function setup(options: { onBusError?: (topic: string, error: unknown) => void }
     session,
     link,
     tracker,
-    policy: new AlertPolicy(CLASSES),
     getSettings: () => ({ eyeHeightM: 1.6, horizontalFovDeg: 65 }),
     now: () => clock.nowMs,
     bus,
@@ -177,13 +158,22 @@ function setup(options: { onBusError?: (topic: string, error: unknown) => void }
 }
 
 describe('the live path', () => {
-  test('a frame goes out as frame, then tracks, then an alert, and the audio link receives the alert', () => {
+  test('a frame goes out as frame, then tracks, and nothing is announced about the objects', () => {
     const t = setup()
-    t.send([track()])
-    expect(t.events).toEqual(['frame', 'tracks', 'alert'])
-    expect(t.link.alerts).toHaveLength(1)
-    expect(t.link.alerts[0].phrase).toBe("Chair, 12 o'clock, about 2.5 meters.")
-    expect(t.pipeline.getTracks()).toHaveLength(1)
+    t.send([track(), track({ id: 2, distanceM: 0.8, inPath: true })])
+    expect(t.events).toEqual(['frame', 'tracks'])
+    expect(t.link.alerts).toHaveLength(0)
+    expect(t.pipeline.getTracks()).toHaveLength(2)
+  })
+
+  test('no number of frames or tracks makes the detector speak', () => {
+    const t = setup()
+    for (let i = 0; i < 20; i++) {
+      t.clock.nowMs += 500
+      t.send([track({ id: i + 1, distanceM: 1 })])
+    }
+    expect(t.link.alerts).toHaveLength(0)
+    expect(t.events.filter((e) => e === 'alert')).toHaveLength(0)
   })
 
   test('the tracker gets the tilt from when the frame was captured, and the current settings', () => {
@@ -192,86 +182,30 @@ describe('the live path', () => {
     expect(t.session.tiltRequests).toEqual([1000 - 70])
     expect(t.tracker.updates).toEqual([{ tiltTimeMs: 930, eye: 1.6 }])
   })
-
-  test('sent alerts are kept as captions with the reason they were raised', () => {
-    const t = setup()
-    t.send([track()])
-    const [caption] = t.pipeline.getCaptions()
-    expect(caption.reason).toBe('first')
-    expect(caption.alert.phrase).toMatch(/^Chair/)
-    expect(caption.atMs).toBe(1000)
-  })
-
-  test('only the latest few captions are kept', () => {
-    const t = setup()
-    for (let id = 1; id <= 12; id++) {
-      t.clock.nowMs += 5000
-      t.send([track({ id, classId: 2, label: 'backpack' })])
-      t.link.report(t.link.alerts.at(-1)!, 'finished')
-    }
-    expect(t.pipeline.getCaptions().length).toBeLessThanOrEqual(6)
-    expect(t.pipeline.getCaptions().at(-1)!.alert.trackId).toBe(12)
-  })
-
-  test('a frame with nothing worth announcing produces no alert', () => {
-    const t = setup()
-    t.send([track({ inPath: false })])
-    expect(t.link.alerts).toHaveLength(0)
-    expect(t.events).toEqual(['frame', 'tracks'])
-  })
 })
 
-describe('the audio link feeds back', () => {
-  test('the next alert waits until the first is reported finished, and the minimum gap has passed', () => {
+describe('alerts from other modules', () => {
+  const alert = (id: string): AlertEvent => ({
+    id,
+    kind: 'status',
+    priority: 'normal',
+    trackId: null,
+    phrase: 'Turn left.',
+    pan: null,
+    frameTimeMs: 0,
+    createdTimeMs: 0,
+  })
+
+  test('an alert put on the bus reaches the audio link, and its outcome comes back on the bus', () => {
     const t = setup()
-    const both = [track({ id: 1 }), track({ id: 2, classId: 2, label: 'backpack', distanceM: 3 })]
-    t.send(both)
-    expect(t.link.alerts).toHaveLength(1)
-    t.clock.nowMs += 3000
-    t.send(both)
-    expect(t.link.alerts).toHaveLength(1) // still being spoken as far as the policy knows
+    t.bus.publish('alert', alert('find-1'))
+    expect(t.link.alerts.map((a) => a.id)).toEqual(['find-1'])
     t.link.report(t.link.alerts[0], 'finished')
-    t.clock.nowMs += A.minGapMs + 100
-    t.send(both)
-    expect(t.link.alerts).toHaveLength(2)
-    expect(t.link.alerts[1].trackId).toBe(2)
-  })
-
-  test('a "started" report does not free the speaker', () => {
-    const t = setup()
-    const both = [track({ id: 1 }), track({ id: 2, classId: 2, label: 'backpack', distanceM: 3 })]
-    t.send(both)
-    t.link.report(t.link.alerts[0], 'started')
-    t.clock.nowMs += 3000
-    t.send(both)
-    expect(t.link.alerts).toHaveLength(1)
+    expect(t.outcomes).toEqual([{ id: 'find-1', outcome: 'finished' }])
   })
 })
 
-describe('an alert that was not heard', () => {
-  test('is sent again when the audio engine reports it dropped, because the user never heard it', () => {
-    const t = setup()
-    t.send([track()])
-    t.link.report(t.link.alerts[0], 'dropped-stale') // for example it waited behind the greeting
-    t.clock.nowMs += A.minGapMs + 100
-    t.send([track()])
-    expect(t.link.alerts).toHaveLength(2)
-    expect(t.link.alerts[1].trackId).toBe(1)
-  })
-
-  test('is not sent again once it has finished', () => {
-    const t = setup()
-    t.send([track()])
-    t.link.report(t.link.alerts[0], 'finished')
-    for (let i = 0; i < 5; i++) {
-      t.clock.nowMs += 2000
-      t.send([track()])
-    }
-    expect(t.link.alerts).toHaveLength(1)
-  })
-})
-
-describe('the track lookup and the summary', () => {
+describe('the track lookup', () => {
   test('the audio link can look up live tracks, and a track that has gone is no longer found', () => {
     const t = setup()
     t.send([track({ id: 4, distanceM: 2.1 })])
@@ -279,65 +213,16 @@ describe('the track lookup and the summary', () => {
     t.send([])
     expect(t.link.lookup!(4)).toBeNull()
   })
-
-  test("the summary says what's around from the current tracks", () => {
-    const t = setup()
-    t.send([track({ id: 1, inPath: false, distanceM: 2 })])
-    expect(t.link.summarizer!()).toBe("Chair, 12 o'clock, about 2 meters.")
-    t.send([])
-    expect(t.link.summarizer!()).toMatch(/I can miss things/)
-  })
-})
-
-describe('drops are announced on the bus', () => {
-  test('an alert dropped for old frames is reported as dropped-stale', () => {
-    const t = setup()
-    const both = [track({ id: 1 }), track({ id: 2, classId: 2, label: 'backpack', distanceM: 3 })]
-    t.send(both) // alert-1 goes out and is never reported finished
-    t.clock.nowMs += 200
-    t.send(both) // alert for track 2 waits behind it
-    t.clock.nowMs += 200
-    t.send(both, A.staleLimitMs + 500) // a frame captured long ago
-    expect(t.outcomes).toEqual([{ id: expect.any(String), outcome: 'dropped-stale' }])
-  })
-
-  test('an alert whose track vanished while it waited is reported as dropped-track-gone', () => {
-    const t = setup()
-    const both = [track({ id: 1 }), track({ id: 2, classId: 2, label: 'backpack', distanceM: 3 })]
-    t.send(both)
-    t.clock.nowMs += 200
-    t.send(both)
-    t.clock.nowMs += 200
-    t.send([track({ id: 1 })])
-    expect(t.outcomes.map((o) => o.outcome)).toEqual(['dropped-track-gone'])
-  })
-
-  test('drops that the shared outcome type cannot express are not put on the bus', () => {
-    const t = setup()
-    const busy = track({ id: 1 })
-    t.send([busy])
-    t.clock.nowMs += 200
-    t.send([busy, track({ id: 2, classId: 2, label: 'backpack', distanceM: 3 })])
-    t.clock.nowMs += 200
-    t.send([busy, track({ id: 2, classId: 2, label: 'backpack', distanceM: 3, inPath: false })]) // no longer in the path
-    expect(t.outcomes).toEqual([])
-  })
 })
 
 describe('pause, resume, and detaching', () => {
-  test('pausing resets the tracker and the policy, so the same object is announced again afterwards', () => {
+  test('pausing resets the tracker and clears the tracks', () => {
     const t = setup()
     t.send([track({ id: 1 })])
-    expect(t.link.alerts).toHaveLength(1)
-    t.link.report(t.link.alerts[0], 'finished')
     t.session.setState('paused')
     expect(t.tracker.resets).toBeGreaterThanOrEqual(1)
     expect(t.pipeline.getTracks()).toHaveLength(0)
     expect(t.link.lookup!(1)).toBeNull()
-    t.session.setState('running')
-    t.clock.nowMs += 3000
-    t.send([track({ id: 1 })])
-    expect(t.link.alerts).toHaveLength(2)
   })
 
   test('changes that keep the state the same do not reset anything', () => {
@@ -354,9 +239,8 @@ describe('pause, resume, and detaching', () => {
     const t = setup()
     t.detach()
     t.send([track()])
-    expect(t.link.alerts).toHaveLength(0)
+    expect(t.events).toEqual([])
     expect(t.link.lookup).toBeNull()
-    expect(t.link.summarizer).toBeNull()
   })
 })
 
@@ -365,9 +249,18 @@ describe('failures', () => {
     const errors: string[] = []
     const t = setup({ onBusError: (topic, error) => errors.push(`${topic}: ${(error as Error).message}`) })
     t.link.throwOnAlert = true
-    t.send([track()])
+    t.bus.publish('alert', {
+      id: 'x',
+      kind: 'status',
+      priority: 'normal',
+      trackId: null,
+      phrase: 'x',
+      pan: null,
+      frameTimeMs: 0,
+      createdTimeMs: 0,
+    })
     expect(errors).toEqual(['alert: speaker broke'])
-    t.clock.nowMs += 200
+    t.send([track()])
     t.send([track()])
     expect(t.events.filter((e) => e === 'tracks')).toHaveLength(2)
   })
@@ -387,7 +280,7 @@ describe('voice goes on the bus', () => {
     const t = setup()
     const intents: VoiceIntent[] = []
     t.bus.subscribe('voice', (intent) => intents.push(intent))
-    t.link.say('whats-around')
-    expect(intents).toEqual(['whats-around'])
+    t.link.say('pause')
+    expect(intents).toEqual(['pause'])
   })
 })

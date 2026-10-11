@@ -1,10 +1,10 @@
 # Software Design Specification: Kenshi
 
-Version 0.2 (Find mode pivot, step R0) · How we meet [SRS.md](SRS.md). Type names refer to `web/src/core/types.ts`; tunable numbers to `web/src/core/config.ts` (`CONFIG.<section>.<name>`). Numbers written here are the starting defaults from config.
+Version 0.3 (silent detector, step P1) · How we meet [SRS.md](SRS.md). Type names refer to `web/src/core/types.ts`; tunable numbers to `web/src/core/config.ts` (`CONFIG.<section>.<name>`). Numbers written here are the starting defaults from config.
 
 ## 1. Architecture overview
 
-Walk mode runs entirely in the browser; Find mode adds one network call to a Vercel function that asks Gemini (section 13). Heavy work (preprocessing, inference, postprocessing) runs in one Web Worker. Everything else is light and runs on the main thread. Modules talk through typed function calls along the main data path, and through the event bus for alerts, health, voice, settings, and telemetry. `app/session.ts` owns the live run (start, pause, resume, page hide) and `app/pipeline.ts` wires each frame through the tracker and the alert policy, publishes the results on the event bus, and connects the audio link.
+Detection runs entirely in the browser and never speaks about objects (SR-12); its tracks only shape the route. Find adds one network call to a Vercel function that asks Gemini (section 13). Heavy work (preprocessing, inference, postprocessing) runs in one Web Worker. Everything else is light and runs on the main thread. Modules talk through typed function calls along the main data path, and through the event bus for alerts, health, voice, and settings. `app/session.ts` owns the live run (start, pause, resume, page hide) and `app/pipeline.ts` wires each frame through the tracker, publishes the tracks on the event bus, and connects the audio link.
 
 ```mermaid
 flowchart TD
@@ -15,8 +15,9 @@ flowchart TD
   SET[Settings] --> GEO
   TRK -->|Track| GEO
   GEO -->|Track with geometry| MOT[Smoothing and time to contact]
-  MOT -->|Track| POL[Alert policy]
-  POL -->|AlertEvent| BUS[Event bus]
+  MOT -->|Track| RTE[Path line, R7]
+  RTE --> FND[Find controller, R4 to R6]
+  FND -->|AlertEvent| BUS[Event bus]
   VOI[Voice commands] -->|VoiceIntent| BUS
   BUS -->|AlertEvent| AUD[Audio engine]
   SET --> AUD
@@ -25,7 +26,7 @@ flowchart TD
   ORI -->|OrientationSample| HLT
   HLT -->|HealthState| BUS
   BUS -->|HealthState| AUD
-  BUS -->|VoiceIntent| POL
+  BUS -->|VoiceIntent| FND
 ```
 
 ## 2. Modules
@@ -73,11 +74,9 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **In → out:** `FrameResult` → `Track[]` (matching); geometry-annotated `Track[]` → `Track[]` with smoothed distance and motion.
 - **Satisfies:** FR-4, FR-5, NFR-6.
 
-### 2.8 Alert policy and phrases
-- **Path:** `alerts/policy.ts` (decisions), `alerts/phrases.ts` (the wording of object alerts and the "what's around me" answer)
-- **Responsibility:** choose which tracks become `AlertEvent`s, with priority, pan, cooldowns, and the queue rules in section 7; build the object phrases in the CLAUDE.md format; answer "what's around me". Pure: the caller passes the time. `phrases.ts` holds the object and summary wording, so SR-2 can be tested in one file; health, voice, and help texts live with their own modules (`health/monitor.ts`, `voice/commands.ts`), and `alerts/wording.test.ts` checks the wording of all of them against the SR-2 word list.
-- **In → out:** `Track[]` + the time of the frame and the current time → at most one `AlertEvent` per frame, plus the alerts it dropped; `notifyOutcome(alertId, AlertOutcome)` from the audio side; `summarize(Track[])` → one phrase.
-- **Satisfies:** FR-9, FR-10, FR-11, SR-2, SR-3, SR-4, SR-7, NFR-6.
+### 2.8 Alert policy and phrases (removed)
+- Removed in step P1. `alerts/policy.ts` and `alerts/phrases.ts` chose and worded spoken obstacle alerts and the "what's around me" answer. The detector is now silent (SR-12): tracks go on the bus (`tracks`) and feed the path line (R7), and nothing turns them into speech. `alerts/bus.ts` and `alerts/wording.test.ts` (the SR-2 word check) stay in the `alerts/` folder.
+- **Satisfies:** SR-2, SR-12.
 
 ### 2.9 Event bus
 - **Path:** `alerts/bus.ts`
@@ -91,11 +90,11 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Speech:** at most one phrase waiting (the newest wins); urgent cancels and speaks at once; an enhanced local English voice is preferred once `voiceschanged` lists voices; a watchdog ends a phrase whose end event never comes, so the heartbeat cannot stay blocked.
 - **Responsibility:** unlock the `AudioContext` and speech on Start; play the panned lead-in tone; speak phrases with `speechSynthesis` at the user's rate; one utterance at a time with urgent preemption; run the heartbeat only while `HealthState.status` is `healthy` and fresh; run the paused reminder. Before speaking, drops any alert past `staleLimitMs` or whose track is gone.
 - **In → out:** `AlertEvent`, `HealthState`, `Settings` → sound; emits `alertOutcome` with `AlertOutcome`.
-- **Satisfies:** FR-12, FR-13, FR-17, FR-18, SR-1, SR-3, SR-4, SR-9, NFR-3, NFR-4.
+- **Satisfies:** FR-13, FR-17, FR-18, SR-1, SR-3, SR-4, SR-9.
 
 ### 2.11 Voice commands
 - **Path:** `voice/recognizer.ts` (adapter around the browser recognizer), `voice/commands.ts` (pure text → `VoiceIntent`)
-- **Responsibility:** on tap, listen up to `listenTimeoutMs`, map text to a `VoiceIntent`; on failure or silence, emit `whats-around` (tap fallback). Long press toggles `pause`/`resume`.
+- **Responsibility:** on tap, listen up to `listenTimeoutMs`, map text to a `VoiceIntent`; on failure say once that voice is unavailable; on silence do nothing. There is no command that lists objects. Long press toggles `pause`/`resume`.
 - **In → out:** gesture, microphone → `VoiceIntent`.
 - **Satisfies:** FR-15, FR-16, FR-18.
 
@@ -115,9 +114,9 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Satisfies:** FR-17, FR-6, FR-7.
 
 ### 2.15 Pipeline orchestrator and screens
-- **Path:** `app/session.ts` (start, pause, resume, page hide, shutdown), `app/useSession.ts`, `app/messages.ts`, `app/pipeline.ts` and `app/usePipeline.ts` (tracker, alert policy, event bus, audio link), `app/screens/` (including `DebugOverlay.tsx`, shown with `?debug`, which draws the pipeline's tracks and shows its alerts as captions), `App.tsx`.
+- **Path:** `app/session.ts` (start, pause, resume, page hide, shutdown), `app/useSession.ts`, `app/messages.ts`, `app/pipeline.ts` and `app/usePipeline.ts` (tracker, event bus, audio link), `app/screens/` (including `DebugOverlay.tsx`, shown with `?debug`, which draws the pipeline's tracks), `App.tsx`.
 - **Responsibility:** per-frame wiring (section 3), Start sequence (wake lock, camera, and model load all start in the Start tap), pause/resume, aria-live status line, large Talk area. Landscape-first layout that also works upright.
-- **Satisfies:** FR-16, FR-18, NFR-9, NFR-10, NFR-11, NFR-12, SR-7, SR-8.
+- **Satisfies:** FR-16, FR-18, NFR-9, NFR-10, NFR-11, NFR-12, SR-8, SR-12.
 
 ### 2.16 Offline cache (removed)
 - Never built. NFR-8 is removed: the app has no service worker, and Find needs a network. Home Screen install (FR-29, step R1) uses a manifest and icons only.
@@ -126,7 +125,7 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - The stretch "describe" command and `web/api/describe.ts` were dropped. Find mode (section 13) replaces them as the only feature that sends frames off the phone.
 
 ### 2.18 Find mode modules
-- Planned in steps R1 to R7; components, data flow, state machine, and latency budget are in section 13. They reuse the camera, orientation, geometry, tracker, alert policy, event bus, tones, speech, voice, and health modules (see PROGRESS.md).
+- Planned in steps R1 to R7; components, data flow, state machine, and latency budget are in section 13. They reuse the camera, orientation, geometry, tracker, event bus, tones, speech, voice, and health modules (see PROGRESS.md).
 
 ## 3. Per-frame data flow
 
@@ -136,14 +135,14 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 4. **Track.** The tracker matches detections to tracks and updates confirmation.
 5. **Geometry.** For each track, geometry adds clock, distance, elevation, and `inPath` using the latest `OrientationSample` and `Settings`.
 6. **Motion.** Smoothing and time-to-contact set `closingSpeedMps`, `timeToContactS`, `approaching`.
-7. **Policy.** The policy turns eligible tracks into `AlertEvent`s and publishes them.
-8. **Audio.** The audio engine runs the stale check and track check, plays the tone, then speaks.
+7. **Publish.** The pipeline publishes `frame` and `tracks` on the bus. Nothing speaks about them; the path line (R7) reads the tracks.
+8. **Audio.** Alerts that other modules put on the bus (Find guidance, health) go to the audio engine, which runs the stale check and track check, plays the tone, then speaks.
 
 All timestamps use `performance.now()` on the main thread, so every latency is measured from `captureTimeMs`.
 
 ## 4. Latency budget
 
-Budget for the **urgent path**, from the capture of the confirming frame, using p95 values. Sums of p95s overstate the real p95, so the margin is conservative.
+Budget for the **detection path**, from the capture of a frame to its tracks, using p95 values. Sums of p95s overstate the real p95, so the margin is conservative. The alert stages (policy, tone, speech) were removed in step P1 along with NFR-3 and NFR-4.
 
 | Stage | Budget (ms) | Cumulative (ms) | Notes |
 |---|---|---|---|
@@ -152,11 +151,7 @@ Budget for the **urgent path**, from the capture of the confirming frame, using 
 | Preprocess | 15 | 50 | letterbox and tensor build |
 | Inference | 120 | 170 | NFR-2 |
 | Postprocess | 10 | 180 | decode, per-class threshold, NMS, scale to the frame |
-| Tracking and geometry | 10 | 190 | main thread, pure functions |
-| Alert policy | 5 | 195 | |
-| Audio start (urgent tone) | 25 | **220** | NFR-3 target 300; margin 80 |
-| Tone duration | 120 | 340 | `toneDurationMs` |
-| Gap and speech start | 150 | **490** | 80 ms `toneToSpeechGapMs` plus 70 ms for speech to begin; NFR-4 target 600, margin 110 |
+| Tracking and geometry | 10 | **190** | main thread, pure functions |
 
 ### 4.1 Measured on desktop (step A1)
 
@@ -218,7 +213,7 @@ Both raw candidates are kept in the result for tuning. The distance is smoothed 
 **Walking-path corridor.** Lateral offset `X = D * tan(theta)` (right is positive). An object is `inPath` if `D <= corridorDepthM` (4 m) and `|X| <= corridorHalfWidthM` (0.5 m); only the box center counts, not its width. Approaching objects use the wider `approachHalfWidthM` (1 m), applied by the tracker.
 
 **Known limits.**
-- A cut-off box (touching the bottom edge) is the weak case: an object about 1 m away can read 1.5 m or more. The policy should treat `touchesBottom` as "close".
+- A cut-off box (touching the bottom edge) is the weak case: an object about 1 m away can read 1.5 m or more. The path line (R7) should treat `touchesBottom` as "close".
 - Box-size distance assumes the object stands upright and has the class's typical height; a short person or a tall chair is off by that ratio.
 - The pitch and roll signs follow the W3C Euler convention and the unit tests, but have not been checked on the demo iPhone: tilt the phone down and the pitch readout must go negative.
 
@@ -235,47 +230,14 @@ Both raw candidates are kept in the result for tuning. The distance is smoothed 
 - **Height fallback.** Without a distance, `timeToContactS = 1 / g`, where g is the slope of ln(box height) per second, when g is at least `minHeightGrowthPerS`.
 - **Approaching.** `timeToContactS <= approachMaxTtcS` (4 s), the object within the widened corridor (`approachHalfWidthM`), held for `approachHoldMs` (300 ms).
 
-## 7. Alert policy
+## 7. Alert policy (removed)
 
-Implemented in `alerts/policy.ts` and `alerts/phrases.ts`, run by `app/pipeline.ts` once per frame.
+Removed in step P1. The detector no longer announces objects: there is no alert policy, no object phrase format, no "what's around me", and no tone per object (SR-12). What stays from the old design: the stale check and the track check in the audio engine (SR-3), which Find alerts also use, and the health warnings, which are the only urgent alerts left (SR-4).
 
-**Eligibility.** A confirmed track of an announced class (`ClassInfo.alertable`) that is `inPath` with `distanceM` within `corridorDepthM`, or `approaching` with `timeToContactS <= approachMaxTtcS` (4 s).
-
-**Priorities.**
-- `urgent`: eligible and `inPath` with `distanceM <= urgentDistanceM` (1.5 m) or `timeToContactS <= urgentTtcS` (2 s). Health warnings are also `urgent`.
-- `normal`: any other in-path track.
-- `info`: a track that is approaching but outside the path. The audio engine uses `info` for summaries, help, and status too.
-
-**When a track is announced.** Each track is announced once. It is announced again only when:
-- it becomes urgent (escalation; again no sooner than `urgentCooldownMs` (2 s) after its last urgent alert, and a fall back below urgent makes a later return a new escalation);
-- it enters the path (after `closerBandCooldownMs`, 1.5 s);
-- it moves into a closer distance band (`distanceBandsM` 1.5, 3, 4), measured against the band last announced, after `closerBandCooldownMs`;
-- its clock position changes, after `clockChangeCooldownMs` (3 s).
-
-There is **no repeat on a timer**: a stationary chair is announced once however long you stand there (the heartbeat, not repetition, shows the app is working). A track that disappears and returns gets a new id and is announced again. The first draft of this section also repeated an unchanged object every 10 s; step A5 removed that, and `repeatCooldownMs` with it.
-
-**Speaking rules.**
-- One alert in flight. The policy learns when it ends from `notifyOutcome` (the audio link reports `finished`, `preempted`, or a drop through the bus), and treats it as ended `inFlightTimeoutMs` (8 s) after it was sent if nothing is reported, so a missing report cannot silence later alerts. At least `minGapMs` (800 ms) passes before the next one, except urgent.
-- Urgent preempts a non-urgent alert in flight. It never cuts off another urgent alert; it waits for it.
-- Waiting alerts: at most `maxQueuedAlerts` (2). More than that are held back (their track is not marked as announced, so they come up again as room appears), and a nearer or more urgent arrival pushes out the least important waiting alert. When several compete, the most urgent goes first, then the nearest. A newer alert for the same track replaces its waiting one.
-- A waiting alert follows its track: it is rewritten from every new frame, so waiting behind speech never makes it stale.
-
-**Dropping.** Every drop is recorded with a reason (`DropRecord`, also kept in `getDropLog()`): `stale` (the frame feeding the policy is older than `staleLimitMs`, 1 s; waiting alerts are dropped and nothing is announced from it), `track-gone`, `not-eligible` (its track left the path), `superseded`, or `queue-full`. The first two are also published as `alertOutcome` (`dropped-stale`, `dropped-track-gone`). The audio engine makes its own last-moment check, right before speech starts, for the same two conditions (SR-3).
-
-**An alert that was not heard is announced again.** If the audio engine reports an alert as dropped or cut off, or if an urgent alert cuts off a normal one, the track is treated as not yet announced and comes up again from a fresh frame (unless a newer alert for it is already waiting). Without this, one dropped alert, for example one that waited behind the Start greeting, would mean the user never hears about that object.
-
-**Tone.** The pan follows the horizontal angle: `-1` full left to `+1` full right, reaching full at `panFullAngleDeg` (30°). The pulse rate of the urgent tone is worked out by the audio engine from the track's live distance when the tone starts (`audio/tones.ts`), so it rises as the object nears; the policy does not duplicate that.
-
-**Phrase format.** `<object>, <clock> o'clock, about <meters> meters[, on the floor | , at head height]`.
-- Object: `ClassInfo.spokenName`, capitalized. Clock: "11 o'clock", "12 o'clock", "1 o'clock"; for far positions, "far left" or "far right" replaces "<clock> o'clock". The distance is left out when unknown ("Pole, far right.").
-- Meters: rounded to the nearest 0.5, numerals ("about 1.5 meters"); "1 meter" is singular.
-- Suffix only for `floor` and `head`.
-- Example: "Backpack, 1 o'clock, about 2 meters, on the floor."
-
-**"What's around me".** The nearest `summaryMaxItems` (5) confirmed tracks of announced classes within `summaryMaxDistanceM` (6 m), in or out of the path, each as the same short phrase, in clock order from left to right. With none: "I don't detect anything right now. I can miss things." Every sentence in `phrases.ts`, and the health, voice, status, and greeting texts, is tested against the SR-2 word list (no "clear", "safe", "free", "no obstacles").
+The route is how objects are handled. The path line (section 13, step R7) turns confirmed in-path tracks into obstacles on the ground plane and bends the walking line around them, and guidance (R5) follows the first leg of the line. The user hears only "Turn right a little", never what is in the way.
 
 ## 8. Threading and scheduling
-- **Main thread:** UI, camera, scheduler, orchestrator, tracker, geometry, policy, audio scheduling, speech, voice.
+- **Main thread:** UI, camera, scheduler, orchestrator, tracker, geometry, audio scheduling, speech, voice.
 - **Detection worker:** onnxruntime-web session, preprocessing (OffscreenCanvas), inference, postprocessing. Nothing else.
 - **Latest frame wins:** the scheduler holds at most one frame in flight. A busy worker means the frame is skipped, never queued. If a result is overdue by `stalledAfterMs`, the engine restarts the worker once and the health monitor reports it.
 - **Backends:** try WebGPU; if creation or the first run fails, use WebAssembly. WebAssembly uses multiple threads (up to `maxWasmThreads`) only when `crossOriginIsolated` is true (COOP/COEP headers from Vite and Vercel); otherwise one thread, which the benchmark and health monitor will show as a low frame rate. Forcing WebGPU on a device without it fails with a typed `webgpu-unavailable` error; "auto" falls back to WebAssembly and reports why.
@@ -299,9 +261,9 @@ Every failure is spoken (unless spoken feedback is off), written to the aria-liv
 | Orientation sensor denied or missing | sensor | "Distance will be less accurate." (once) | Box-size distance used; re-request on Start |
 | Speech output unavailable | audio | Tones keep playing; text shown large on screen | Retry on next tap |
 | Audio blocked or route lost (AirPods disconnect, interruption) | audio, health | On-screen warning "Sound is off. Tap the screen to restore it." | Tap resumes the `AudioContext` |
-| Speech recognition unavailable, denied, or silent | recognizer | Tap runs "what's around me" | Automatic fallback |
+| Speech recognition unavailable or denied | recognizer | "Voice commands are not available on this device." (once); silence does nothing | Long press still pauses; Find by quick-pick list |
 | Frame or alert too old | audio | Alert dropped; logged | Automatic |
-| Find has no network | locate client | "I can't reach the internet, so I can't search." | Try again; Walk mode keeps running |
+| Find has no network | locate client | "I can't reach the internet, so I can't search." | Try again; detection keeps running |
 | Gemini rate limit or server error | locate function | "The search service is busy. Try again in a moment." | Try again; offer a retry after a pause |
 | Find request times out | locate client | "The search took too long." | Try again |
 | Target not found | locate result | "I could not find it." (never "it is not here") | Offer the scan sweep, or another target |
@@ -330,14 +292,14 @@ Verification methods are the same as in the SRS.
 | FR-6 | Geometry (clock), Settings | Unit test |
 | FR-7 | Geometry (distance), Settings | Unit test, Field test |
 | FR-8 | Geometry (elevation) | Unit test |
-| FR-9 | Geometry (path), Alert policy | Unit test |
-| FR-10 | Alert policy | Unit test |
-| FR-11 | Alert policy (phrases) | Unit test |
-| FR-12 | Audio engine (tones) | Field test, Inspection |
+| FR-9 (removed) | none | n/a |
+| FR-10 (removed) | none | n/a |
+| FR-11 (removed) | none | n/a |
+| FR-12 (removed) | none | n/a |
 | FR-13 | Audio engine (heartbeat) | Field test, Unit test |
 | FR-14 | Health monitor | Unit test, Field test |
 | FR-15 | Voice commands | Unit test, Field test |
-| FR-16 | Voice commands, Pipeline | Field test |
+| FR-16 | Voice commands, Pipeline | Unit test, Field test |
 | FR-17 | Settings and calibration | Unit test, Field test, Inspection |
 | FR-18 | Pipeline, Audio engine, Camera, Orientation, Voice | Field test |
 | FR-19 (removed) | none | n/a |
@@ -354,10 +316,10 @@ Verification methods are the same as in the SRS.
 | FR-30 | Privacy gate, Settings | Unit test, Field test, Inspection |
 | NFR-1 | Frame scheduler, Detection worker | Field test |
 | NFR-2 | Detection worker | Field test |
-| NFR-3 | Audio engine, Alert policy | Field test |
-| NFR-4 | Audio engine | Field test |
-| NFR-5 | Detection worker, Geometry, Alert policy | Field test |
-| NFR-6 | Tracker, Alert policy | Field test |
+| NFR-3 (removed) | none | n/a |
+| NFR-4 (removed) | none | n/a |
+| NFR-5 | Detection worker, Geometry, Path line | Field test |
+| NFR-6 (removed) | none | n/a |
 | NFR-7 | Geometry (distance) | Field test |
 | NFR-8 (removed) | none | n/a |
 | NFR-9 | Pipeline, Locate client, Locate function, Privacy gate | Inspection |
@@ -369,30 +331,31 @@ Verification methods are the same as in the SRS.
 | NFR-15 | Beacon, Heading | Field test |
 | NFR-16 | Install files | Field test |
 | SR-1 | Audio engine (heartbeat), Health monitor | Unit test, Field test |
-| SR-2 | Alert policy (phrases) | Unit test, Inspection |
-| SR-3 | Audio engine, Alert policy | Unit test |
-| SR-4 | Audio engine, Alert policy | Unit test, Field test |
+| SR-2 | Wording test (`alerts/wording.test.ts`), Find messages | Unit test, Inspection |
+| SR-3 | Audio engine | Unit test |
+| SR-4 | Audio engine, Health monitor | Unit test, Field test |
 | SR-5 | Health monitor | Unit test, Field test |
 | SR-6 | Health monitor | Unit test, Field test |
-| SR-7 | Pipeline (screens), Alert policy (help text) | Inspection |
+| SR-7 | Docs | Inspection |
 | SR-8 | Health monitor, Event bus, Pipeline | Unit test, Inspection |
 | SR-9 | Audio engine (paused reminder) | Unit test, Field test |
 | SR-10 | Audio engine, Beacon, Find controller | Unit test, Field test |
 | SR-11 | Guidance (phrases) | Unit test, Inspection |
+| SR-12 | Pipeline | Unit test, Inspection |
 
 ## 12. Uncertain design points
 - The default horizontal field of view (65°) is an estimate; calibration on the demo phone replaces it.
 - The WebGPU path on the demo iPhone's iOS version is unverified; the WebAssembly fallback is the planned floor.
 - Speech recognition with AirPods in transparency mode may change the audio route; the tap fallback covers a failure.
 - Speech-start latency on iOS (70 ms in the budget) is optimistic and must be measured.
-- Letting a high-confidence in-path object skip the 2-of-3 confirmation was considered for speed and rejected for now, because it risks the false-alert target (NFR-6). (A4 later added a near-object fast path at the owner's request; see PROGRESS.md.)
+- Letting a high-confidence in-path object skip the 2-of-3 confirmation was considered for speed and rejected; A4 later added a near-object fast path at the owner's request (see PROGRESS.md). With the detector silent, a false track now only bends the route; it can no longer cause a false spoken alert.
 - Find: the Gemini model, its free-tier limits, its latency, and how well it boxes arbitrary household targets are all to be measured (section 13.4).
 - Find: gyroscope yaw drifts and has no north reference, so a stored heading is only good for a short time; how short is to be measured.
 - Find: a distance for an arbitrary target is only possible when its box bottom is on the floor (ground plane); otherwise guidance gives direction only.
 
-## 13. Find mode (steps R1 to R7)
+## 13. Find (steps R1 to R7)
 
-Find mode is a "Find My" for blind users. The user names a target; a Gemini model finds it in camera frames; the app turns its box into a direction, remembers that direction as a device heading, and guides the user with an arrow, spoken directions, and an audio beacon while Walk mode keeps watching for obstacles. Requirements: FR-21 to FR-30, NFR-14 to NFR-16, SR-10, SR-11. Numbers marked **to be measured** have no justification yet and must not be treated as targets.
+Find mode is a "Find My" for blind users. The user names a target; a Gemini model finds it in camera frames; the app turns its box into a direction, remembers that direction as a device heading, and guides the user with an arrow, spoken directions, and an audio beacon while the silent detector keeps tracking objects so the route bends around them. Requirements: FR-21 to FR-30, NFR-14 to NFR-16, SR-10 to SR-12. Numbers marked **to be measured** have no justification yet and must not be treated as targets.
 
 ### 13.1 Components
 
@@ -408,11 +371,11 @@ Find mode is a "Find My" for blind users. The user names a target; a Gemini mode
 | Target list | `find/targets.ts` (R4) | Quick-pick list and spoken-target cleanup ("find my keys" becomes "keys"). Pure. (FR-21) |
 | Find controller | `find/controller.ts` (R4) | The state machine in 13.3. Owns the privacy gate, requests, retries, cancel, and the events other modules listen to. (FR-21, FR-23, FR-30) |
 | Guidance | `find/guidance.ts` (R5) | Pure. From the stored heading, the current heading, and the distance: degrees to turn, aligned or not, and the spoken line with cooldowns. All wording is tested against the SR-2 word list. (FR-25, SR-11) |
-| Beacon | `audio/beacon.ts` (R5) | Pulses scheduled on the `AudioContext` clock. Rate comes from distance, pan from the relative bearing; silenced while an urgent alert plays. (FR-26, SR-10) |
+| Beacon | `audio/beacon.ts` (R5) | Pulses scheduled on the `AudioContext` clock. Rate comes from distance, pan from the relative bearing; silenced while a health warning plays. (FR-26, SR-10) |
 | Find screen | `app/screens/FindScreen.tsx` (R6) | Large arrow rotated by the relative bearing, distance, target name, green when aligned, cancel; everything also spoken and in the aria-live region. (FR-27) |
 | Path line | `geometry/freeSpacePath.ts` (R7) | Pure. Confirmed tracks become inflated rectangles on the ground plane; a path from the user toward the target bearing bends around them; output is a short polyline for the Find screen. Designed in R7; this is the intended interface only. (FR-28) |
 
-Reused unchanged: camera, frame scheduler, detection worker, tracker, geometry (`locate`, `cameraModel`, ground-plane distance), alert policy and phrases, event bus, tones, speech, voice recognizer and control, health monitor, settings and calibration. The bearing of the target's box comes from `geometry/geometry.ts` with a synthetic class (ground contact on, no typical height), so the distance exists only when the box bottom is on the floor.
+Reused unchanged: camera, frame scheduler, detection worker, tracker, geometry (`locate`, `cameraModel`, ground-plane distance), event bus, tones, speech, voice recognizer and control, health monitor, settings and calibration. The bearing of the target's box comes from `geometry/geometry.ts` with a synthetic class (ground contact on, no typical height), so the distance exists only when the box bottom is on the floor.
 
 ### 13.2 Data flow
 
@@ -435,8 +398,10 @@ flowchart TD
   GUI --> SCR[Find screen]
   GUI --> BEA[Beacon]
   GUI -->|spoken line| SPK[Speech]
-  WALK[Walk pipeline alerts] -->|urgent preempts| SPK
-  WALK -->|silences| BEA
+  HLT[Health warnings] -->|preempt| SPK
+  HLT -->|silence| BEA
+  TRK[Tracks, silent] --> PTH[Path line]
+  PTH --> GUI
 ```
 
 1. The user says "find <target>" or picks one. The controller speaks the target back.
@@ -445,7 +410,7 @@ flowchart TD
 4. If the target is in the frame, the box becomes a bearing; the bearing plus the capture-time heading is stored in target memory. Guidance starts.
 5. If not, the controller starts the scan sweep: the planner asks for a frame at each new 45 degrees, up to 8, and the frames go in one request. The reply names the frame that shows the target; that frame's capture-time heading plus the box bearing is stored.
 6. While guiding, guidance reads the current heading every orientation update (about 10 per second), updates the arrow and the beacon, and speaks a line when the turn changes enough and the cooldown allows. When aligned, the controller may take a fresh frame to refine the stored direction, at most once per refine interval (config, to be measured against free-tier limits).
-7. Walk-mode alerts run the whole time. An urgent alert preempts Find speech and silences the beacon while it plays (SR-10).
+7. Detection runs the whole time but never speaks. Its tracks feed the path line, and guidance follows the first leg of that line so the route avoids objects without naming them (SR-12). A health warning preempts Find speech and silences the beacon while it plays (SR-10).
 
 ### 13.3 State machine
 

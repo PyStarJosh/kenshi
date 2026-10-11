@@ -1,6 +1,5 @@
-// Voice control: what a tap does. Listen for one command and run it; if recognition is unsupported,
-// denied, fails, or hears nothing, the tap alone runs "what's around me" (FR-15, FR-16).
-// "What's around me" is delegated (summarize() comes from the alert policy, A5).
+// Voice control: what a tap does. Listen for one command and run it. If recognition is unsupported or
+// denied, say so once; a tap that hears nothing does nothing (FR-16). Objects are never read out.
 import type { VoiceIntent } from '../core/types'
 import { parseCommand, stepSpeechRate, VOICE_PHRASES } from './commands'
 import type { ListenResult } from './recognizer'
@@ -14,15 +13,12 @@ export interface VoiceControlDeps {
   /** Pause or resume speech output around the microphone, so the app does not hear itself. */
   holdSpeech: (held: boolean) => void
   earcon: (phase: 'start' | 'stop') => void
-  whatsAround: () => void
   pauseDetection: () => void
   resumeDetection: () => void
   /** True while detection is paused by the user. */
   isPaused: () => boolean
   getSpeechRate: () => number
   setSpeechRate: (rate: number) => void
-  /** The phrase of the last obstacle alert, or null. */
-  lastAlertPhrase: () => string | null
   onIntent: (intent: VoiceIntent, source: VoiceSource) => void
   onError: (message: string) => void
 }
@@ -76,16 +72,11 @@ export class VoiceControl {
     switch (result.kind) {
       case 'text': {
         const intent = parseCommand(result.text)
-        if (intent === 'unknown') {
-          deps.say(VOICE_PHRASES.notUnderstood)
-          this.run('whats-around', 'tap-fallback')
-        } else {
-          this.run(intent, 'speech')
-        }
+        if (intent === 'unknown') deps.say(VOICE_PHRASES.notUnderstood)
+        else this.run(intent, 'speech')
         return
       }
       case 'silence':
-        this.run('whats-around', 'tap-fallback')
         return
       case 'cancelled':
         return
@@ -96,22 +87,17 @@ export class VoiceControl {
     }
   }
 
-  /** Recognition is not usable: say so once, then run "what's around me". */
+  /** Recognition is not usable: say so once. */
   private fallback(): void {
-    if (!this.unavailableAnnounced) {
-      this.unavailableAnnounced = true
-      this.deps.say(VOICE_PHRASES.unavailable)
-    }
-    this.run('whats-around', 'tap-fallback')
+    if (this.unavailableAnnounced) return
+    this.unavailableAnnounced = true
+    this.deps.say(VOICE_PHRASES.unavailable)
   }
 
   private run(intent: VoiceIntent, source: VoiceSource): void {
     const { deps } = this
     deps.onIntent(intent, source)
     switch (intent) {
-      case 'whats-around':
-        deps.whatsAround()
-        return
       case 'pause':
         deps.pauseDetection()
         deps.say(VOICE_PHRASES.paused)
@@ -119,9 +105,6 @@ export class VoiceControl {
       case 'resume':
         deps.resumeDetection()
         deps.say(VOICE_PHRASES.resumed)
-        return
-      case 'repeat':
-        deps.say(deps.lastAlertPhrase() ?? VOICE_PHRASES.nothingToRepeat)
         return
       case 'slower':
       case 'faster': {
@@ -139,7 +122,7 @@ export class VoiceControl {
         deps.say(VOICE_PHRASES.help)
         return
       case 'unknown':
-        deps.whatsAround()
+        return
     }
   }
 }

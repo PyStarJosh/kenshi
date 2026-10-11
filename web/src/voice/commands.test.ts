@@ -4,15 +4,10 @@ import { parseCommand, stepSpeechRate } from './commands'
 
 describe('parseCommand', () => {
   test.each([
-    ["What's around me?", 'whats-around'],
-    ['around', 'whats-around'],
-    ["what's here", 'whats-around'],
     ['Pause', 'pause'],
     ['please stop', 'pause'],
     ['Resume.', 'resume'],
     ['continue', 'resume'],
-    ['repeat that', 'repeat'],
-    ['say that again', 'repeat'],
     ['slower', 'slower'],
     ['slow down please', 'slower'],
     ['faster', 'faster'],
@@ -29,8 +24,10 @@ describe('parseCommand', () => {
     expect(parseCommand('   ')).toBe('unknown')
   })
 
-  test('"what do you see around me" is the around command', () => {
-    expect(parseCommand('what do you see around me')).toBe('whats-around')
+  test('asking what is around is not a command: objects are never read out', () => {
+    for (const text of ["What's around me?", 'what do you see around me', 'repeat that']) {
+      expect(parseCommand(text)).toBe('unknown')
+    }
   })
 })
 

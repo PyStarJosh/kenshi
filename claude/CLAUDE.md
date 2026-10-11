@@ -1,23 +1,23 @@
 # CLAUDE.md
 
 ## Project
-Kenshi: a real-time guide for blind and low-vision people that runs on an iPhone in Safari. Walk mode (on-device YOLO) speaks short alerts such as "Backpack, 1 o'clock, about 2 meters, on the floor." Find mode (new) is a "Find My" for blind users: name a target and the app guides you to it with a big arrow, spoken directions, and an audio beacon.
+Kenshi: a real-time guide for blind and low-vision people that runs on an iPhone in Safari. It is a "Find My" for blind users: name a target and the app guides you to it with a big arrow, spoken directions, and an audio beacon. An on-device YOLO detector runs silently: it never announces objects, and its boxes only shape the route so the path bends around them.
 - It complements the white cane and never replaces it. Never claim otherwise in code, UI text, or docs.
 - Demo form factor: the phone held at eye level, sideways (landscape), to simulate camera glasses. Glasses (for example Meta's) are a future target only; do not claim any integration.
-- Pivoted to Find mode with about 6 hours left (step R0). Hazard retraining, field-test rounds, and the Claude describe step are dropped.
+- Pivoted to Find with about 6 hours left (step R0); step P1 then made the detector silent and removed Walk mode (spoken obstacle alerts, "what's around me"). Hazard retraining, field-test rounds, and the Claude describe step are dropped.
 
 ## Design decisions (do not change without asking)
 - Platform: web app for iPhone Safari, Vite + React + TypeScript, on Vercel. One Vercel function, web/api/locate.ts, for Find mode. No other backend.
-- Walk mode: YOLO26n (base COCO model, 416 input) as ONNX in a Web Worker via onnxruntime-web; WebGPU first, multi-threaded WebAssembly fallback (needs cross-origin isolation headers). Obstacle alerts keep running during Find; urgent ones preempt Find speech.
-- Find mode: the user names a target by voice or from a quick-pick list. The function sends camera frames to Google Gemini (free tier) and returns which frame shows the target and its bounding box.
+- Detector: YOLO26n (base COCO model, 416 input) as ONNX in a Web Worker via onnxruntime-web; WebGPU first, multi-threaded WebAssembly fallback (needs cross-origin isolation headers). It is silent: nothing announces, lists, or describes objects. Tracks feed the path line only.
+- Find: the user names a target by voice or from a quick-pick list. The function sends camera frames to Google Gemini (free tier) and returns which frame shows the target and its bounding box.
 - Scan sweep: if the target is not in view, the user turns slowly; the app captures a frame about every 45 degrees (up to 8) and sends them in one request.
 - Heading memory: the target's direction is stored as a device heading (gyro-based yaw), so guidance continues when it is out of view.
 - Guidance: a Find My-style screen (big arrow, distance, green when aligned), an audio beacon in the AirPods (pulses speed up as the target gets closer, panned toward it), and GPS-style spoken directions.
-- Path line: web/src/geometry/freeSpacePath.ts (step R7) draws a walking line around obstacles.
+- Path line: web/src/geometry/freeSpacePath.ts (step R7) draws a walking line that bends around tracked obstacles. Spoken guidance follows the first leg of that line, so the route avoids objects without the app naming them.
 - Install: web manifest and icons so it can be added to the Home Screen. No service worker.
-- Walk phrase format: "<object>, <clock> o'clock, about <meters> meters[, on the floor | , at head height]". Clock positions 11, 12, 1, plus "far left" and "far right". Meters rounded to the nearest 0.5.
-- Audio: a short directional tone (stereo pan), then the phrase, through AirPods in transparency mode. A quiet heartbeat tick while healthy; a distinct warning the moment detection degrades.
-- Controls: tap anywhere to talk (what's around me, find <target>, stop, pause, resume, repeat, slower, faster, help). If speech recognition fails, the tap alone runs "what's around me". Long press pauses or resumes.
+- Spoken phrases: only Find guidance ("Turn right a little", "Straight ahead, about 3 meters"), voice replies, status, and health warnings. No object phrases.
+- Audio: Find speech and the beacon through AirPods in transparency mode. A quiet heartbeat tick while healthy; a distinct warning the moment detection degrades.
+- Controls: tap anywhere to talk (find <target>, stop, pause, resume, slower, faster, help). A tap that hears nothing does nothing. Long press pauses or resumes. Note: "stop" currently means pause (voice/commands.ts); R4 decides how Find's "stop" coexists.
 - Geometry: device orientation (pitch and roll), a calibrated horizontal field of view, and the user's eye height give ground-plane distance; box-size distance is the fallback.
 
 ## Structure
@@ -36,7 +36,7 @@ web/                        Vite + React + TypeScript app
   src/sensors/              device orientation (adapter), attitude math; heading (R3)
   src/geometry/             geometry.ts (clock, distance, elevation, path); freeSpacePath.ts (R7)
   src/tracking/             tracker, smoothing, time-to-contact
-  src/alerts/               policy, phrases, event bus
+  src/alerts/               event bus, SR-2 wording test
   src/audio/                unlock, tones, speech, heartbeat, engine; beacon (R5)
   src/health/               health monitor
   src/voice/                recognizer, commands, control, gesture
@@ -70,7 +70,7 @@ Keep this section current when the structure changes.
 - Make the smallest change that solves the task. No drive-by refactors or renames.
 - One step at a time: finish, verify, commit, and ship it before the next.
 - No new dependencies without approval. Approved ones are named in the step prompt.
-- Pure logic (postprocess, geometry, tracking, policy, phrases, commands, health transitions, scan planning, guidance, state machines) lives in pure functions with Vitest tests. Camera, audio, sensors, network, and DOM code stay in thin adapters.
+- Pure logic (postprocess, geometry, tracking, commands, health transitions, scan planning, guidance, state machines) lives in pure functions with Vitest tests. Camera, audio, sensors, network, and DOM code stay in thin adapters.
 - Modules meet only through types.ts, the event bus, and small interfaces; do not reach into another module's internals.
 - No dead code, commented-out blocks, or stray console.log. Dev-only UI goes behind ?debug.
 
@@ -78,7 +78,7 @@ Keep this section current when the structure changes.
 - Never say clear, safe, or anything implying the path is free. Silence must never mean clear: heartbeat while healthy, warnings when not.
 - Find results are hints, not facts. If the target is not found, say "I could not find it", never "it is not here". Never say the way to the target is clear.
 - Drop any alert older than the stale limit before speaking it, and confirm its track still exists.
-- Urgent obstacle alerts preempt all other speech, including Find guidance, summaries, and descriptions. Walk-mode detection keeps running during Find.
+- Never announce, list, or describe detected objects (SR-12). A health warning preempts all other speech and silences the beacon. Detection keeps running during Find.
 - When detection degrades (stalled, low frame rate, low light, phone lowered, errors), say so immediately.
 - Never block the main thread or the audio path with inference or heavy work.
 
@@ -103,8 +103,8 @@ Keep this section current when the structure changes.
 - You cannot test on the iPhone. Say what must be checked on the phone and give a short checklist instead of claiming phone results.
 
 ## Security and privacy
-- Walk mode: frames never leave the phone.
-- Find mode: frames go to Google Gemini. On the free tier Google may use them to improve its products and human reviewers may read them. The app says so, and the user accepts, before the first Find. Send frames only on a Find request, never continuously.
+- Detection: frames never leave the phone.
+- Find: frames go to Google Gemini. On the free tier Google may use them to improve its products and human reviewers may read them. The app says so, and the user accepts, before the first Find. Send frames only on a Find request, never continuously.
 - The Gemini key lives only in the Vercel environment variable GEMINI_API_KEY. The function validates its input, stores nothing, and logs no images or targets.
 - No secrets in the repo. Never open or print .env files.
 
