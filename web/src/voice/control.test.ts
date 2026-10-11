@@ -161,11 +161,7 @@ describe('VoiceControl', () => {
     expect(limit.log.some((line) => line.startsWith('rate'))).toBe(false)
   })
 
-  test('describe says it is not available yet; help lists the commands', async () => {
-    const d = setup()
-    d.control.tap()
-    await d.finishListen({ kind: 'text', text: 'describe' })
-    expect(d.log).toContain('say: Describe is not available yet.')
+  test('help lists the commands', async () => {
     const h = setup()
     h.control.tap()
     await h.finishListen({ kind: 'text', text: 'help' })

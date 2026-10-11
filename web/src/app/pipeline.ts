@@ -12,7 +12,7 @@
 //   a frame counts as healthy (health monitor) only after it went through the whole chain
 import { EventBus } from '../alerts/bus'
 import type { AlertReason, DropRecord, PolicyResult } from '../alerts/policy'
-import type { AlertTimes, TrackLookup } from '../audio/engine'
+import type { TrackLookup } from '../audio/engine'
 import type {
   AlertEvent,
   AlertOutcome,
@@ -21,11 +21,9 @@ import type {
   HealthState,
   OrientationSample,
   Settings,
-  TelemetryEvent,
   Track,
   VoiceIntent,
 } from '../core/types'
-import type { VoiceSource } from '../voice/control'
 import type { SessionState } from './session'
 
 export interface PipelineSession {
@@ -40,15 +38,11 @@ export interface PipelineLink {
   handleAlert(alert: AlertEvent): void
   setSummarizer(summarizer: (() => string) | null): void
   setTrackLookup(lookup: TrackLookup | null): void
-  onAlertOutcome(
-    listener: (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null, times?: AlertTimes) => void,
-  ): () => void
+  onAlertOutcome(listener: (alert: AlertEvent, outcome: AlertOutcome) => void): () => void
   /** A frame result that went through the whole pipeline; the health monitor counts only those. */
   recordFrame(result: FrameResult): void
   onVoiceIntent(listener: (intent: VoiceIntent) => void): () => void
   onHealth(listener: (health: HealthState) => void): () => void
-  /** Voice commands with their source; only logged, so a link may leave it out. */
-  onVoice?(listener: (intent: VoiceIntent, source: VoiceSource) => void): () => void
 }
 
 export interface PipelineTracker {
@@ -81,8 +75,6 @@ export interface PipelineDeps {
 }
 
 const CAPTION_LIMIT = 6
-// Frames from the last second give the frame rate that goes in the log.
-const FPS_WINDOW_MS = 1000
 
 // Drops that the shared AlertOutcome type can express are also announced on the bus.
 const DROP_OUTCOME: Partial<Record<DropRecord['reason'], AlertOutcome>> = {
@@ -97,7 +89,6 @@ export class Pipeline {
   private byId = new Map<number, Track>()
   private captions: Caption[] = []
   private lastState: SessionState | null = null
-  private recentCaptures: number[] = []
 
   constructor(deps: PipelineDeps) {
     this.deps = deps
@@ -121,7 +112,6 @@ export class Pipeline {
       const state = session.getSnapshot().state
       if (state === this.lastState) return
       this.lastState = state
-      this.telemetry({ kind: 'run-state', timeMs: this.deps.now(), state })
       if (state !== 'running') this.reset() // after a pause or a stop the old tracks no longer exist
     }
     syncState()
@@ -130,25 +120,9 @@ export class Pipeline {
     const stops: ((() => void) | undefined)[] = [
       session.onResult((result) => this.process(result)),
       session.subscribe(syncState),
-      link.onAlertOutcome((alert, outcome, latencyMs, times) => {
-        const timeMs = this.deps.now()
-        this.bus.publish('alertOutcome', { alert, outcome, timeMs })
-        this.telemetry({
-          kind: 'alert',
-          timeMs,
-          alert,
-          outcome,
-          latencyMs,
-          toneStartMs: times?.toneStartMs ?? null,
-          speechStartMs: times?.speechStartMs ?? null,
-        })
-      }),
+      link.onAlertOutcome((alert, outcome) => this.bus.publish('alertOutcome', { alert, outcome, timeMs: this.deps.now() })),
       link.onVoiceIntent((intent) => this.bus.publish('voice', intent)),
-      link.onHealth((health) => {
-        this.bus.publish('health', health)
-        this.telemetry({ kind: 'health', timeMs: this.deps.now(), health })
-      }),
-      link.onVoice?.((intent, source) => this.telemetry({ kind: 'voice', timeMs: this.deps.now(), intent, source })),
+      link.onHealth((health) => this.bus.publish('health', health)),
       this.bus.subscribe('alert', (alert) => link.handleAlert(alert)),
       this.bus.subscribe('alertOutcome', ({ alert, outcome, timeMs }) => policy.notifyOutcome(alert.id, outcome, timeMs)),
     ]
@@ -160,19 +134,9 @@ export class Pipeline {
   }
 
   private process(result: FrameResult): void {
-    try {
-      this.run(result)
-    } catch (error) {
-      // Not counted as a healthy frame, so a pipeline that keeps failing ends in the stalled warning (SR-5, SR-8);
-      // the session also sees the failure and stops the loop after repeated ones.
-      this.bus.publish('telemetry', {
-        kind: 'error',
-        timeMs: this.deps.now(),
-        source: 'pipeline',
-        message: error instanceof Error ? error.message : String(error),
-      })
-      throw error
-    }
+    // If run() throws, the frame is not counted as healthy, so a pipeline that keeps failing ends in the stalled
+    // warning (SR-5, SR-8); the session also sees the failure and stops the loop after repeated ones.
+    this.run(result)
     this.deps.link.recordFrame(result)
   }
 
@@ -188,43 +152,14 @@ export class Pipeline {
 
     const nowMs = now()
     const { emitted, drops } = policy.update(tracks, nowMs, result.captureTimeMs)
-    // The log gets the frame before anything it caused, so a replay sees the same order.
-    this.logFrame(result, orientation, tracks, nowMs)
     for (const drop of drops) {
-      this.telemetry({ kind: 'drop', timeMs: nowMs, alert: drop.alert, trackId: drop.trackId, reason: drop.reason })
       const outcome = DROP_OUTCOME[drop.reason]
       if (outcome) this.bus.publish('alertOutcome', { alert: drop.alert, outcome, timeMs: nowMs })
     }
     for (const { alert, reason } of emitted) {
       this.captions = [...this.captions, { alert, reason, atMs: nowMs }].slice(-CAPTION_LIMIT)
-      this.telemetry({ kind: 'alert', timeMs: nowMs, alert, outcome: 'queued', latencyMs: null })
       this.bus.publish('alert', alert)
     }
-  }
-
-  /** Hand the log (when Test mode has one running) a record of what happened. Free when nobody listens. */
-  private telemetry(event: TelemetryEvent): void {
-    this.bus.publish('telemetry', event)
-  }
-
-  private logFrame(result: FrameResult, orientation: OrientationSample | null, tracks: Track[], nowMs: number): void {
-    this.recentCaptures = [...this.recentCaptures.filter((t) => result.captureTimeMs - t < FPS_WINDOW_MS), result.captureTimeMs]
-    this.telemetry({
-      kind: 'frame',
-      timeMs: nowMs,
-      frameId: result.frameId,
-      timings: result.timings,
-      captureTimeMs: result.captureTimeMs,
-      receivedTimeMs: result.receivedTimeMs,
-      frameWidth: result.frameWidth,
-      frameHeight: result.frameHeight,
-      meanLuma: result.meanLuma,
-      fps: this.recentCaptures.length,
-      pipelineMs: this.deps.now() - result.captureTimeMs,
-      detections: result.detections,
-      orientation,
-    })
-    this.telemetry({ kind: 'tracks', timeMs: nowMs, frameId: result.frameId, tracks })
   }
 
   private reset(): void {
@@ -232,6 +167,5 @@ export class Pipeline {
     this.deps.policy.reset()
     this.tracks = []
     this.byId.clear()
-    this.recentCaptures = []
   }
 }

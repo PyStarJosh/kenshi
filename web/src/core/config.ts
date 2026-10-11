@@ -1,4 +1,4 @@
-// Every tunable number lives here. Field-test tuning changes only this file.
+// Every tunable number lives here. Tuning changes only this file.
 // Each value names the requirement it serves (docs/SRS.md). Values are starting points, not yet tuned.
 // Times are milliseconds, distances meters, angles degrees, speeds meters per second.
 
@@ -251,26 +251,6 @@ export const CONFIG = {
     // Earcons: a rising pair when listening starts, a falling pair when it stops. FR-15
     earconHz: [523, 784],
     earconNoteMs: 70,
-  },
-
-  telemetry: {
-    // Log one frame entry out of this many; 1 logs every frame (a replay needs every frame). FR-19
-    frameLogEvery: 1,
-    // Tilt samples are logged this often. FR-19
-    orientationSampleMs: 100,
-    // Track snapshots are logged at most this often (they are for reading, not for replay). FR-19
-    trackSnapshotMs: 500,
-    // Cap on the log held in memory, in bytes of JSON text. Recording stops when it is reached. FR-19, NFR-10
-    maxBytes: 20_000_000,
-    // The spotter is warned when the log reaches this fraction of the cap. FR-19
-    warnAtFraction: 0.8,
-  },
-
-  describe: {
-    // Stretch (S6): longest side of the single frame sent for "describe", in pixels. FR-20
-    maxImageSidePx: 768,
-    // Stretch (S6): give up on the describe request after this long. FR-20
-    timeoutMs: 8000,
   },
 }
 

@@ -211,7 +211,7 @@ export class AlertPolicy {
     this.lastEndMs = -Infinity
   }
 
-  /** The most recent drops, oldest first, for telemetry and the debug overlay. */
+  /** The most recent drops, oldest first. */
   getDropLog(): readonly DropRecord[] {
     return this.dropLog
   }

@@ -138,9 +138,6 @@ export class VoiceControl {
       case 'help':
         deps.say(VOICE_PHRASES.help)
         return
-      case 'describe':
-        deps.say(VOICE_PHRASES.describeSoon)
-        return
       case 'unknown':
         deps.whatsAround()
     }

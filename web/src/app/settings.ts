@@ -12,7 +12,6 @@ export const DEFAULT_SETTINGS: Settings = {
   spokenFeedback: true,
   toneVolume: CONFIG.settings.toneVolume,
   heartbeatVolume: CONFIG.settings.heartbeatVolume,
-  testMode: false,
 }
 
 function number(value: unknown, fallback: number, min: number, max: number): number {
@@ -35,7 +34,6 @@ export function validateSettings(raw: unknown): Settings {
     spokenFeedback: flag(input.spokenFeedback, d.spokenFeedback),
     toneVolume: number(input.toneVolume, d.toneVolume, 0, 1),
     heartbeatVolume: number(input.heartbeatVolume, d.heartbeatVolume, 0, 1),
-    testMode: flag(input.testMode, d.testMode),
   }
 }
 

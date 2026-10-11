@@ -13,12 +13,7 @@ dependencies = []
 package = false
 
 [dependency-groups]
-analysis = [
-    "matplotlib>=3.11.2",
-    "pandas>=3.0.6",
-]
 ml = [
-    "fiftyone>=1.22.1",
     "onnx>=1.23.2",
     "onnxruntime>=1.31.0",
     "onnxslim>=0.1.98",

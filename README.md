@@ -1,6 +1,6 @@
 # Kenshi
 
-A real-time obstacle guide for blind and low-vision pedestrians. It runs entirely on an iPhone in Safari and complements the white cane; it never replaces it. See `docs/SRS.md` and `docs/SDS.md` for what we build and how, and `PROGRESS.md` for the current state.
+A real-time guide for blind and low-vision people that runs on an iPhone in Safari. Walk mode speaks obstacle alerts using an on-device detector (frames stay on the phone). Find mode, being built, is a "Find My" for blind users: name a target and the app guides you to it; in Find mode camera frames are sent to Google Gemini through one Vercel function. Kenshi complements the white cane; it never replaces it. See `docs/SRS.md` and `docs/SDS.md` for what we build and how, and `PROGRESS.md` for the current state.
 
 ## Setup
 
@@ -24,7 +24,7 @@ Checks: `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`.
 
 ### Python tooling
 
-From the repo root: `uv sync --all-groups`. Export the model with `uv run --group ml python ml/export_onnx.py`.
+From the repo root: `uv sync --all-groups`. Export the model with `uv run --group ml python ml/export_onnx.py`. The Find function (step R2) needs `GEMINI_API_KEY` in Vercel and in `web/.env.local` for `vercel dev`; never commit it.
 
 ### If something fails
 

@@ -24,15 +24,5 @@ web/public/ort/
 datasets/
 runs/
 
-# Field-test recordings
-field-tests/**/*.mp4
-field-tests/**/*.mov
-
 # OS
 .DS_Store
-
-# Comparison output images (the report.md files stay tracked)
-results/**/frames/
-
-# Replay output (regenerate with web/scripts/replay.ts)
-field-tests/**/replay/
