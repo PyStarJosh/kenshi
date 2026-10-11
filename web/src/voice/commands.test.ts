@@ -19,8 +19,6 @@ describe('parseCommand', () => {
     ['speed up', 'faster'],
     ['help', 'help'],
     ['what can I say', 'help'],
-    ['describe', 'describe'],
-    ['what do you see', 'describe'],
   ])('%s -> %s', (text, intent) => {
     expect(parseCommand(text)).toBe(intent)
   })
@@ -31,8 +29,8 @@ describe('parseCommand', () => {
     expect(parseCommand('   ')).toBe('unknown')
   })
 
-  test('"what do you see" is describe, not around', () => {
-    expect(parseCommand('what do you see around me')).toBe('describe')
+  test('"what do you see around me" is the around command', () => {
+    expect(parseCommand('what do you see around me')).toBe('whats-around')
   })
 })
 

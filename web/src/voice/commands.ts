@@ -4,7 +4,6 @@ import { CONFIG } from '../core/config'
 import type { VoiceIntent } from '../core/types'
 
 const RULES: { intent: VoiceIntent; pattern: RegExp }[] = [
-  { intent: 'describe', pattern: /\b(describe|what do you see|what can you see)\b/ },
   { intent: 'help', pattern: /\b(help|commands|what can i say|options)\b/ },
   { intent: 'repeat', pattern: /\b(repeat|again|say that|last one|what was that)\b/ },
   { intent: 'slower', pattern: /\b(slower|slow down|too fast|speak slower)\b/ },
@@ -44,7 +43,6 @@ export const VOICE_PHRASES = {
   slowestReached: 'Slowest speed.',
   fastestReached: 'Fastest speed.',
   nothingToRepeat: 'Nothing to repeat yet.',
-  describeSoon: 'Describe is not available yet.',
   aroundSoon: 'What\'s around me is not available yet.',
   help: 'Tap, then say: what\'s around me, pause, resume, repeat, slower, faster, or help. If I hear nothing, tapping alone tells you what\'s around. Hold for one second to pause or resume. This does not replace your cane.',
 } as const

@@ -42,7 +42,7 @@ export function inputBoxToSource(
   return { x: left, y: top, width: right - left, height: bottom - top }
 }
 
-/** Inverse of inputBoxToSource for boxes inside the frame (used by tests and the replay tool). */
+/** Inverse of inputBoxToSource for boxes inside the frame (used by tests). */
 export function sourceBoxToInput(box: BoundingBox, lb: Letterbox): BoundingBox {
   return {
     x: lb.padX + box.x * lb.drawWidth,

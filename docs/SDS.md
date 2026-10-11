@@ -1,10 +1,10 @@
 # Software Design Specification: Kenshi
 
-Version 0.1 · How we meet [SRS.md](SRS.md). Type names refer to `web/src/core/types.ts`; tunable numbers to `web/src/core/config.ts` (`CONFIG.<section>.<name>`). Numbers written here are the starting defaults from config.
+Version 0.2 (Find mode pivot, step R0) · How we meet [SRS.md](SRS.md). Type names refer to `web/src/core/types.ts`; tunable numbers to `web/src/core/config.ts` (`CONFIG.<section>.<name>`). Numbers written here are the starting defaults from config.
 
 ## 1. Architecture overview
 
-Everything runs in the browser. Heavy work (preprocessing, inference, postprocessing) runs in one Web Worker. Everything else is light and runs on the main thread. Modules talk through typed function calls along the main data path, and through the event bus for alerts, health, voice, settings, and telemetry. `app/session.ts` owns the live run (start, pause, resume, page hide) and `app/pipeline.ts` wires each frame through the tracker and the alert policy, publishes the results on the event bus, and connects the audio link.
+Walk mode runs entirely in the browser; Find mode adds one network call to a Vercel function that asks Gemini (section 13). Heavy work (preprocessing, inference, postprocessing) runs in one Web Worker. Everything else is light and runs on the main thread. Modules talk through typed function calls along the main data path, and through the event bus for alerts, health, voice, settings, and telemetry. `app/session.ts` owns the live run (start, pause, resume, page hide) and `app/pipeline.ts` wires each frame through the tracker and the alert policy, publishes the results on the event bus, and connects the audio link.
 
 ```mermaid
 flowchart TD
@@ -24,7 +24,6 @@ flowchart TD
   WRK -->|FrameResult| HLT[Health monitor]
   ORI -->|OrientationSample| HLT
   HLT -->|HealthState| BUS
-  BUS --> TEL[Telemetry]
   BUS -->|HealthState| AUD
   BUS -->|VoiceIntent| POL
 ```
@@ -82,7 +81,7 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 
 ### 2.9 Event bus
 - **Path:** `alerts/bus.ts`
-- **Responsibility:** a minimal typed publish/subscribe keyed by `EventMap` (`frame`, `tracks`, `alert`, `alertOutcome`, `health`, `voice`, `settings`, `telemetry`). A listener that throws is reported (`console.error`) and does not stop the others. No other module imports another track's internals. Today the pipeline publishes `frame`, `tracks`, `alert`, and `alertOutcome`; the other topics arrive with S3.
+- **Responsibility:** a minimal typed publish/subscribe keyed by `EventMap` (`frame`, `tracks`, `alert`, `alertOutcome`, `health`, `voice`, `settings`). A listener that throws is reported (`console.error`) and does not stop the others. No other module imports another track's internals. The pipeline publishes `frame`, `tracks`, `alert`, `alertOutcome`, `health`, and `voice`. Find mode adds its own topics in step R4.
 - **In → out:** `EventMap[K]` in, same payload out to subscribers.
 - **Satisfies:** SR-8 (errors travel on it), integration of all tracks.
 
@@ -106,12 +105,8 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **In → out:** `FrameResult`, `OrientationSample`, error signals, clock ticks → `HealthState`.
 - **Satisfies:** FR-14, SR-1, SR-5, SR-6, SR-8, NFR-1.
 
-### 2.13 Telemetry
-- **Path:** `telemetry/logger.ts` (the log), `telemetry/export.ts` (share or download), `telemetry/sessionMeta.ts`, `telemetry/replay.ts` (replay engine), `scripts/replay.ts` (its command line), `telemetry/fixtureWalk.ts` (a simulated walk for tests), `app/useTelemetry.ts`, `app/screens/TestOverlay.tsx`, `app/screens/SaveLogButton.tsx`; scoring is `ml/eval_walks.py`.
-- **Responsibility:** the pipeline publishes `TelemetryEvent`s on the bus topic `telemetry` (frame with detections, tilt and brightness; track snapshots; alerts as `queued` and then each audio outcome with tone-start and speech-start times; policy drops with reasons; run state; health; voice). The logger records them only between `begin()` (a Start tap while Test mode is on) and `stop()`, so with Test mode off nothing is kept. It stamps every time on the session clock (zero is the Start tap, the clock the Test mode overlay shows), adds a tilt sample every 100 ms, keeps track snapshots to two a second and health changes only, and holds JSON lines in memory up to `telemetry.maxBytes` (20 MB): a warning at 80%, then recording stops with a closing `error` line. A Save test log button (shown when paused) shares `walk-<date>-<time>.jsonl` through the Web Share API, with a download link as the fallback. In Test mode the overlay shows the session clock and each spoken alert as a large caption with its session time.
-- **Replay:** `replayLog` pushes the logged frames through the same tracker, geometry, and policy with CONFIG (or the log's own CONFIG, or an overrides file), in the pipeline's order: run-state resets, frame, drops, alerts, then audio outcomes as they arrived. Unchanged settings reproduce the logged alerts exactly. With overrides, audio outcomes are simulated (each alert occupies the speaker for tone, gap, and 65 ms per character), because the recorded ones belong to the old alerts. The log holds detections that already passed the live confidence thresholds, so a replay can raise a threshold but not lower it. The replay tilt is the sample paired with each frame in the log; the 10 Hz `orientation` entries are for reading.
-- **In → out:** bus `telemetry` events → `.jsonl` file; `.jsonl` file + overrides → replayed `.jsonl`; logs + labels CSV → `results/<round>/report.md`.
-- **Satisfies:** FR-19, NFR-10 (memory cap); provides the measurements for NFR-1 to NFR-6 and the Replay verification of FR-4 to FR-10, NFR-3, NFR-5, NFR-6, SR-3.
+### 2.13 Telemetry (removed)
+- **Removed in step R0** with the field-test rounds: `telemetry/` (logger, export, session metadata, replay engine, simulated walk), `app/useTelemetry.ts`, the Test mode setting and overlay, the Save test log button, `scripts/replay.ts`, `scripts/make-fixture.ts`, `ml/eval_walks.py`, `field-tests/`, and the `telemetry` topic on the event bus. FR-19 is marked removed in the SRS.
 
 ### 2.14 Settings and calibration
 - **Path:** `app/settings.ts` (store persisted in `localStorage`, values clamped on load and on change, safe when storage is blocked), `app/useSettings.ts`, `app/calibration.ts` (pure field-of-view math and the written steps), `app/screens/Settings.tsx`, `app/screens/Calibrate.tsx`
@@ -124,15 +119,14 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 - **Responsibility:** per-frame wiring (section 3), Start sequence (wake lock, camera, and model load all start in the Start tap), pause/resume, aria-live status line, large Talk area, first-run text stating the cane is still needed. Landscape-first layout that also works upright.
 - **Satisfies:** FR-16, FR-18, NFR-9, NFR-10, NFR-11, NFR-12, SR-7, SR-8.
 
-### 2.16 Offline cache
-- **Path:** `web/public/sw.js` (hand-written service worker), registered from `app/pipeline.ts`
-- **Responsibility:** cache the app shell, onnxruntime-web files, and the model on first load; serve them offline. Cached responses keep the original cross-origin isolation headers.
-- **Satisfies:** NFR-8.
+### 2.16 Offline cache (removed)
+- Never built. NFR-8 is removed: the app has no service worker, and Find needs a network. Home Screen install (FR-29, step R1) uses a manifest and icons only.
 
-### 2.17 Describe (Stretch, S6)
-- **Path:** `app/describe.ts`, `web/api/describe.ts` (one Vercel function; the Claude API key lives only in a Vercel environment variable)
-- **Responsibility:** on `describe`, downscale one frame to `CONFIG.describe.maxImageSidePx`, send it, speak the reply as an `info` alert that urgent alerts can preempt. Created in S6; not part of the first build.
-- **Satisfies:** FR-20, NFR-9 (the single exception).
+### 2.17 Describe (removed)
+- The stretch "describe" command and `web/api/describe.ts` were dropped. Find mode (section 13) replaces them as the only feature that sends frames off the phone.
+
+### 2.18 Find mode modules
+- Planned in steps R1 to R7; components, data flow, state machine, and latency budget are in section 13. They reuse the camera, orientation, geometry, tracker, alert policy, event bus, tones, speech, voice, and health modules (see PROGRESS.md).
 
 ## 3. Per-frame data flow
 
@@ -144,7 +138,6 @@ Paths are under `web/src/`. Tests sit next to the source as `*.test.ts`. Pure lo
 6. **Motion.** Smoothing and time-to-contact set `closingSpeedMps`, `timeToContactS`, `approaching`.
 7. **Policy.** The policy turns eligible tracks into `AlertEvent`s and publishes them.
 8. **Audio.** The audio engine runs the stale check and track check, plays the tone, then speaks.
-9. **Telemetry.** In Test mode, a `frame` entry (with detections and orientation) and `alert` outcomes are logged.
 
 All timestamps use `performance.now()` on the main thread, so every latency is measured from `captureTimeMs`.
 
@@ -308,7 +301,12 @@ Every failure is spoken (unless spoken feedback is off), written to the aria-liv
 | Audio blocked or route lost (AirPods disconnect, interruption) | audio, health | On-screen warning "Sound is off. Tap the screen to restore it." | Tap resumes the `AudioContext` |
 | Speech recognition unavailable, denied, or silent | recognizer | Tap runs "what's around me" | Automatic fallback |
 | Frame or alert too old | audio | Alert dropped; logged | Automatic |
-| Describe request fails (stretch) | describe | "Could not describe the scene." | Try again |
+| Find has no network | locate client | "I can't reach the internet, so I can't search." | Try again; Walk mode keeps running |
+| Gemini rate limit or server error | locate function | "The search service is busy. Try again in a moment." | Try again; offer a retry after a pause |
+| Find request times out | locate client | "The search took too long." | Try again |
+| Target not found | locate result | "I could not find it." (never "it is not here") | Offer the scan sweep, or another target |
+| Heading unavailable (no motion permission) | heading sensor | "I can't tell which way you turn, so I can only search what the camera sees." | Single-frame search only |
+| Privacy notice not accepted | Find controller | "Find sends pictures to Google. Say yes to allow it, or no to cancel." | Find does not start until accepted |
 | Paused | pipeline | "Paused." then a reminder every 15 s | Long press or "resume" |
 
 ## 10. Model plan
@@ -316,9 +314,7 @@ Every failure is spoken (unless spoken feedback is off), written to the aria-liv
 - **Base model:** YOLO26n (COCO, 80 classes). `ml/export_onnx.py` exports it at 320 and 416 (opset 18, simplified by onnxslim) to `web/public/models/yolo26n-<size>.onnx` (9.8 MB each, under the 15 MB limit). The export used here is **raw**: one output of shape `[1, 4 + 80, N]` (N is 2100 at 320 and 3549 at 416) holding center x, center y, width, and height in input pixels, then one score per class (already between 0 and 1). The graph contains no NMS, so postprocess decodes it, applies per-class thresholds, and runs class-aware NMS (`nmsIou`). An end-to-end NMS-free export also exists and could trim postprocess later, but postprocess already measures under 3 ms (section 4.1).
 - **Input size: 416.** Gate A chose 416 (owner decision after running the benchmark on the demo iPhone); `CONFIG.detection.inputSize` is 416 and the app loads `yolo26n-416.onnx`. The rule for this choice was to take 416 only if p95 inference stays at or below 120 ms and the frame rate stays at or above 8 fps, otherwise 320. The iPhone numbers are not recorded in this repository yet; add them to section 4.1. The 320 model stays available for the benchmark and as a fallback if NFR-1 or NFR-2 fail in the field.
 - **Class map:** `ml/class_map.json` is the hand-maintained source of truth (per class id: spoken name, typical height, ground contact, alertable). `ml/gen_classes.py` generates `detection/classes.ts` as `ClassInfo[]`. Initial alertable COCO classes: person, bicycle, car, motorcycle, bus, truck, bench, chair, couch, dining table, potted plant, backpack, suitcase, handbag, fire hydrant, parking meter, dog.
-- **Retrained hazard model (M2, M3):** the base classes plus stairs, curb, pole, and door. COCO ids 0 to 79 keep their numbers and the new classes take 80 to 83, so the class map stays compatible. It replaces the base model only if it wins on our own field-test labels: better recall on the four new classes, no loss of more than 2 points of in-path recall on the COCO obstacle classes, no more false alerts per minute, and inference still within NFR-2 on the iPhone.
-- **M2 training data and tools** (details in `ml/datasets.md`). The retrained model has 84 classes: the 80 COCO ids unchanged, then stairs (80), curb (81), pole (82), door (83); the draft class table is `ml/class_map.hazard.json` and M3 copies it over `ml/class_map.json` before regenerating `classes.ts`. Hazard classes come from Open Images V7 (Stairs, Door, and Street light as "pole") and the Zenodo Accessibility Barriers set (stairs, and steps typed as curb); the kept obstacle classes come from a COCO subset and Argoverse-HD (non-commercial license). Hazard images get the base model's pseudo-labels for the 17 kept classes at confidence 0.5. Training is a Colab notebook (`ml/train_colab.ipynb`): 60 epochs with early stopping from `yolo26n.pt` at 416, then a fixed-size ONNX export in the same raw layout. `ml/compare_models.py` scores both models per class on the validation set (kept classes only on hand-labeled images, to keep the pseudo-labels from favoring the base model) and on our own clips, and flags any kept class that loses more than 3 points of recall. That 3-point flag is a screening rule for M2; the adoption rule above, with the 2-point in-path limit on our field-test labels, still decides M3.
-- **Stairs and curb** have no usable typical height, so their distance comes from the ground plane only (or `min-visible`).
+- **Retrained hazard model dropped (step R0).** Steps M2 and M3 and their datasets, training notebook, and comparison tool were removed. The base model stays; the generated class table in `detection/classes.ts` has the 80 COCO classes.
 
 ## 11. Traceability matrix
 
@@ -329,13 +325,13 @@ Verification methods are the same as in the SRS.
 | FR-1 | Camera, Frame scheduler | Field test |
 | FR-2 | Detection worker and engine | Unit test, Field test |
 | FR-3 | Orientation sensor | Unit test, Field test |
-| FR-4 | Tracker | Unit test, Replay |
-| FR-5 | Tracker (time-to-contact) | Unit test, Replay |
-| FR-6 | Geometry (clock), Settings | Unit test, Replay |
-| FR-7 | Geometry (distance), Settings | Unit test, Replay, Field test |
-| FR-8 | Geometry (elevation) | Unit test, Replay |
-| FR-9 | Geometry (path), Alert policy | Unit test, Replay |
-| FR-10 | Alert policy | Unit test, Replay |
+| FR-4 | Tracker | Unit test |
+| FR-5 | Tracker (time-to-contact) | Unit test |
+| FR-6 | Geometry (clock), Settings | Unit test |
+| FR-7 | Geometry (distance), Settings | Unit test, Field test |
+| FR-8 | Geometry (elevation) | Unit test |
+| FR-9 | Geometry (path), Alert policy | Unit test |
+| FR-10 | Alert policy | Unit test |
 | FR-11 | Alert policy (phrases) | Unit test |
 | FR-12 | Audio engine (tones) | Field test, Inspection |
 | FR-13 | Audio engine (heartbeat) | Field test, Unit test |
@@ -344,35 +340,143 @@ Verification methods are the same as in the SRS.
 | FR-16 | Voice commands, Pipeline | Field test |
 | FR-17 | Settings and calibration | Unit test, Field test, Inspection |
 | FR-18 | Pipeline, Audio engine, Camera, Orientation, Voice | Field test |
-| FR-19 | Telemetry | Unit test, Replay, Inspection |
-| FR-20 (Stretch) | Describe | Field test, Inspection |
+| FR-19 (removed) | none | n/a |
+| FR-20 (removed) | none | n/a |
+| FR-21 | Target list, Voice commands, Find controller | Unit test, Field test |
+| FR-22 | Frame capture, Locate client, Locate function | Unit test, Field test, Inspection |
+| FR-23 | Scan planner, Heading, Find controller | Unit test, Field test |
+| FR-24 | Heading, Target memory | Unit test, Field test |
+| FR-25 | Guidance, Speech | Unit test, Field test |
+| FR-26 | Beacon, Audio engine | Unit test, Field test |
+| FR-27 | Find screen | Inspection, Field test |
+| FR-28 | Path line | Unit test, Inspection, Field test |
+| FR-29 | Install files | Inspection, Field test |
+| FR-30 | Privacy gate, Settings | Unit test, Field test, Inspection |
 | NFR-1 | Frame scheduler, Detection worker | Field test |
 | NFR-2 | Detection worker | Field test |
-| NFR-3 | Audio engine, Alert policy | Field test, Replay |
+| NFR-3 | Audio engine, Alert policy | Field test |
 | NFR-4 | Audio engine | Field test |
-| NFR-5 | Detection worker, Geometry, Alert policy | Field test, Replay |
-| NFR-6 | Tracker, Alert policy | Field test, Replay |
+| NFR-5 | Detection worker, Geometry, Alert policy | Field test |
+| NFR-6 | Tracker, Alert policy | Field test |
 | NFR-7 | Geometry (distance) | Field test |
-| NFR-8 | Offline cache | Field test |
-| NFR-9 | Pipeline, Describe | Inspection |
-| NFR-10 | Pipeline, Telemetry | Field test |
+| NFR-8 (removed) | none | n/a |
+| NFR-9 | Pipeline, Locate client, Locate function, Privacy gate | Inspection |
+| NFR-10 | Pipeline | Field test |
 | NFR-11 | Pipeline (screens) | Field test, Inspection |
 | NFR-12 | Detection worker, Frame scheduler | Inspection, Field test |
 | NFR-13 | Detection worker | Inspection |
+| NFR-14 | Locate client, Locate function | Field test |
+| NFR-15 | Beacon, Heading | Field test |
+| NFR-16 | Install files | Field test |
 | SR-1 | Audio engine (heartbeat), Health monitor | Unit test, Field test |
 | SR-2 | Alert policy (phrases) | Unit test, Inspection |
-| SR-3 | Audio engine, Alert policy | Unit test, Replay |
+| SR-3 | Audio engine, Alert policy | Unit test |
 | SR-4 | Audio engine, Alert policy | Unit test, Field test |
 | SR-5 | Health monitor | Unit test, Field test |
 | SR-6 | Health monitor | Unit test, Field test |
 | SR-7 | Pipeline (screens), Alert policy (help text) | Inspection |
 | SR-8 | Health monitor, Event bus, Pipeline | Unit test, Inspection |
 | SR-9 | Audio engine (paused reminder) | Unit test, Field test |
+| SR-10 | Audio engine, Beacon, Find controller | Unit test, Field test |
+| SR-11 | Guidance (phrases) | Unit test, Inspection |
 
 ## 12. Uncertain design points
 - The default horizontal field of view (65°) is an estimate; calibration on the demo phone replaces it.
 - The WebGPU path on the demo iPhone's iOS version is unverified; the WebAssembly fallback is the planned floor.
-- The retrained model (M3) must keep the raw `[1, 4 + nc, N]` layout; the worker refuses a model whose class count differs from `classes.ts`.
 - Speech recognition with AirPods in transparency mode may change the audio route; the tap fallback covers a failure.
 - Speech-start latency on iOS (70 ms in the budget) is optimistic and must be measured.
-- Letting a high-confidence in-path object skip the 2-of-3 confirmation was considered for speed and rejected for now, because it risks the false-alert target (NFR-6).
+- Letting a high-confidence in-path object skip the 2-of-3 confirmation was considered for speed and rejected for now, because it risks the false-alert target (NFR-6). (A4 later added a near-object fast path at the owner's request; see PROGRESS.md.)
+- Find: the Gemini model, its free-tier limits, its latency, and how well it boxes arbitrary household targets are all to be measured (section 13.4).
+- Find: gyroscope yaw drifts and has no north reference, so a stored heading is only good for a short time; how short is to be measured.
+- Find: a distance for an arbitrary target is only possible when its box bottom is on the floor (ground plane); otherwise guidance gives direction only.
+
+## 13. Find mode (steps R1 to R7)
+
+Find mode is a "Find My" for blind users. The user names a target; a Gemini model finds it in camera frames; the app turns its box into a direction, remembers that direction as a device heading, and guides the user with an arrow, spoken directions, and an audio beacon while Walk mode keeps watching for obstacles. Requirements: FR-21 to FR-30, NFR-14 to NFR-16, SR-10, SR-11. Numbers marked **to be measured** have no justification yet and must not be treated as targets.
+
+### 13.1 Components
+
+| Component | Path (step) | Responsibility |
+|---|---|---|
+| Install files | `public/manifest.webmanifest`, icons, `index.html` meta (R1) | Home Screen install, full screen, no service worker (FR-29) |
+| Locate function | `web/api/locate.ts` (R2) | One Vercel function. Validates the body (frame count at most 8, size caps, target text length), calls Gemini with a JSON schema asking for found, frame index, a normalized box, and confidence, maps errors (rate limit, server error, bad reply), stores and logs nothing. The key is `GEMINI_API_KEY` in Vercel. (FR-22) |
+| Locate client | `find/locateClient.ts` (R2) | Downscales and JPEG-encodes frames, posts to `/api/locate` with a timeout, returns a typed result or a typed error. Thin adapter over `fetch`. (FR-22, NFR-14) |
+| Frame capture | `find/capture.ts` (R2) | Grabs frames from the camera (reusing the scheduler's bitmap grabber) at the moments the controller asks for. |
+| Heading | `sensors/heading.ts`, `sensors/attitude.ts` (R3) | Gyroscope yaw from device orientation, unwrapped and relative to the Find start. Pure math plus a thin adapter. (FR-24) |
+| Target memory | `find/targetMemory.ts` (R3) | Pure. Stores the target name, the heading at which it was seen (bounding-box bearing added to the capture-time heading), a distance if known, and the time seen. Expires; cleared on cancel. (FR-24) |
+| Scan planner | `find/scan.ts` (R4) | Pure. From the heading stream decides when to capture (about every 45 degrees, at most 8) and when the sweep is complete, and which cue to speak ("keep turning"). (FR-23) |
+| Target list | `find/targets.ts` (R4) | Quick-pick list and spoken-target cleanup ("find my keys" becomes "keys"). Pure. (FR-21) |
+| Find controller | `find/controller.ts` (R4) | The state machine in 13.3. Owns the privacy gate, requests, retries, cancel, and the events other modules listen to. (FR-21, FR-23, FR-30) |
+| Guidance | `find/guidance.ts` (R5) | Pure. From the stored heading, the current heading, and the distance: degrees to turn, aligned or not, and the spoken line with cooldowns. All wording is tested against the SR-2 word list. (FR-25, SR-11) |
+| Beacon | `audio/beacon.ts` (R5) | Pulses scheduled on the `AudioContext` clock. Rate comes from distance, pan from the relative bearing; silenced while an urgent alert plays. (FR-26, SR-10) |
+| Find screen | `app/screens/FindScreen.tsx` (R6) | Large arrow rotated by the relative bearing, distance, target name, green when aligned, cancel; everything also spoken and in the aria-live region. (FR-27) |
+| Path line | `geometry/freeSpacePath.ts` (R7) | Pure. Confirmed tracks become inflated rectangles on the ground plane; a path from the user toward the target bearing bends around them; output is a short polyline for the Find screen. Designed in R7; this is the intended interface only. (FR-28) |
+
+Reused unchanged: camera, frame scheduler, detection worker, tracker, geometry (`locate`, `cameraModel`, ground-plane distance), alert policy and phrases, event bus, tones, speech, voice recognizer and control, health monitor, settings and calibration. The bearing of the target's box comes from `geometry/geometry.ts` with a synthetic class (ground contact on, no typical height), so the distance exists only when the box bottom is on the floor.
+
+### 13.2 Data flow
+
+```mermaid
+flowchart TD
+  USR[Voice or quick-pick] --> CTL[Find controller]
+  CTL -->|first time| PRV[Privacy gate]
+  CTL -->|capture request| CAP[Frame capture]
+  CAM[Camera] --> CAP
+  CAP -->|1 to 8 JPEG frames| LOC[Locate client]
+  LOC -->|POST /api/locate| FN[Locate function]
+  FN -->|image and target| GEM[Gemini]
+  GEM -->|frame index and box| FN
+  FN --> LOC
+  LOC -->|result| CTL
+  HDG[Heading sensor] --> CTL
+  CTL -->|bearing and heading| MEM[Target memory]
+  MEM --> GUI[Guidance]
+  HDG --> GUI
+  GUI --> SCR[Find screen]
+  GUI --> BEA[Beacon]
+  GUI -->|spoken line| SPK[Speech]
+  WALK[Walk pipeline alerts] -->|urgent preempts| SPK
+  WALK -->|silences| BEA
+```
+
+1. The user says "find <target>" or picks one. The controller speaks the target back.
+2. If the privacy notice has not been accepted, the controller speaks and shows it and waits for yes or no (FR-30).
+3. The controller captures the current frame and the current heading, and asks the locate client to search.
+4. If the target is in the frame, the box becomes a bearing; the bearing plus the capture-time heading is stored in target memory. Guidance starts.
+5. If not, the controller starts the scan sweep: the planner asks for a frame at each new 45 degrees, up to 8, and the frames go in one request. The reply names the frame that shows the target; that frame's capture-time heading plus the box bearing is stored.
+6. While guiding, guidance reads the current heading every orientation update (about 10 per second), updates the arrow and the beacon, and speaks a line when the turn changes enough and the cooldown allows. When aligned, the controller may take a fresh frame to refine the stored direction, at most once per refine interval (config, to be measured against free-tier limits).
+7. Walk-mode alerts run the whole time. An urgent alert preempts Find speech and silences the beacon while it plays (SR-10).
+
+### 13.3 State machine
+
+| State | Entered when | Leaves on |
+|---|---|---|
+| `idle` | start, cancel, or finished | find request goes to `consent` or `locating` |
+| `consent` | first Find, or consent withdrawn | yes goes to `locating`; no or cancel goes to `idle` |
+| `locating` | one frame sent | found goes to `guiding`; not found goes to `scan-offer`; error goes to `failed` |
+| `scan-offer` | not in view | user agrees (or after a short prompt) goes to `scanning`; cancel goes to `idle` |
+| `scanning` | sweep started | 8 frames or a full turn goes to `locating-sweep`; cancel goes to `idle` |
+| `locating-sweep` | frames sent | found goes to `guiding`; not found goes to `not-found`; error goes to `failed` |
+| `guiding` | target direction stored | reached goes to `reached`; user says stop goes to `idle`; memory expired goes to `scan-offer`; error in refine stays in `guiding` and says so |
+| `reached` | estimated distance within the reached radius (config, to be measured), or the user says found | back to `idle` after "Check with your hands or your cane." |
+| `not-found` | sweep found nothing | try again goes to `scanning`; new target goes to `consent` or `locating`; cancel goes to `idle` |
+| `failed` | network, timeout, rate limit, bad reply | retry goes back to the state that failed; cancel goes to `idle` |
+
+Cancel works from every state. Every transition is spoken (unless spoken feedback is off) and written to the aria-live region.
+
+### 13.4 Latency budget
+
+Nothing in this table has been measured on the demo phone or the demo network. Each number is **to be measured**; none is a target yet. The only fixed figure is the display refresh (about 17 ms per frame at 60 Hz) for the arrow.
+
+| Stage | Budget | Notes |
+|---|---|---|
+| Capture and downscale one frame | to be measured | max side set by `CONFIG.find.maxImageSidePx` (starting value 768) |
+| JPEG encode and request build | to be measured | scales with the frame count (1 to 8) |
+| Upload | to be measured | depends on payload and mobile uplink |
+| Vercel function (cold and warm) | to be measured | cold start is the risk |
+| Gemini inference | to be measured | depends on the model and the free-tier queue |
+| Reply parse, bearing, memory update | to be measured | pure code, expected small |
+| First spoken direction | to be measured | speech start on iOS is also unmeasured (section 4) |
+| Heading update to arrow redraw | one display frame | React state update; beacon and speech follow on the next orientation sample |
+| Whole Find (single frame) | to be measured | NFR-14 |
+| Whole Find with a full sweep | to be measured | includes the user's turning time, which is not ours to control |

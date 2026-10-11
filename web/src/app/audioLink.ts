@@ -4,7 +4,7 @@
 // AlertEvents arrive through handleAlert (the pipeline delivers them from the event bus); the pipeline also
 // supplies the live track lookup and the "what's around me" summarizer, and listens for alert outcomes.
 import { AudioEngine } from '../audio/engine'
-import type { AlertTimes, AlertTiming, TrackLookup } from '../audio/engine'
+import type { AlertTiming, TrackLookup } from '../audio/engine'
 import { createBrowserSpeaker } from '../audio/speech'
 import { listeningTone, TonePlayer } from '../audio/tones'
 import { GREETING, unlockAudioContext } from '../audio/unlock'
@@ -14,7 +14,6 @@ import { HealthMonitor } from '../health/monitor'
 import type { HealthAnnouncement, RunState } from '../health/monitor'
 import { VOICE_PHRASES } from '../voice/commands'
 import { VoiceControl } from '../voice/control'
-import type { VoiceSource } from '../voice/control'
 import { createBrowserRecognizer } from '../voice/recognizer'
 import { LatencyStats } from './latency'
 import type { LatencyView } from './latency'
@@ -24,7 +23,7 @@ import { settingsStore } from './settings'
 /** The "what's around me" summary phrase, from the alert policy (A5). Null until that is wired in. */
 export type Summarizer = () => string
 
-export type OutcomeListener = (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null, times: AlertTimes) => void
+export type OutcomeListener = (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null) => void
 
 export interface AudioLinkView {
   unlocked: boolean
@@ -71,7 +70,6 @@ export class AudioLink {
     setSpeechRate: (speechRate) => settingsStore.update({ speechRate }),
     lastAlertPhrase: () => this.lastAlertPhrase,
     onIntent: (intent, source) => {
-      for (const listener of this.voiceListeners) listener(intent, source)
       this.update({ lastVoice: `${intent} (${source})` })
       for (const listener of this.intentListeners) listener(intent)
     },
@@ -83,7 +81,6 @@ export class AudioLink {
   private outcomeListeners = new Set<OutcomeListener>()
   private intentListeners = new Set<(intent: VoiceIntent) => void>()
   private healthListeners = new Set<(health: HealthState) => void>()
-  private voiceListeners = new Set<(intent: VoiceIntent, source: VoiceSource) => void>()
   private healthKey = ''
   private latency = new LatencyStats()
   private testCount = 0
@@ -131,7 +128,7 @@ export class AudioLink {
         // alert whose track is gone is dropped as track-gone (SR-3).
         getTrack: (id) => this.testTracks.get(id) ?? this.trackLookup?.(id) ?? null,
         now: () => performance.now(),
-        onOutcome: (alert, outcome, latencyMs, times) => this.recordOutcome(alert, outcome, latencyMs, times),
+        onOutcome: (alert, outcome, latencyMs) => this.recordOutcome(alert, outcome, latencyMs),
         onError: (message) => this.reportError(message),
         onLatency: (alert, stage, ms) => this.recordLatency(alert, stage, ms),
       })
@@ -209,12 +206,6 @@ export class AudioLink {
     return () => this.outcomeListeners.delete(listener)
   }
 
-  /** Hear each voice command and where it came from. Returns a stop function. */
-  onVoice(listener: (intent: VoiceIntent, source: VoiceSource) => void): () => void {
-    this.voiceListeners.add(listener)
-    return () => this.voiceListeners.delete(listener)
-  }
-
   /** Where "what's around me" gets its phrase; the pipeline sets it from the alert policy. */
   setSummarizer(summarizer: Summarizer | null): void {
     this.summarizer = summarizer
@@ -285,9 +276,9 @@ export class AudioLink {
     this.update({ latency: this.latency.view() })
   }
 
-  private recordOutcome(alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null, times: AlertTimes): void {
+  private recordOutcome(alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null): void {
     if (alert.trackId !== null && outcome !== 'started') this.testTracks.delete(alert.trackId)
-    for (const listener of this.outcomeListeners) listener(alert, outcome, latencyMs, times)
+    for (const listener of this.outcomeListeners) listener(alert, outcome, latencyMs)
     const latency = latencyMs === null ? '' : ` after ${latencyMs.toFixed(0)} ms`
     this.update({ lastOutcome: `${alert.id} ${outcome}${latency}` })
   }

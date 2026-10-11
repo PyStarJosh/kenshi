@@ -37,10 +37,10 @@ describe('validateSettings', () => {
   })
 
   test('replaces values of the wrong type with the defaults', () => {
-    const s = validateSettings({ eyeHeightM: '1.7', horizontalFovDeg: Number.NaN, testMode: 'yes' })
+    const s = validateSettings({ eyeHeightM: '1.7', horizontalFovDeg: Number.NaN, spokenFeedback: 'yes' })
     expect(s.eyeHeightM).toBe(DEFAULT_SETTINGS.eyeHeightM)
     expect(s.horizontalFovDeg).toBe(DEFAULT_SETTINGS.horizontalFovDeg)
-    expect(s.testMode).toBe(false)
+    expect(s.spokenFeedback).toBe(DEFAULT_SETTINGS.spokenFeedback)
   })
 
   test('ignores unknown fields and non-objects', () => {

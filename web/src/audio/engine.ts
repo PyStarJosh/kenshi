@@ -13,7 +13,7 @@ export type TrackLookup = (trackId: number) => { distanceM: number } | null
 
 export type AudioSettings = Pick<Settings, 'speechRate' | 'spokenFeedback' | 'toneVolume' | 'heartbeatVolume'>
 
-/** Latest measured delays, in milliseconds, for the debug panel and telemetry. */
+/** Latest measured delays, in milliseconds, for the debug panel. */
 export interface AlertTiming {
   alertId: string
   /** AlertEvent creation to tone start. */
@@ -24,18 +24,12 @@ export interface AlertTiming {
   frameToSpeechMs: number | null
 }
 
-/** Absolute times (performance.now clock) at which an alert's tone and speech began; null if they did not. */
-export interface AlertTimes {
-  toneStartMs: number | null
-  speechStartMs: number | null
-}
-
 export interface AudioEngineDeps {
   tones: TonePlayerLike
   speaker: Pick<Speaker, 'speak' | 'isBusy' | 'setRate' | 'setEnabled'>
   getTrack: TrackLookup
   now: () => number
-  onOutcome: (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null, times: AlertTimes) => void
+  onOutcome: (alert: AlertEvent, outcome: AlertOutcome, latencyMs: number | null) => void
   onError: (message: string) => void
   /** Frame capture to the start of the tone or the speech, once per alert and stage. */
   onLatency?: (alert: AlertEvent, stage: 'tone' | 'speech', ms: number) => void
@@ -85,7 +79,6 @@ export class AudioEngine {
     const { deps } = this
     const urgent = alert.priority === 'urgent'
     let toneStarted = false
-    const times: AlertTimes = { toneStartMs: null, speechStartMs: null }
     deps.speaker.speak({
       text: alert.phrase,
       urgent,
@@ -93,7 +86,7 @@ export class AudioEngine {
         const nowMs = deps.now()
         const verdict = screenAlert(alert, nowMs, deps.getTrack)
         if (verdict !== 'ok') {
-          deps.onOutcome(alert, verdict, null, times)
+          deps.onOutcome(alert, verdict, null)
           return null
         }
         this.timing = { alertId: alert.id, alertToToneMs: null, frameToToneMs: null, frameToSpeechMs: null }
@@ -102,20 +95,18 @@ export class AudioEngine {
         const distanceM = alert.trackId === null ? null : (deps.getTrack(alert.trackId)?.distanceM ?? null)
         const tone = deps.tones.play(alertTone(alert.priority, alert.pan, distanceM), this.settings.toneVolume)
         toneStarted = true
-        times.toneStartMs = tone.startMs
         this.timing.alertToToneMs = tone.startMs - alert.createdTimeMs
         this.timing.frameToToneMs = tone.startMs - alert.frameTimeMs
         deps.onLatency?.(alert, 'tone', this.timing.frameToToneMs)
-        deps.onOutcome(alert, 'started', this.timing.frameToToneMs, times)
+        deps.onOutcome(alert, 'started', this.timing.frameToToneMs)
         return Math.max(0, tone.endMs - nowMs) + CONFIG.audio.toneToSpeechGapMs
       },
       onStart: (timeMs) => {
-        times.speechStartMs = timeMs
         if (this.timing?.alertId === alert.id) this.timing.frameToSpeechMs = timeMs - alert.frameTimeMs
         deps.onLatency?.(alert, 'speech', timeMs - alert.frameTimeMs)
-        if (!toneStarted) deps.onOutcome(alert, 'started', timeMs - alert.frameTimeMs, times)
+        if (!toneStarted) deps.onOutcome(alert, 'started', timeMs - alert.frameTimeMs)
       },
-      onDone: (outcome, detail) => this.reportDone(alert, outcome, times, detail),
+      onDone: (outcome, detail) => this.reportDone(alert, outcome, detail),
     })
   }
 
@@ -157,13 +148,13 @@ export class AudioEngine {
     this.deps.tones.play(heartbeatTone(), this.settings.heartbeatVolume)
   }
 
-  private reportDone(alert: AlertEvent, outcome: SpeechOutcome, times: AlertTimes, detail?: string): void {
+  private reportDone(alert: AlertEvent, outcome: SpeechOutcome, detail?: string): void {
     // "dropped" was already reported with its reason by prepare().
     if (outcome === 'dropped') return
     if (outcome === 'failed') {
       this.deps.onError(`Speech failed: ${detail ?? 'unknown error'}`)
       return
     }
-    this.deps.onOutcome(alert, SPEECH_TO_ALERT_OUTCOME[outcome], null, times)
+    this.deps.onOutcome(alert, SPEECH_TO_ALERT_OUTCOME[outcome], null)
   }
 }
